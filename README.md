@@ -247,25 +247,29 @@ The microphone produces 16 kHz mono PCM: a maximum-length press
 (`MAX_UTTERANCE_SECONDS` = 120) is 3.84 MB. `voice.py` encodes it to
 32 kbps MP3 — **8x smaller** — before it becomes an attachment.
 
-That is not about bandwidth. The runner RPC serialises bytes with
-`json.dumps(default=str)`, which renders them as a Python repr (`\xNN`
-per non-printable byte) and inflates the payload **4.2x** on the wire,
-against a 10.49 MB frame cap. A legal two-minute utterance therefore
-becomes a 16.7 MB frame, the transport refuses it and closes, and the
-in-flight turn dies with it — the session ends mid-conversation. That is
+It began as a workaround. The runner RPC serialised bytes with
+`json.dumps(default=str)`, rendering them as a Python repr (`\xNN` per
+non-printable byte) and inflating the payload **4.2x** on the wire against
+a 10.49 MB frame cap. A legal two-minute utterance became a 16.7 MB frame;
+the transport refused it, closed, and the in-flight turn died with it —
+mid-conversation. That was
 [jaato#920](https://github.com/Jaato-framework-and-examples/jaato/issues/920),
-found here; measured twice with predicted-to-observed agreement within
+found here and measured twice with predicted-to-observed agreement within
 0.2%.
 
-Compression is defence in depth, not the fix: the same press now crosses
-as a 1.7 MB frame with the 4.2x still applied, and would be 0.64 MB once
-#920 lands. Verified by replaying the exact recording that killed a real
-session — it now completes in 21 s, stores its memory, and the model
-still understands it, which is what says 32 kbps is enough.
+**Fixed in #921**: bytes cross as base64 through a codec that decodes them
+back, and an oversized frame is now dropped as a typed error for its own
+call rather than desynchronising the whole channel. Verified — the exact
+recording that killed a real session now completes uncompressed, in 23 s.
 
-If ffmpeg is missing, escriba refuses to start rather than quietly
-sending PCM. A fallback would put the failure back invisibly, and
-"the transport closed mid-turn" reads as anything but a missing encoder.
+Compression stays for **headroom, not necessity**. The cap still exists,
+and an utterance sits in history until the turn that consumed it is
+evicted: 5.12 MB per press as WAV against 0.64 MB as MP3. Verified that
+32 kbps costs nothing that matters — the model still understood the same
+recording and stored the right memory from it.
+
+If ffmpeg is missing, escriba refuses to start rather than quietly sending
+PCM. The failure that would cause is far from its cause.
 
 ## How it ends
 
@@ -366,7 +370,9 @@ installed 0.7.0:
 |---|---|
 | **#822** a tiers-only profile without top-level `model`/`provider` will not start | **FIXED.** `runner_spawn.py:455-464` documents the chain `profile.provider → model_tiers[initial].provider → JAATO_PROVIDER`. Verified: this profile, tiers-only, creates a session in 1.5 s. |
 | **#845** neither `wake` nor `inject_prompt` carries an attachment | **FIXED** (#914). Verified: a completed session woken with an audio attachment ran the next turn. |
-| **#913** the answer to `signal_completion` never reaches history | **FIXED** (#915), found here. `_record_terminal_tool_results` now runs before the early return. Verified: three consecutive completions on one session, where the second used to 400. |
+| **#913** the answer to `signal_completion` never reaches history | **FIXED** (#915), found here. Verified: three consecutive completions on one session, where the second used to 400. |
+| **#920** runner RPC sends bytes as a Python repr, 4.2x oversize | **FIXED** (#921), found here. Verified: the recording that killed a real session now completes uncompressed. |
+| **#922** tool-result enrichment never fires for `store_memory` | **OPEN**, found here. Its text field is `message`, which is not in the six-name allowlist — so catalogued references are never offered. |
 | **#912** a `.jsonl` `storage_path` is reinterpreted as a directory | **OPEN**, found here. |
 
 Not verified, inherited from that repo: that `temperature: 0.0` makes

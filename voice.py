@@ -27,16 +27,21 @@ import pulse_playback
 
 #: What the model receives.  MP3, not the WAV `Utterance.wav()` produces.
 #:
-#: WHY COMPRESS.  A maximum-length press (`MAX_UTTERANCE_SECONDS` = 120)
-#: is 3.84 MB of 16 kHz mono PCM, and the runner RPC serialises bytes with
-#: `json.dumps(default=str)` — a Python repr, `\xNN` per non-printable
-#: byte — which inflates it 4.2x to 16.13 MB against a 10.49 MB frame cap
-#: (jaato#920).  The transport then closes and takes the session with it.
-#: Measured, twice, predicted-to-observed within 0.2%.
+#: WHY COMPRESS.  It began as a workaround for jaato#920: the runner RPC
+#: serialised bytes with `json.dumps(default=str)`, a Python repr that
+#: inflated a maximum-length press (`MAX_UTTERANCE_SECONDS` = 120, 3.84 MB
+#: of PCM) 4.2x to 16.7 MB against a 10.49 MB frame cap, closing the
+#: transport mid-turn and ending the session.
 #:
-#: At 32 kbps the same two minutes is 0.48 MB, so even under that 4.2x it
-#: crosses at ~2 MB with room to spare — and once #920 is fixed it is
-#: 0.64 MB of base64.  This is defence in depth, not the fix.
+#: That is FIXED (#921): bytes now cross as base64 and an oversized frame
+#: is dropped as a typed error instead of desynchronising the channel.
+#: Verified here — the exact recording that killed a real session now
+#: completes uncompressed.
+#:
+#: This stays for headroom, not necessity.  The cap still exists, and the
+#: utterance still sits in history until the turn that consumed it is
+#: evicted: 5.12 MB per press as WAV against 0.64 MB as MP3.  8x is worth
+#: keeping for a bound nobody wants to meet again.
 UTTERANCE_MIME = "audio/mpeg"
 #: Mono, 16 kHz, 32 kbps: 8x smaller than the PCM.  Speech at this
 #: bitrate is what telephony has always been; if it ever costs the model
