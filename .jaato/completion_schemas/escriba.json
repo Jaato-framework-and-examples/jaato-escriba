@@ -2,28 +2,33 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["agent", "anotado"],
+  "required": [
+    "anotado"
+  ],
   "properties": {
-    "agent": { "type": "string", "const": "escriba" },
-
     "anotado": {
       "type": "string",
       "minLength": 1,
       "description": "En una línea, qué te has quedado de este turno. Si no anotaste nada, di por qué en esa misma línea."
     },
-
     "nada_que_anotar": {
       "type": "boolean",
       "description": "true SOLO cuando en este turno no hubo nada que mereciera guardarse — un saludo, un «sí», un «sigue». No lo pongas para ahorrarte el trabajo: inventarse una memoria es peor que no guardar ninguna, porque un segundo cerebro que se inventa lo que sabe no sirve para nada."
     },
-
     "warnings": {
-      "type": "array", "items": { "type": "string" },
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
       "description": "Avisos que no bloquean nada."
     },
     "errors": {
-      "type": "array", "items": { "type": "string" },
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
       "description": "Marcadores de fallo duro: intentaste y no pudiste."
     }
-  }
+  },
+  "description": "El campo `agent` NO está aquí a propósito. Era un `const` que el modelo tenía que repetir, y repetir una constante que el framework ya conoce es papeleo: se olvidaba, `signal_completion` se rechazaba con \"'agent' is a required property\", y cada olvido gastaba un intento Y un nudge del presupuesto de la sesión. Medido: 22 rechazos por esa sola causa."
 }

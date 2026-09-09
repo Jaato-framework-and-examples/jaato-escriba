@@ -3,15 +3,10 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "agent",
     "aceptadas",
     "descartadas"
   ],
   "properties": {
-    "agent": {
-      "type": "string",
-      "const": "juez"
-    },
     "aceptadas": {
       "type": "array",
       "description": "Los candidatos que de verdad tratan del tema. Vacío es una respuesta correcta y frecuente: una búsqueda que no encontró nada bueno no rinde nada.",
@@ -89,5 +84,6 @@
       },
       "description": "Marcadores de fallo duro: no pudiste juzgar."
     }
-  }
+  },
+  "description": "El campo `agent` NO está aquí a propósito. Era un `const` que el modelo tenía que repetir, y repetir una constante que el framework ya conoce es papeleo: se olvidaba, `signal_completion` se rechazaba con \"'agent' is a required property\", y cada olvido gastaba un intento Y un nudge del presupuesto de la sesión. Medido: 22 rechazos por esa sola causa."
 }
