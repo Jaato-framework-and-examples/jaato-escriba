@@ -28,15 +28,23 @@ description: >
 # It costs almost nothing: measured 1.40 s per turn with completion
 # against 1.30 s without, because the session stays warm rather than
 # cold-restarting.
-# Four attempts to close the turn, not the framework default of two
-# (jaato#919, shipped in #927).
+# One nudge per TURN, so this has to cover the whole conversation.
 #
-# Two is right for a strong tool-caller and tight for this shape: the
-# audio tier reliably does the work and unreliably reports it done, and
-# one nudge is routinely spent on a redundant `enter_tier(voz)` that
-# comes back "already_at_tier" — leaving exactly one real attempt.
-# Measured before the knob existed: 4 memories written, 3 turns unclosed.
-max_completion_nudges: 4
+# The budget is per SESSION by design: `_completion_nudges_fired` is
+# zeroed only in `__init__`, and `_begin_turn_completion_state` refuses to
+# reset it because resetting it once cost the framework its only bound on
+# the nudge loop (jaato#767 — a session that turned 735 times in 40
+# seconds).  The reasoning ends on "a completion-gated session is one-shot
+# by construction", which was true until #913/#915 made a completed
+# session revivable — which is exactly what lets this one be gated AND
+# multi-turn.
+#
+# This model never completes on its own: measured across 43 sessions,
+# every turn ends in text and waits for the nudge.  So the budget drains
+# at one per turn and the conversation dies at turn N+1.  At 4 it died at
+# the fifth.  40 is roughly "longer than anyone talks in one sitting" —
+# a ceiling, not a fix.
+max_completion_nudges: 40
 
 completion_payload_schema: completion_schemas/escriba.json
 completion_processors:
