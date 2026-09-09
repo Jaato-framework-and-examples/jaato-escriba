@@ -1,3 +1,4 @@
+# juez — openrouter set: text only, one turn.
 name: juez
 inherits: [_base_juez]
 plugins: []
@@ -6,4 +7,4 @@ provider: openrouter
 plugin_configs:
   openrouter:
     api_params:
-      temperature: 0.0   # el mismo veredicto para los mismos candidatos
+      temperature: 0.0   # the same verdict for the same candidates

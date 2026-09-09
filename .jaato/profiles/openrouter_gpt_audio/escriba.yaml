@@ -1,60 +1,59 @@
-# escriba — set openrouter: oye y habla con openai/gpt-audio.
+# escriba — openrouter set: hears and speaks with openai/gpt-audio.
 name: escriba
 inherits: [_base_escriba]
-plugins: []  # vacío = conserva la superficie heredada de _base_escriba
+plugins: []  # empty keeps the surface inherited from _base_escriba
 
-# NO se declaran `model:` ni `provider:` en el nivel superior: los dos
-# tiers los declaran enteros, y desde jaato#822 eso basta.
+# NO top-level `model:` or `provider:`: both tiers declare them in full,
+# and since jaato#822 that is enough.
 #
-# `runner_spawn.py:455-464` documenta la cadena — profile.provider →
-# `model_tiers[initial].provider` → `session_env["JAATO_PROVIDER"]` — y
-# el comentario del propio arreglo dice que derivar del tier inicial «is
-# what makes that advice true», refiriéndose al aviso del validador que
-# invita a quitarlos.  Antes de ese arreglo un perfil solo-tiers moría
-# con `envelope.provider_name is empty`, que en el cliente se veía como
-# un timeout de 60 s; ya no.
+# `runner_spawn.py:455-464` documents the chain — profile.provider ->
+# `model_tiers[initial].provider` -> `session_env["JAATO_PROVIDER"]` — and
+# the fix's own comment says deriving from the initial tier "is what makes
+# that advice true", referring to the validator hint that suggests
+# dropping them.  Before that fix a tiers-only profile died with
+# `envelope.provider_name is empty`, which surfaced client-side as a 60 s
+# timeout; not any more.
 
-# DOS TIERS, porque hablar y usar herramientas quieren modelos distintos.
+# TWO TIERS, because speaking and using tools want different models.
 #
-# Un tier lleva modelo, proveedor, modalidades y una regla de salida —
-# NO herramientas.  El esquema de herramientas es de toda la sesión y
-# vive en el prefijo de la caché de prompt, así que ambos tiers ven
-# `store_memory`; lo que cambia el tier es QUÉ MODELO está al volante
-# cuando se decide llamarla.  Y ahí está el motivo: un modelo de audio
-# ANUNCIA la herramienta en vez de invocarla — medido en el repo de
-# referencia, dijo «voy a abrir el parte» y no llamó a nada.  Ninguna
-# redacción de persona convierte a un mal tool-caller en uno bueno.
+# A tier carries a model, a provider, modalities and an exit rule — NOT
+# tools.  The tool schema is session-wide and lives in the prompt-cache
+# prefix, so both tiers see `store_memory`; what the tier changes is WHICH
+# MODEL is at the wheel when the decision to call it is made.  And there
+# is the reason: an audio model ANNOUNCES the tool instead of invoking it
+# — measured in the reference repo, it said «voy a abrir el parte» and
+# called nothing.  No persona wording turns a weak tool-caller into a
+# strong one.
 #
-# La sesión ARRANCA en `voz` porque la entrada es audio: un modelo de
-# texto no puede oír al usuario, así que no puede ser el tier al que
-# llega la intervención.
+# The session STARTS in `voz` because the input is audio: a text model
+# cannot hear the user, so it cannot be the tier the utterance arrives at.
 model_tiers:
-  # El único tier que se oye.  `bidirectional` no son dos papeles
-  # pegados: outbound hace que el daemon pida `modalities: [text, audio]`
-  # en la petición, e inbound es lo que deja que un adjunto `audio/*`
-  # llegue al cable como bloque `input_audio` en vez de ser retenido
-  # (jaato#830).  Declarar solo outbound lo dejaría hablando en una
-  # habitación que no oye.
+  # The only tier that is heard.  `bidirectional` is not two roles bolted
+  # together: outbound makes the daemon ask for `modalities: [text, audio]`
+  # on the request, and inbound is what lets an `audio/*` attachment reach
+  # the wire as an `input_audio` block instead of being withheld
+  # (jaato#830).  Declaring only outbound would leave it speaking into a
+  # room it cannot hear.
   voz:
-    # El gpt-audio COMPLETO, no el `-mini`, y el motivo es el acento.
-    # El mini habla español de América y no se le puede mover de ahí:
-    # seis voces y una instrucción nombrando Madrid, castellano y la
-    # distinción c/z dieron el mismo seseo.  El completo sí produce
-    # castellano peninsular con esa misma instrucción.
+    # The FULL gpt-audio, not `-mini`, and the reason is the accent.  The
+    # mini speaks Latin American Spanish and cannot be moved off it: six
+    # voices and an explicit instruction naming Madrid, castellano and the
+    # c/z distinction all produced the same seseo.  The full model does
+    # produce peninsular Spanish with that same instruction.
     model: openai/gpt-audio
     provider: openrouter
     modalities: {audio: bidirectional}
+    # Spanish: the description renders verbatim into the `enter_tier`
+    # schema, so this is what the model reads when deciding where to go.
     description: 'el único tier que el usuario oye; entra aquí para decir cualquier cosa en voz alta'
-  # Se entra a escribir en la memoria, y se sale solo.  `exit_on:
-  # completion` significa UNA completion aquí y el control vuelve, sin
-  # que el modelo entrado tenga que devolverlo — que es exactamente lo
-  # que el tier de audio no hizo nunca por su cuenta en cuatro medidas.
+  # Entered to write into memory, and left again on its own.  `exit_on:
+  # completion` means ONE completion here and control returns, without the
+  # entered model having to hand it back — which is exactly what the audio
+  # tier never did unprompted across four measured runs.
   #
-  # No se llama `planner`: ese es uno de los cuatro nombres canónicos y
-  # carga el significado del framework, «decide la respuesta y cierra la
-  # sesión», que es lo contrario de este trabajo.  La descripción se
-  # renderiza literal en el esquema de `enter_tier`, así que es esto lo
-  # que el modelo lee al decidir a dónde va.
+  # Not named `planner`: that is one of the four canonical names and
+  # carries the framework's own meaning, "decides the answer and closes
+  # the session", which is the opposite of this job.
   escribano:
     model: openai/gpt-4o-mini
     provider: openrouter
@@ -66,15 +65,15 @@ model_tiers:
 plugin_configs:
   openrouter:
     framework_overrides:
-      # AFIRMA lo que el modelo puede emitir.  Ningún catálogo del árbol
-      # reporta modalidades de salida, así que sin esto el suelo se queda
-      # en solo-texto y el papel outbound del tier se RECHAZA al arrancar.
+      # ASSERTS what the model may emit.  No catalogue in the tree reports
+      # output modalities, so without this the floor stays text-only and
+      # the tier's outbound role is REFUSED at startup.
       output_modalities: [text, audio]
     api_params:
-      # SIN `temperature` — y es deliberado, no un olvido.  El scaffold
-      # escribe `temperature: 0.0` como knob de determinismo; en este
-      # modelo eso provoca bucles catastróficos: 818 s de habla medidos
-      # para una respuesta de una frase.
+      # NO `temperature`, and that is deliberate rather than an omission.
+      # The scaffold writes `temperature: 0.0` as a determinism knob; on
+      # this model it causes catastrophic looping — 818 s of speech
+      # measured for a one-sentence answer.
       audio:
         voice: marin
         format: pcm16

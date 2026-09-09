@@ -1,96 +1,107 @@
 # Tier-1 base for 'escriba' — PROVIDER-AGNOSTIC.
-# El modelo y el proveedor viven en profiles/<set>/escriba.yaml.
+# Model and provider live in profiles/<set>/escriba.yaml.
 name: _base_escriba
 description: >
-  Entrevista al usuario en voz y confía a la memoria lo que aprende.
-  Es residente: despierta sabiendo lo que le contaron la última vez.
+  Interviews the user by voice and entrusts what it learns to memory.
+  It is resident: it wakes up knowing what it was told last time.
 
-# NO HAY completion_payload_schema, y esa ausencia es todo el diseño.
+# THERE IS NO completion_payload_schema, and that absence is the whole
+# design.
 #
-# Declarar el esquema es lo que habilita `signal_completion`, y llamarlo
-# deja la sesión QUIESCENTE: el daemon emite SESSION_TERMINATED y suelta
-# el runner.  Una conversación no es un one-shot.  Completar tras cada
-# respuesta mata la sesión con la que la persona sigue hablando.
+# Declaring the schema is what enables `signal_completion`, and calling it
+# leaves the session QUIESCENT: the daemon emits SESSION_TERMINATED and
+# releases the runner.  A conversation is not a one-shot.  Completing
+# after every reply kills the session the person is still talking to.
 #
-# Y no hay vuelta atrás: jaato#845 — ni `session.wake` ni `inject_prompt`
-# transportan un adjunto, así que a una sesión multimodal que ya terminó
-# NO se le puede volver a hablar.  La sesión simplemente sigue viva y el
-# driver vuelve a preguntar.  Termina cuando la persona deja de hablarle,
-# que es lo que significa terminar una conversación.
+# And there is no way back: jaato#845 — neither `session.wake` nor
+# `inject_prompt` carries an attachment, so a multimodal session that has
+# ended can never be spoken to again — and jaato#913 — the answer to
+# `signal_completion` is never written into history, which is left with a
+# `tool_call` that has no response, and the provider rejects it with a
+# 400.  The session simply stays alive and the driver asks again.  It ends
+# when the person stops talking to it, which is what ending a
+# conversation means.
 
 plugins:
-  # Solo DOS herramientas, y eagerly.
+  # Only TWO tools, and eagerly.
   #
-  # `mode:preload` las mete en el esquema inicial para que un turno
-  # hablado no gaste un viaje en `list_tools`.  `tools:[...]` deja fuera
-  # las otras tres del plugin — y eso importa aquí por una razón que no
-  # tendría en un agente de texto: cada herramienta del esquema es un
-  # nombre que este modelo puede leer EN VOZ ALTA.
+  # `mode:preload` puts them in the initial schema so a spoken turn never
+  # spends a round trip on `list_tools`.  `tools:[...]` leaves the
+  # plugin's other three out — and that matters here for a reason it
+  # would not in a text agent: every tool in the schema is a name this
+  # model may read OUT LOUD.
   - "memory(mode:preload, tools:[store_memory, retrieve_memories])"
-  # El catálogo de lo que se ha encontrado fuera.  Se carga para que
-  # `enrich_tool_result` inyecte avisos de referencias cuyos tags casen
-  # con el resultado de `store_memory` — que es lo que trae los tags.
-  # Así la referencia aparece delante del escribano justo cuando está
-  # escribiendo de ese tema, sin que nadie tenga que pedirla.
+  # The catalogue of what has been found outside.  Loaded so that
+  # `enrich_tool_result` injects hints for references whose tags match the
+  # result of `store_memory` — which is what carries the tags.  That way
+  # the reference appears in front of the scribe exactly while it is
+  # writing about that topic, without anyone having to ask for it.
   #
-  # DOS herramientas, por `tools:[...]` y no por la lista blanca: el
-  # plugin marca las CUATRO como auto-aprobadas (references/plugin.py:4356),
-  # y un tool auto-aprobado se salta la política.  Subconjuntar es lo
-  # único que deja fuera `validateReference` y `compute_embedding`.
+  # TWO tools, via `tools:[...]` and not via the whitelist: the plugin
+  # marks all FOUR as auto-approved (references/plugin.py:4356), and an
+  # auto-approved tool bypasses the policy.  Subsetting is the only thing
+  # that keeps `validateReference` and `compute_embedding` out.
   - "references(mode:preload, tools:[listReferences, selectReferences])"
 
-# Fuera las capas de instrucciones inyectadas por el framework.  Este
-# agente conversa; las constantes de la plataforma (task-completion,
-# batching en paralelo, resúmenes de turno) hablan de trabajo que no
-# hace — y un modelo de audio paga ese prompt en CADA turno.
+# Drop the instruction layers the framework injects.  This agent
+# converses; the platform constants (task-completion, parallel batching,
+# turn summaries) describe work it does not do — and an audio model pays
+# for that prompt on EVERY turn.
 suppress_base_instructions: true
 
-# La conversación acumula audio como una de texto no lo hace: cada
-# intervención se queda en el historial como base64 y se reenvía en
-# TODOS los turnos siguientes.  El audio ya contestado no vale nada —
-# lo que lleva el sentido es la conversación — así que los turnos
-# viejos son justo lo que hay que soltar.
+# A conversation accumulates audio in a way a text one does not: every
+# utterance stays in history as base64 and is re-sent on ALL later turns.
+# Audio that has already been answered is worth nothing — the
+# conversation carries the meaning — so old turns are exactly what should
+# be dropped.
 gc:
   type: budget
   threshold_percent: 60.0
 
 plugin_configs:
   memory:
-    # El segundo cerebro tiene su PROPIA memoria, y las dos rutas lo dicen.
+    # The second brain has its OWN memory, and both paths say so.
     #
-    # `storage_path` es el nivel de workspace; `global_storage_path` es el
-    # nivel cruzado, que por defecto apunta a `~/.jaato/memories.jsonl` —
-    # el almacén de TODA la máquina, compartido con los ~40 repos vecinos.
-    # Redirigirlo aquí es lo que impide que el escriba lea, juzgue o toque
-    # memorias que no son suyas.
+    # `storage_path` is the workspace tier; `global_storage_path` is the
+    # cross-session tier, which by default points at
+    # `~/.jaato/memories.jsonl` — the whole machine's store, shared with
+    # the ~40 neighbouring repos.  Redirecting it here is what stops the
+    # scribe reading, judging or touching memories that are not its own.
     #
-    # Hace falta porque `allowed_scopes` no sirve para esto: se aplica solo
-    # al escribir (memory/plugin.py:1064).  Ni `retrieve_memories` ni
-    # `update_memory` lo consultan, así que sin redirigir la ruta global el
-    # curador alcanzaba las memorias personales del usuario — y en el primer
-    # arranque borró tres.
+    # It is needed because `allowed_scopes` does not do this: it applies
+    # only on write (memory/plugin.py:1064).  Neither `retrieve_memories`
+    # nor `update_memory` consults it, so without redirecting the global
+    # path the curator reached the user's personal memories — and on the
+    # first run it deleted three.
     #
-    # CAVEAT: `global_storage_path` está documentado como knob «for testing»
-    # (plugin.py:308).  Es una opción declarada y leída de la config, pero si
-    # una versión futura la retira, esta separación se pierde en silencio.
-    # DIRECTORIOS, no ficheros.  `MemoryStorage` acepta un `.jsonl` por
-    # compatibilidad, pero lo trata como RAÍZ: `x.jsonl` se convierte en
-    # el directorio `x/` con `raw/` y `curated.jsonl` dentro, y el fichero
-    # suelto se ignora sin migrarlo (storage.py:250-270).  Nombrar el
-    # directorio evita esa traducción silenciosa.
-    storage_path: .jaato/memoria/escriba
-    global_storage_path: .jaato/memoria/escriba-global
+    # CAVEAT: `global_storage_path` is documented as a "for testing" knob
+    # (plugin.py:308).  It is a declared option and it is read from
+    # config, but if a future version drops it this separation is lost
+    # silently.
+    #
+    # DIRECTORIES, not files.  `MemoryStorage` accepts a `.jsonl` for
+    # compatibility but treats it as a ROOT: `x.jsonl` becomes the
+    # directory `x/` with `raw/` and `curated.jsonl` inside, and the loose
+    # file is ignored without migration (storage.py:250-270).  Naming the
+    # directory avoids that silent translation.
+    storage_path: .jaato/memory/escriba
+    global_storage_path: .jaato/memory/escriba-global
+    # 'project' only.  A 'universal' memory auto-injects into EVERY jaato
+    # session on this machine, the ~40 neighbouring repos included.  The
+    # second brain is consulted by talking to it, not by polluting every
+    # other agent's prompt.
     allowed_scopes: ["project"]
   permission:
-    # Una llamada hablada no tiene dónde enseñar un prompt de permiso ni
-    # quién lo pulse.  Sin respuesta el turno simplemente se para: la
-    # sesión se queda callada, sin error.  Lista blanca explícita.
+    # A spoken call has nowhere to show a permission prompt and nobody to
+    # click it.  Unanswered, the turn simply stops: the session goes quiet
+    # with no error.  Explicit whitelist.
     policy:
       defaultPolicy: deny
       whitelist:
         tools:
           - store_memory
           - retrieve_memories
-          # El propio salto entre tiers.  Un `enter_tier` denegado deja
-          # al tier de voz con algo que decir y sin manera de escribirlo.
+          # The tier switch itself.  A denied `enter_tier` would strand
+          # the voice tier holding something to write and no way to write
+          # it.
           - enter_tier

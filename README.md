@@ -1,319 +1,325 @@
 # jaato-escriba
 
-**El segundo cerebro de una persona. Le pregunta en voz alta, y la
-siguiente vez recuerda lo que le contó.**
+**One person's second brain. It asks out loud, and next time it remembers
+what it was told.**
 
 ```bash
 python run_escriba.py
 ```
 
-Pulsa para hablar. Se despide con Ctrl-C, y consolida al salir.
+Push to talk. Ctrl-C says goodbye, and it consolidates on the way out.
 
-> **Estado.** La conversación funciona; la memoria todavía no se llena
-> sola. El escriba conversa pero no entra en su tier de escritura, así
-> que no llama a `store_memory` — medido: 0 llamadas en 5 turnos y 5,6
-> minutos. Es [jaato#913](https://github.com/Jaato-framework-and-examples/jaato/issues/913).
-> Todo lo que cuelga de esa llamada —la curación y el enriquecimiento con
-> referencias— está construido y probado por separado, y está esperando.
+> The agent speaks peninsular Spanish, so everything the model reads —
+> personas, tier descriptions, completion-schema `description` fields — is
+> written in Spanish. Docs, code and comments are English, like the
+> sibling repos.
+
+> **Status.** The conversation works; memory does not fill itself yet. The
+> scribe converses but never enters its writing tier, so it never calls
+> `store_memory` — measured: 0 calls across 5 turns and 5.6 minutes. That
+> is [jaato#913](https://github.com/Jaato-framework-and-examples/jaato/issues/913).
+> Everything hanging off that call — curation and reference enrichment —
+> is built and tested in isolation, and waiting.
 
 ---
 
-## La forma
+## The shape
 
 ```mermaid
 flowchart TB
-    tu(["tú"])
+    you(["you"])
 
-    subgraph S["sesión escriba · nunca completa"]
+    subgraph S["escriba session · never completes"]
         direction TB
-        voz["<b>voz</b> · openai/gpt-audio<br/>audio bidireccional<br/>oye y habla"]
-        esc["<b>escribano</b> · gpt-4o-mini<br/>exit_on: completion<br/>anota y consulta"]
+        voz["<b>voz</b> · openai/gpt-audio<br/>audio bidirectional<br/>hears and speaks"]
+        esc["<b>escribano</b> · gpt-4o-mini<br/>exit_on: completion<br/>writes and looks up"]
         voz -- "enter_tier" --> esc
-        esc -- "vuelve solo" --> voz
+        esc -- "returns on its own" --> voz
     end
 
-    mem[("memoria del escriba<br/>raw/ · curated.jsonl")]
-    cur["<b>curator</b> · gpt-4o-mini<br/>valida o descarta"]
+    mem[("the scribe's memory<br/>raw/ · curated.jsonl")]
+    cur["<b>curator</b> · gpt-4o-mini<br/>validates or discards"]
 
-    tu -- "audio/wav" --> voz
-    voz -- "audio" --> tu
+    you -- "audio/wav" --> voz
+    voz -- "audio" --> you
     esc -- "store_memory (raw)" --> mem
-    mem -- "al terminar la charla" --> cur
+    mem -- "once the talk ends" --> cur
     cur -- "maturity: validated" --> mem
-    mem -- "se auto-inyecta al despertar" --> voz
+    mem -- "auto-injected on waking" --> voz
 ```
 
-**Por qué dos tiers y no uno.** El esquema de herramientas es de toda la
-sesión; lo que cambia el tier es qué modelo está al volante cuando se
-decide llamarlas. Un modelo de audio ANUNCIA la herramienta en vez de
-invocarla — medido en `jaato-cascade-audio-interchange`: dijo «voy a
-abrir el parte» y no llamó a nada. Y cada nombre del esquema es una
-palabra que puede leer en voz alta. Así que oye y habla uno, y escribe
-otro.
+**Why two tiers and not one.** The tool schema is session-wide; what the
+tier changes is which model is at the wheel when the decision to call a
+tool is made. An audio model ANNOUNCES the tool instead of invoking it —
+measured in `jaato-cascade-audio-interchange`: it said *"voy a abrir el
+parte"* and called nothing. And every name in the schema is a word it may
+read out loud. So one hears and speaks, and another writes.
 
-**Por qué el curador es imprescindible.** Todo lo que el escriba anota
-nace en CRUDO, y una memoria en crudo no la alcanza ninguna búsqueda por
-tags ni se inyecta al despertar (`list_memory_tags`: *«pending_curation
-… which no tag search can reach»*). Sin alguien que la promueva a
-`validated`, el segundo cerebro no recuerda nada. El curador no es
-limpieza: es lo que hace cierto el «recuerda».
+**Why the curator is indispensable.** Everything the scribe writes is born
+RAW, and a raw memory is reachable by no tag search and is not injected on
+waking (`list_memory_tags`: *"pending_curation … which no tag search can
+reach"*). Without something to promote it to `validated`, the second brain
+remembers nothing. The curator is not tidying: it is what makes
+"remembers" true.
 
-**Por qué la conversación no declara `completion_payload_schema`.**
-Declararlo habilita `signal_completion`, y llamarlo deja la sesión
-quiescente. Una conversación no es un one-shot — y hoy es irreversible
-por partida doble: [jaato#845](https://github.com/Jaato-framework-and-examples/jaato/issues/845)
-(ni `session.wake` ni `inject_prompt` transportan un adjunto, así que a
-una sesión multimodal terminada no se le puede volver a hablar) y
+**Why the conversation declares no `completion_payload_schema`.**
+Declaring it enables `signal_completion`, and calling it leaves the
+session quiescent. A conversation is not a one-shot — and today it is
+irreversible twice over:
+[jaato#845](https://github.com/Jaato-framework-and-examples/jaato/issues/845)
+(neither `session.wake` nor `inject_prompt` carries an attachment, so a
+multimodal session that ended can never be spoken to again) and
 [jaato#913](https://github.com/Jaato-framework-and-examples/jaato/issues/913)
-(la respuesta de `signal_completion` no se escribe en el historial, que
-queda con un `tool_call` sin respuesta y lo rechaza el proveedor). La
-sesión sigue viva y el driver vuelve a preguntar.
+(the answer to `signal_completion` is never written into history, which is
+left holding a `tool_call` with no response, and the provider rejects it).
+The session simply stays alive and the driver asks again.
 
-El **juez** sí declara esquema, y es lo correcto: es de un solo turno y
-terminar es justo lo que tiene que hacer.
+The **judge** does declare a schema, and that is right: it is single-turn,
+and terminating is exactly its job.
 
-## Una conversación, de principio a fin
+## One conversation, end to end
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant T as tú
+    participant T as you
     participant D as run_escriba.py
-    participant E as sesión escriba
-    participant C as sesión curator
+    participant E as escriba session
+    participant C as curator session
 
-    D->>D: ¿quedaron memorias sin consolidar?
-    opt sí quedaron
-        Note over D,C: se dice en voz alta, no es una acción invisible
-        D->>C: «juzga lo que haya en crudo»
-        C-->>D: validadas
+    D->>D: any memories left uncurated?
+    opt yes
+        Note over D,C: said out loud — not an invisible action
+        D->>C: "judge whatever is raw"
+        C-->>D: validated
     end
 
-    D->>E: crear sesión
-    Note right of E: el inventario se rinde AQUÍ:<br/>por eso el drenaje va antes
-    E-->>T: saludo + doble pregunta · 3,8 s
+    D->>E: create session
+    Note right of E: the inventory is rendered HERE:<br/>which is why the drain runs first
+    E-->>T: greeting + double question · 3.8 s
 
-    loop mientras haya alguien
-        T->>D: pulsa y habla
+    loop while somebody is there
+        T->>D: push and talk
         D->>E: ask("", attachments=[wav])
-        E-->>T: respuesta hablada
+        E-->>T: spoken reply
     end
 
-    Note over T,D: Ctrl-C, o 120 s sin empezar a hablar
-    D->>C: «juzga lo que haya en crudo»
+    Note over T,D: Ctrl-C, or 120 s without starting to speak
+    D->>C: "judge whatever is raw"
 ```
 
-## Quién abre la conversación
+## Who opens the conversation
 
-La abre el driver, con una acotación — `[La sesión se abre…]` — y las
-palabras las pone la persona. El escriba saluda y hace **dos preguntas a
-la vez**, que es la única vez que le está permitido: si quieres enseñarle
-algo nuevo, o si seguís con un tema concreto que **elige él** de lo que
-ya sabe, nombrando qué le falta de ese tema.
+The driver does, with a stage direction — `[La sesión se abre…]` — and the
+words belong to the persona. The scribe greets and asks **two questions at
+once**, the only time it is allowed to: whether you want to teach it
+something new, or whether you carry on with a specific topic **it picks
+itself** from what it already knows, naming what it is missing about it.
 
-Para poder elegirlo tiene que saber qué sabe al despertar, y ahí no vale
-la inyección automática de memorias: `enrich_prompt` escoge las pistas
-POR PALABRAS CLAVE del prompt (`memory/plugin.py:847-861`), y una
-acotación no tiene ninguna. El inventario se calcula antes del primer
-turno con un prefetch:
+To pick that topic it has to know what it knows on waking, and the
+automatic memory injection cannot do it: `enrich_prompt` selects hints BY
+KEYWORD from the prompt (`memory/plugin.py:847-861`), and a stage
+direction has none. The inventory is computed before the first turn with a
+prefetch:
 
     .jaato/agents/escriba.md      {{!py:scripts/inventario.py}}
     .jaato/scripts/inventario.py  render(context, args) -> str
 
-Corre en la preparación de la sesión, llega al plugin de memoria por
-`context.registry` y rinde los temas con sus cuentas y su antigüedad. Sin
-round-trip al modelo y **sin herramientas nuevas en el esquema**.
+It runs during session preparation, reaches the memory plugin through
+`context.registry`, and renders the topics with their counts and their
+age. No model round-trip and **no new tools in the schema**.
 
-Aquí se cuenta lo CONTABLE —qué temas hay, cuántas piezas, cuándo se tocó
-cada uno—. Cuál está flojo lo juzga el escriba, que es una valoración y
-no una cuenta.
+It counts what is COUNTABLE — which topics exist, how many pieces, when
+each was last touched. Which one is thin is judged by the scribe, because
+that is an assessment and not a count.
 
-**El inventario es la lista completa de lo que sabe, y se lo dice así.**
-Un ejemplo con contenido realista en la persona es munición para
-confabular: la primera versión traía un saludo de muestra que hablaba de
-hidroponía, y con el inventario vacío el modelo lo recitó y lo adornó
-—«apunté que usas un sistema hidropónico, pero no sé qué nutrientes
-añades»— inventándose la vida del usuario en su primera frase. Para un
-segundo cerebro eso es la peor avería posible. Se arregló quitando el
-ejemplo (la forma se describe en prosa, que no se puede recitar) y
-poniendo la regla donde están los datos: cada rama del prefetch enuncia
-la suya.
+**The inventory is the complete list of what it knows, and it is told so.**
+A worked example with realistic content in a persona is ammunition for
+confabulation: the first version carried a sample greeting about
+hydroponics, and with an empty inventory the model recited it and
+embellished it — *"I noted you use a hydroponic system, but I don't know
+which nutrients you add"* — inventing the user's life in its first
+sentence. For a second brain that is the worst possible failure. Fixed by
+removing the example (the shape is described in prose, which cannot be
+recited) and putting the rule where the data is: each prefetch branch
+states its own.
 
-## Lo que encuentra fuera
+## What it finds outside
 
 ```mermaid
 flowchart LR
-    sm["store_memory<br/><i>tags = claves</i>"] --> obs["Observador<br/><i>dentro del driver</i>"]
-    obs --> ddg["DuckDuckGo<br/>8 candidatos"]
-    ddg --> juez["<b>juez</b><br/>un turno, un veredicto"]
-    juez -- "aceptadas" --> cat[/".jaato/references/auto-*.json"/]
-    juez -- "descartadas" --> desc[/"referencias_descartadas.json<br/>para no volver a juzgarlas"/]
+    sm["store_memory<br/><i>tags = keys</i>"] --> obs["Observer<br/><i>inside the driver</i>"]
+    obs --> ddg["DuckDuckGo<br/>8 candidates"]
+    ddg --> judge["<b>juez</b><br/>one turn, one verdict"]
+    judge -- "accepted" --> cat[/".jaato/references/auto-*.json"/]
+    judge -- "discarded" --> disc[/"discarded_references.json<br/>so they are never re-judged"/]
     cat --> rel["references reload"]
-    rel --> enr["enrich_tool_result<br/>casa tags"]
-    enr --> esc2["el escribano lo ve al anotar<br/>del mismo tema"]
-    esc2 --> ofrece["la voz lo OFRECE:<br/>«¿le echo un ojo?»"]
+    rel --> enr["enrich_tool_result<br/>matches tags"]
+    enr --> esc2["the escribano sees it<br/>while writing on that topic"]
+    esc2 --> offer["the voice OFFERS it:<br/>«¿le echo un ojo?»"]
 ```
 
-El reparto de siempre: **buscar y escribir el catálogo es mecánico** y se
-hace en Python; **decidir si un resultado vale es un juicio** y lo hace el
-juez. El JSON del catálogo no se le pide al modelo — un LLM redactando
-ficheros de configuración inventa campos y se deja llaves.
+The usual split: **searching and writing the catalogue is mechanical** and
+happens in Python; **deciding whether a result is any good is a
+judgement** and belongs to the judge. The catalogue JSON is not asked of
+the model — an LLM drafting config files invents fields and drops braces.
 
-**El veredicto son dos listas**, aceptadas y descartadas, y un procesador
-de completion cuadra cada URL contra las que se pasaron: cada una en una
-lista y solo en una, ninguna inventada. Sin ese gate la respuesta más
-barata es rendir dos aceptadas y callar sobre el resto — valida igual y
-parece trabajo hecho. Y las descartadas no son papeleo: son lo que impide
-volver a juzgar la misma URL mañana.
+**The verdict is two lists**, accepted and discarded, and a completion
+processor reconciles every URL against the ones it was handed: each in one
+list and only one, none invented. Without that gate the cheapest answer is
+to return two accepted and say nothing about the rest — it validates just
+the same and looks like finished work. And the discards are not paperwork:
+they are what stops the same URL being re-judged tomorrow.
 
-**Cómo llega la referencia al escriba.** Por el propio plugin:
-`references` implementa `enrich_tool_result`, que casa tags contra el
-resultado de las herramientas, y el resultado de `store_memory` lleva los
-tags. NO por `enrich_prompt`, que casa contra las palabras del prompt y
-en un turno hablado el prompt va vacío: la pregunta es el adjunto.
+**How the reference reaches the scribe.** Through the plugin itself:
+`references` implements `enrich_tool_result`, which matches tags against
+tool results, and the result of `store_memory` carries the tags. NOT
+through `enrich_prompt`, which matches against the words of the prompt —
+and on a spoken turn the prompt is empty, because the question is the
+attachment.
 
-**Y hay que recargar el catálogo tras escribirlo.** Se lee al arrancar
-(`set_workspace_path` → `_reload_catalog`) y luego se queda quieto.
-Medido: 7 referencias antes de escribir la octava, 7 después, y 8 solo
-tras `execute_command("references", ["reload"])`. Sin eso, lo que se
-encuentra hoy no se ofrece hasta la conversación siguiente.
+**And the catalogue must be reloaded after writing it.** It is read at
+startup (`set_workspace_path` → `_reload_catalog`) and then stays put.
+Measured: 7 references before writing an eighth, 7 after, and 8 only once
+`execute_command("references", ["reload"])` runs. Without it, what is
+found today is not offered until the next conversation.
 
-El escriba **ofrece, no usa**: una cosa por respuesta, al final, y nunca
-lee una URL en voz alta —«un artículo de Martin Fowler», no la
-dirección—. Si dices que sí, entra en `escribano` y la selecciona.
+The scribe **offers, it does not use**: one thing per reply, at the end,
+and it never reads a URL out loud — "an article by Martin Fowler", not the
+address. If you say yes, it enters `escribano` and selects it.
 
-> Los candidatos se juzgan por título y fragmento; nadie los abre. Una
-> URL catalogada puede haber caducado.
+> Candidates are judged from title and snippet; nothing opens them. A
+> catalogued URL may have gone stale.
 
-## Arranque
+## Startup
 
-Se saluda a los **3,8 s**: 1,6 s de crear la sesión y 2,2 s de lo que el
-modelo de audio tarda en soltar el primer byte.
+It greets at **3.8 s**: 1.6 s to create the session and 2.2 s of the audio
+model's time to first byte.
 
-Eran 8,8 s, y el 64 % se iba en el curador — 1,6 s en abrir su sesión y
-4,0 s en un drenaje de apertura que **no podía servir para nada**, porque
-el inventario se rinde al CREAR la sesión del escriba, antes de que el
-curador promueva nada.
+It used to be 8.8 s, and 64% of that was the curator — 1.6 s to open its
+session and 4.0 s on an opening drain that **could not possibly help**,
+because the inventory is rendered when the scribe's session is CREATED,
+before the curator promotes anything.
 
-Ahora ese drenaje solo se paga **si hay algo que juzgar**, y entonces sí
-sirve, porque va por delante del inventario:
+That drain is now paid **only when there is something to judge**, and then
+it does buy something, because it runs ahead of the inventory:
 
-    · quedaron 2 memorias sin consolidar de la última vez — las juzgo antes de empezar
-    · consolidado; ya puedo empezar sabiéndolo
+    · 2 memories left uncurated last time — judging them before we start
+    · consolidated; I can start knowing it
 
-La condición se cuenta del almacén en crudo (`memoria.py`) y no de una
-bandera de «la última sesión terminó bien»: una bandera hay que
-escribirla al abrir y borrarla al cerrar, y un `kill -9` entre medias la
-deja mintiendo. Las memorias en crudo SON la condición — y cogen además
-el caso que la bandera no ve, que una sesión limpia deje cola porque el
-curador juzga de ocho en ocho.
+The condition is counted from the raw store (`memory.py`) rather than kept
+in a "last session ended cleanly" flag: a flag has to be written on open
+and cleared on close, and a `kill -9` in between leaves it lying. Raw
+memories ARE the condition — and they catch the case a flag cannot see,
+where a clean session leaves a backlog because the curator judges eight at
+a time.
 
-## Cómo se termina
+## How it ends
 
-**Ctrl-C** es la despedida normal, y consolida antes de salir.
+**Ctrl-C** is the normal goodbye, and it consolidates before exiting.
 
-El plazo de silencio (`SILENCIO_S`, 120 s) es la red de seguridad para
-cuando alguien se levanta y se va. Mide **abandono, no duración**:
-mientras la tecla esté pulsada se reinicia, así que una explicación larga
-no lo agota nunca.
+The silence deadline (`SILENCE_S`, 120 s) is the safety net for someone
+getting up and leaving. It measures **abandonment, not duration**: while
+the key is held it restarts, so a long explanation never exhausts it.
 
-Contarlo de otra manera fue un fallo real. Una intervención se entrega
-cuando se SUELTA la tecla, no cuando se empieza a hablar
-(`ptt_capture.py:426-432`), así que un único `wait_for` sobre la cola
-mide «cuánto tardas en terminar de hablar». Quien se paraba diez segundos
-a pensar y explicaba cuarenta entregaba a los cincuenta, y con el plazo
-en cuarenta y cinco la conversación se cerraba MIENTRAS seguía hablando.
-`Ears.escuchar` mira ahora si hay pulsación abierta —o un corte cerrado
-todavía sin entregar— y reinicia el plazo en vez de rendirse.
+Counting it the other way was a real bug. An utterance is delivered when
+the key is RELEASED, not when speech starts
+(`ptt_capture.py:426-432`), so a single `wait_for` on the queue measures
+"how long you take to finish talking". Someone who paused ten seconds to
+think and explained for forty delivered at fifty, and with the deadline at
+forty-five the conversation was closed WHILE they were still speaking.
+`Ears.listen` now checks whether a press is open — or a closed cut not yet
+delivered, which is the window between releasing and arriving — and
+restarts the deadline instead of giving up.
 
-## Los ficheros
+## The files
 
 | | |
 |---|---|
-| `run_escriba.py` | El driver. Todo el SDK son dos sesiones y tres `ask`. |
-| `voice.py` | Oídos y boca: el puente hilo↔asyncio y el sumidero de audio. |
-| `memoria.py` | Qué quedó sin consolidar de la última vez. |
-| `referencias.py` | Buscar, juzgar y catalogar lo de fuera. |
-| `ptt_capture.py`, `pulse_playback.py` | Copiados sin tocar de `jaato-cascade-audio-interchange`. No saben nada de jaato. |
-| `.jaato/agents/*.md` | Las tres personas: escriba, curator, juez. |
-| `.jaato/profiles/` | `_base_*` agnóstico + set `openrouter_gpt_audio`. |
+| `run_escriba.py` | The driver. All the SDK is two sessions and three `ask` calls. |
+| `voice.py` | Ears and mouth: the thread↔asyncio bridge and the audio sink. |
+| `memory.py` | What was left uncurated last time. |
+| `enrichment.py` | Search, judge and catalogue what is outside. |
+| `ptt_capture.py`, `pulse_playback.py` | Copied unchanged from `jaato-cascade-audio-interchange`. They know nothing about jaato. |
+| `.jaato/agents/*.md` | The three personas: escriba, curator, juez. |
+| `.jaato/profiles/` | Provider-agnostic `_base_*` plus the `openrouter_gpt_audio` set. |
 
-Todo lo que no es SDK vive fuera del driver a propósito: `run_escriba.py`
-debe leerse como lo que quiere demostrar.
+Everything that is not SDK lives outside the driver on purpose:
+`run_escriba.py` should read as what it means to demonstrate.
 
-## Lo que el SDK se lleva
+## What the SDK takes care of
 
-`IPCClient.session()` conecta, configura y crea la sesión. `Session.ask`
-es dueño de la receta de enviar-y-esperar (`first-of {TURN_COMPLETED,
-SESSION_TERMINATED}`), así que un turno no puede colgarse aquí.
-Suscribirse a eventos, contar terminales y desuscribirse no aparece en
-este repo porque no es del que escribe el driver.
+`IPCClient.session()` connects, configures and creates the session.
+`Session.ask` owns the send-and-wait recipe (`first-of {TURN_COMPLETED,
+SESSION_TERMINATED}`), so a turn cannot hang here. Subscribing to events,
+counting terminals and unsubscribing do not appear in this repo because
+they do not belong to whoever writes the driver.
 
-`ask` y no `complete`: **una llamada es un TURNO**, y la conversación es
-el bucle que la repite sobre la MISMA sesión. `complete` espera a que la
-sesión TERMINE — correcto para el juez, fatal para una charla.
+`ask` and not `complete`: **one call is one TURN**, and the conversation is
+the loop that repeats it over the SAME session. `complete` waits for the
+session to END — right for the judge, fatal for a conversation.
 
-La simetría que hace posible hablar: `ask` devuelve lo que el modelo
-ESCRIBIÓ y `on_media` entrega lo que DIJO, según suena. El audio del
-usuario entra por `attachments`, y en un turno hablado el prompt va
-VACÍO — la pregunta ES el adjunto.
+The symmetry that makes speaking possible: `ask` returns what the model
+WROTE and `on_media` hands over what it SAID, as it sounds. The user's
+audio goes in through `attachments`, and on a spoken turn the prompt is
+EMPTY — the question IS the attachment.
 
-## Incidente del 2026-09-09 — leer antes de tocar los permisos
+## Incident 2026-09-09 — read before touching permissions
 
-En su primer arranque el curador **borró tres memorias reales del
-usuario**, dos personales, con 22 y 18 usos. Se recuperaron íntegras del
-journal de la sesión, que es suerte y no diseño.
+On its first run the curator **deleted three of the user's real
+memories**, two of them personal, with 22 and 18 uses. They were recovered
+intact from the session journal, which is luck and not design.
 
-Dos causas, ambas estructurales:
+Two causes, both structural:
 
-1. **`delete_memory` estaba en la lista blanca**, y la persona decía
-   «prefiere descartar a borrar». La prosa es una sugerencia; la lista
-   blanca es el contrato. Al re-probar con la herramienta retirada, el
-   modelo **volvió a intentar borrar** y fue denegado — que es la prueba
-   de cuál de las dos capas manda.
-2. **`allowed_scopes: ["project"]` no aislaba nada.** Es un *write-side
-   gate*: se aplica solo al almacenar (`memory/plugin.py:1064`).
-   `retrieve_memories` y `delete_memory` no lo consultan, y el nivel
-   global apunta por defecto a `~/.jaato/memories.jsonl` — el almacén de
-   toda la máquina.
+1. **`delete_memory` was on the whitelist**, and the persona said "prefer
+   discarding to deleting". Prose is a suggestion; the whitelist is the
+   contract. On the re-test with the tool removed, the model **tried to
+   delete again** and was denied — which is the proof of which of the two
+   layers governs.
+2. **`allowed_scopes: ["project"]` isolated nothing.** It is a *write-side
+   gate*: it applies only on store (`memory/plugin.py:1064`).
+   `retrieve_memories` and `delete_memory` never consult it, and the
+   global tier points by default at `~/.jaato/memories.jsonl` — the whole
+   machine's store.
 
-Arreglado retirando `delete_memory` del whitelist y redirigiendo
-`global_storage_path` al workspace.
+Fixed by removing `delete_memory` from the whitelist and redirecting
+`global_storage_path` into the workspace.
 
-**La lista blanca no es una frontera.** Un plugin puede marcar
-herramientas como auto-aprobadas, y esas se saltan la política: `memory`
-lo hace con `store_memory` (`plugin.py:740`) y `references` con las
-cuatro suyas (`plugin.py:4356`). `delete_memory` quedaba fuera solo
-porque no está en esa lista — suerte, no diseño. **La frontera de verdad
-es `tools:[...]` en `plugins:`**, que deja la herramienta fuera del
-registro. Ha mordido tres veces en este repo.
+**The whitelist is not a boundary.** A plugin can mark tools as
+auto-approved, and those bypass the policy: `memory` does it for
+`store_memory` (`plugin.py:740`) and `references` for all four of its own
+(`plugin.py:4356`). `delete_memory` was blocked only because it is not on
+that list — luck, not design. **The real boundary is `tools:[...]` in
+`plugins:`**, which keeps the tool out of the registry. It has bitten
+three times in this repo.
 
-Corolario, del mismo día: con `store_memory` a mano, el curador descartó
-una memoria buena y la volvió a guardar en crudo con `content` y
-`description` intercambiados — cada drenaje la descartaba y la recreaba,
-así que no se validaba nunca. Ahora el curador no puede escribir ni
-borrar: juzga lo que ya está escrito.
+Corollary, same day: with `store_memory` within reach, the curator
+discarded a good memory and stored it again raw with `content` and
+`description` swapped — every drain discarded and recreated it, so it was
+never validated. The curator can now neither write nor delete: it judges
+what is already written.
 
-## Procedencia — verificado contra el framework INSTALADO
+## Provenance — verified against the INSTALLED framework
 
-Buena parte del diseño viene de `jaato-cascade-audio-interchange`, cuyo
-`KNOWN_ISSUES.md` es una foto contra un servidor más viejo. Contra el
-0.7.0 instalado:
+Much of the design comes from `jaato-cascade-audio-interchange`, whose
+`KNOWN_ISSUES.md` is a snapshot against an older server. Against the
+installed 0.7.0:
 
-| | estado real en 0.7.0 |
+| | actual state in 0.7.0 |
 |---|---|
-| **#822** tier sin `model`/`provider` arriba no arranca | **ARREGLADO.** `runner_spawn.py:455-464` documenta la cadena `profile.provider → model_tiers[initial].provider → JAATO_PROVIDER`. Comprobado: este perfil, solo-tiers, crea sesión en 1,5 s. |
-| **#845** ni `wake` ni `inject_prompt` llevan adjunto | **SIGUE VIVO.** `inject_prompt(text, source_type, source_id, timeout)`; `command_router.py` no menciona adjuntos. |
-| **#913** la respuesta de `signal_completion` no llega al historial | **ABIERTO**, encontrado aquí. `jaato_session.py:5992` corta el turno y se salta la continuación que la escribiría; el historial queda con un `tool_call` sin respuesta y el proveedor lo rechaza con un 400. |
-| **#912** `storage_path` `.jsonl` se reinterpreta como directorio | **ABIERTO**, encontrado aquí. |
+| **#822** a tiers-only profile without top-level `model`/`provider` will not start | **FIXED.** `runner_spawn.py:455-464` documents the chain `profile.provider → model_tiers[initial].provider → JAATO_PROVIDER`. Verified: this profile, tiers-only, creates a session in 1.5 s. |
+| **#845** neither `wake` nor `inject_prompt` carries an attachment | **STILL LIVE.** `inject_prompt(text, source_type, source_id, timeout)`; `command_router.py` never mentions attachments. |
+| **#913** the answer to `signal_completion` never reaches history | **OPEN**, found here. `jaato_session.py:5992` cuts the turn short and skips the continuation that would write it; history is left with a `tool_call` with no response and the provider rejects it with a 400. |
+| **#912** a `.jsonl` `storage_path` is reinterpreted as a directory | **OPEN**, found here. |
 
-No verificado, heredado de aquel repo: que `temperature: 0.0` hace bucle
-en gpt-audio (818 s medidos) y que el `-mini` no sale del seseo. Son
-medidas de comportamiento del modelo, no del framework.
+Not verified, inherited from that repo: that `temperature: 0.0` makes
+gpt-audio loop (818 s measured) and that the `-mini` cannot leave the
+seseo. Those are measurements of model behaviour, not of the framework.
 
-## Requisitos
+## Requirements
 
-`parec`, `paplay`, `pactl`, `pw-metadata`, un daemon jaato en
-`/tmp/jaato.sock`, y credencial de OpenRouter en
-`~/.jaato/openrouter_auth.json` (`openrouter-auth`). El micrófono es el
-`wraith_mic` de `ptt_capture.py`.
+`parec`, `paplay`, `pactl`, `pw-metadata`, a jaato daemon on
+`/tmp/jaato.sock`, and OpenRouter credentials in
+`~/.jaato/openrouter_auth.json` (`openrouter-auth`). The microphone is
+`ptt_capture.py`'s `wraith_mic`.

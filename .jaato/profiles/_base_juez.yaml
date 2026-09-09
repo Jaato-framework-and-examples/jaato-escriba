@@ -1,16 +1,21 @@
+# Tier-1 base for 'juez' — PROVIDER-AGNOSTIC.
 name: _base_juez
 description: >
-  Decide si unos resultados de búsqueda tratan del tema. Un turno, un
-  veredicto, y se acaba.
-plugins: []          # no necesita herramientas: juzga lo que se le da
+  Decides whether some search results are about the topic. One turn, one
+  verdict, and it is done.
+plugins: []          # needs no tools: it judges what it is handed
 suppress_base_instructions: true
+# It DOES declare a schema, unlike the conversational profiles, and that
+# is correct: this session is single-turn and terminating is exactly its
+# job, so jaato#913 never bites it.
 completion_payload_schema: completion_schemas/juez.json
 completion_processors:
-  # Cuadra el veredicto contra los candidatos que se le dieron: cada URL
-  # en una lista y solo en una.  Sin esto, rendir dos aceptadas y callar
-  # sobre el resto valida igual y parece trabajo hecho.
-  - script: scripts/processors/todas_juzgadas.py
-    name: todas_juzgadas
+  # Reconciles the verdict against the candidates it was handed: every URL
+  # in one list and only one.  Without this, returning two accepted and
+  # saying nothing about the rest validates just the same and looks like
+  # finished work.
+  - script: scripts/processors/all_judged.py
+    name: all_judged
     on_error: fail_completion
     max_refusals: 3
     on_exhausted: allow

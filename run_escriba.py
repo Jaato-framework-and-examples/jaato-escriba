@@ -1,39 +1,41 @@
-"""escriba — un segundo cerebro que entrevista en voz y recuerda.
+"""escriba — a second brain that interviews by voice and remembers.
 
     python run_escriba.py
 
-Pulsa para hablar. Cuenta lo que sepas. Cuando te calles, se duerme.
-La próxima vez despierta sabiendo lo que le contaste.
+Push to talk. Tell it what you know. Ctrl-C says goodbye, and it
+consolidates on the way out. Next time it wakes up knowing what you told
+it.
 
 ------------------------------------------------------------------
-Lo que este fichero quiere demostrar
+What this file means to demonstrate
 ------------------------------------------------------------------
-Todo el trato con el framework son CUATRO líneas — dos sesiones y tres
-`ask` — y ninguna de ellas es fontanería:
+Every dealing with the framework is FOUR lines — two sessions and three
+`ask` calls — and none of them is plumbing:
 
-    async with IPCClient.session(profile="escriba", ...) as escriba:
-        await escriba.ask(SALUDO, on_media=boca.hablar)
-        await escriba.ask("", attachments=[dicho], on_media=boca.hablar)
+    async with IPCClient.session(profile="escriba", ...) as scribe:
+        await scribe.ask(GREETING, on_media=mouth.speak)
+        await scribe.ask("", attachments=[said], on_media=mouth.speak)
 
-    async with IPCClient.session(profile="curator", ...) as curador:
-        await curador.ask(DRENAJE)
+    async with IPCClient.session(profile="curator", ...) as curator:
+        await curator.ask(DRAIN)
 
-Dos bloques y no uno anidado, porque son dos momentos: el curador no
-participa en la conversación, es lo que pasa DESPUÉS de ella — y
-abrirlo antes costaba 5,6 s de silencio delante de la persona.
+Two blocks rather than one nested pair, because they are two moments: the
+curator takes no part in the conversation, it is what happens AFTER it —
+and opening it beforehand cost 5.6 s of silence in front of the person.
 
-`IPCClient.session` conecta, configura y crea la sesión; `Session.ask`
-es dueño de la receta de enviar-y-esperar (`first-of {TURN_COMPLETED,
-SESSION_TERMINATED}`), así que un turno no puede colgarse en este
-código.  Suscribirse a eventos, contar terminales, desuscribirse: nada
-de eso aparece aquí porque nada de eso es de quien escribe el driver.
+`IPCClient.session` connects, configures and creates the session;
+`Session.ask` owns the send-and-wait recipe (`first-of {TURN_COMPLETED,
+SESSION_TERMINATED}`), so a turn cannot hang in this code.  Subscribing to
+events, counting terminals, unsubscribing: none of it appears here
+because none of it belongs to whoever writes the driver.
 
-`on_media` es la simetría que hace posible una conversación hablada:
-`ask` devuelve lo que el modelo ESCRIBIÓ y `on_media` entrega lo que
-DIJO, según suena.  El audio del usuario entra por `attachments`.
+`on_media` is the symmetry that makes a spoken conversation possible:
+`ask` returns what the model WROTE and `on_media` hands over what it
+SAID, as it sounds.  The user's audio goes in through `attachments`.
 
-Lo que no es SDK — micrófono, altavoz, el puente hilo/asyncio — vive en
-`voice.py`, y debajo en dos módulos copiados sin tocar de
+Everything that is not SDK lives outside this file: `voice.py` (the
+thread/asyncio bridge and the audio sink), `memory.py`, `enrichment.py`,
+and underneath them two modules copied unchanged from
 `jaato-cascade-audio-interchange` (`ptt_capture`, `pulse_playback`).
 """
 from __future__ import annotations
@@ -44,120 +46,118 @@ from pathlib import Path
 
 from jaato_sdk import ClientType, IPCClient
 
-import memoria
+import enrichment
+import memory
 import ptt_capture
-import referencias
 import voice
 
 WORKSPACE = Path(__file__).resolve().parent
 
-#: Abre la sesión.  Una acotación, no una pregunta: las palabras del
-#: saludo son de la persona (`agents/escriba.md`), y esto solo le dice
-#: que el micrófono ya está abierto.
-SALUDO = "[La sesión se abre. El usuario está a la escucha.]"
+#: Opens the session.  A stage direction, not a question: the words of the
+#: greeting belong to the persona (`agents/escriba.md`), and this only
+#: tells it the microphone is now open.
+GREETING = "[La sesión se abre. El usuario está a la escucha.]"
 
-#: Despierta al curador.  Sus reglas — cuántas de una vez, qué se
-#: valida — son suyas, no del driver.
+#: Wakes the curator.  Its rules — how many at a time, what gets validated
+#: — are its own, not the driver's.
 #:
-#: «Juzga», no «vacía».  La primera redacción decía «Vacía lo que haya en
-#: crudo» y el modelo la leyó como lo que parece: vaciar.  Eso no fue la
-#: causa del incidente del 2026-09-09 — la causa fue tener
-#: `delete_memory` en la lista blanca — pero un verbo que invita a
-#: destruir no tiene por qué estar aquí.
-DRENAJE = "Juzga lo que haya en crudo."
+#: "Judge", not "empty".  The first wording said «Vacía lo que haya en
+#: crudo» and the model read it as what it looks like: empty them.  That
+#: was not the cause of the 2026-09-09 incident — having `delete_memory`
+#: on the whitelist was — but a verb that invites destruction has no
+#: reason to be here.
+DRAIN = "Juzga lo que haya en crudo."
 
-#: Cuánto puede estar la persona SIN EMPEZAR a hablar antes de dar la
-#: conversación por terminada.  Mide abandono, no duración: mientras la
-#: tecla esté pulsada el plazo se reinicia (`voice.Ears.escuchar`), así
-#: que una explicación larga nunca lo agota.
+#: How long the person may go WITHOUT STARTING to speak before the
+#: conversation is treated as over.  It measures abandonment, not
+#: duration: while the key is held the deadline restarts
+#: (`voice.Ears.listen`), so a long explanation never exhausts it.
 #:
-#: Generoso a propósito.  Es la red de seguridad para cuando alguien se
-#: levanta y se va; la manera DELIBERADA de terminar es Ctrl-C, que
-#: consolida igual.
-SILENCIO_S = 120.0
+#: Generous on purpose.  It is the safety net for someone getting up and
+#: leaving; the DELIBERATE way to end is Ctrl-C, which consolidates too.
+SILENCE_S = 120.0
 
 
 async def main() -> int:
-    boca = voice.Tongue()
-    conexion = dict(workspace_path=str(WORKSPACE),
-                    env_file=str(WORKSPACE / ".env"),
-                    # API: un driver headless.  El servidor retira
-                    # `signal_completion` de las sesiones raíz de un
-                    # cliente TERMINAL/WEB/CHAT, y aquí no lo usamos —
-                    # pero declarar la identidad real es lo que hace que
-                    # el filtro aplique lo correcto.
-                    client_type=ClientType.API)
+    mouth = voice.Tongue()
+    conn = dict(workspace_path=str(WORKSPACE),
+                env_file=str(WORKSPACE / ".env"),
+                # API: a headless driver.  The server strips
+                # `signal_completion` from root sessions of a
+                # TERMINAL/WEB/CHAT client, and we do not use it here —
+                # but declaring the real identity is what makes the filter
+                # apply the right thing.
+                client_type=ClientType.API)
 
-    # Lo que quedara sin juzgar de la última vez, y SOLO si quedó algo.
+    # Whatever was left unjudged last time, and ONLY if something was.
     #
-    # Va por delante de abrir al escriba a propósito: su inventario se
-    # rinde al CREAR su sesión, así que esto es lo único que puede hacer
-    # que lo de la última vez entre en el saludo de hoy.  Al revés —que
-    # es como estaba— el drenaje terminaba después de que el inventario
-    # ya estuviera hecho, y no servía para nada.
+    # It runs before opening the scribe on purpose: its inventory is
+    # rendered when its session is CREATED, so this is the only thing that
+    # can get last time's memories into today's greeting.  The other way
+    # round — which is how it started — the drain finished after the
+    # inventory was already built, and served no purpose at all.
     #
-    # Condicional, porque incondicional costaba 5,6 s de silencio en cada
-    # arranque para no hacer nada el 99 % de las veces.  Y dicho en voz
-    # alta en la terminal: es trabajo que se hace antes de saludar y no
-    # tiene por qué ser invisible.
-    pendientes = memoria.sin_consolidar(WORKSPACE)
-    if pendientes:
-        print(f"· quedaron {pendientes} memorias sin consolidar de la última "
-              f"vez — las juzgo antes de empezar")
+    # Conditional, because unconditional cost 5.6 s of silence on every
+    # start to do nothing 99% of the time.  And said out loud in the
+    # terminal: it is work done before greeting, and it has no reason to
+    # be invisible.
+    pending = memory.uncurated_count(WORKSPACE)
+    if pending:
+        print(f"· {pending} memories left uncurated last time — "
+              f"judging them before we start")
         async with IPCClient.session(profile="curator", agent="curator",
-                                     **conexion) as curador:
-            await curador.ask(DRENAJE)
-        print("· consolidado; ya puedo empezar sabiéndolo")
+                                     **conn) as curator:
+            await curator.ask(DRAIN)
+        print("· consolidated; I can start knowing it")
 
-    with voice.Ears() as oidos:
-        # El curador no se abre para la conversación, y no es un descuido:
-        # que se pueda saludar en tres segundos en vez de en nueve.
-        #
-        # medido, abrirlo aquí costaba 1,6 s de sesión más 4,0 s de turno,
-        # el 64 % de los 8,8 s que se tardaba en decir la primera palabra.
-        # Solo se paga ese precio cuando hay algo que juzgar (arriba), y
-        # entonces sirve para algo porque va antes del inventario.
+    with voice.Ears() as ears:
+        # The curator is not opened for the conversation, and that is not
+        # an oversight: measured, opening it here cost 1.6 s of session
+        # plus 4.0 s of turn, 64% of the 8.8 s it used to take to say the
+        # first word.  That price is only paid when there is something to
+        # judge (above), and then it buys something, because it runs
+        # before the inventory.
         async with IPCClient.session(profile="escriba", agent="escriba",
-                                     **conexion) as escriba:
+                                     **conn) as scribe:
 
-            # Un ojo puesto en lo que se va guardando: cada memoria nueva
-            # dispara por detrás una búsqueda fuera, un juez que decide si
-            # los resultados valen, y el catálogo de `references` — que a
-            # partir de ahí las ofrece solas cuando la conversación vuelve
-            # a rozar el tema.  En tareas de fondo: la conversación no
-            # espera a algo que como mucho sirve para el turno siguiente.
-            ojo = referencias.Observador(conexion, WORKSPACE)
-            ojo.enganchar(escriba.client)
+            # An eye on what gets stored: each new memory kicks off, in the
+            # background, a search outside, a judge deciding whether the
+            # results are any good, and the `references` catalogue — which
+            # from then on offers them by itself when the conversation
+            # brushes the topic again.  Background tasks: the conversation
+            # does not wait for something that at best matters next turn.
+            watcher = enrichment.Observer(conn, WORKSPACE)
+            watcher.attach(scribe.client)
 
-            await escriba.ask(SALUDO, on_media=boca.hablar)
-            print(f"escriba: {boca.ultimo() or '(habló)'}")
+            await scribe.ask(GREETING, on_media=mouth.speak)
+            print(f"escriba: {mouth.last() or '(spoke)'}")
 
-            # El prompt va VACÍO en un turno hablado: la pregunta ES el
-            # adjunto.  Un texto al lado sería una segunda pregunta entre
-            # las que la persona tendría que elegir.
+            # The prompt goes EMPTY on a spoken turn: the question IS the
+            # attachment.  Text beside it would be a second question the
+            # persona has to choose between.
             #
-            # Ctrl-C se recoge AQUÍ y no fuera: cortar es la manera normal
-            # de despedirse, y lo aprendido en la conversación se pierde
-            # entero si la consolidación no llega a correr.
+            # Ctrl-C is caught HERE and not outside: interrupting is the
+            # normal way to say goodbye, and everything learned in the
+            # conversation is lost entirely if consolidation never runs.
             try:
-                while (dicho := await oidos.escuchar(SILENCIO_S)) is not None:
-                    await escriba.ask("", attachments=[dicho],
-                                      on_media=boca.hablar)
-                    print(f"escriba: {boca.ultimo() or '(habló)'}")
-                print("· nadie al otro lado")
+                while (said := await ears.listen(SILENCE_S)) is not None:
+                    await scribe.ask("", attachments=[said],
+                                     on_media=mouth.speak)
+                    print(f"escriba: {mouth.last() or '(spoke)'}")
+                print("· nobody on the other side")
             except (KeyboardInterrupt, asyncio.CancelledError):
-                print("\n· hasta luego")
+                print("\n· goodbye")
 
-            # Que termine lo que estuviera buscando antes de cerrar.
-            await ojo.esperar()
+            # Let whatever it was searching finish before closing.
+            await watcher.drain()
 
-        # Y ahora sí, con la conversación cerrada y nadie esperando, el
-        # curador: consolidar lo aprendido es lo que hará que la próxima
-        # vez despierte sabiéndolo.  Aquí su coste no se lo come nadie.
-        print("· consolidando")
+        # And now, with the conversation closed and nobody waiting, the
+        # curator: consolidating what was learned is what will make it
+        # wake up knowing it next time.  Here its cost is nobody's.
+        print("· consolidating")
         async with IPCClient.session(profile="curator", agent="curator",
-                                     **conexion) as curador:
-            await curador.ask(DRENAJE)
+                                     **conn) as curator:
+            await curator.ask(DRAIN)
     return 0
 
 
@@ -165,8 +165,8 @@ if __name__ == "__main__":
     try:
         sys.exit(asyncio.run(main()))
     except ptt_capture.SourceMuted as exc:
-        sys.exit(f"micrófono mudo: {exc}")
+        sys.exit(f"microphone muted: {exc}")
     except KeyboardInterrupt:
-        # Un Ctrl-C DENTRO de la conversación ya se recoge ahí dentro y
-        # consolida.  Este solo cubre el corte antes o después de eso.
+        # A Ctrl-C INSIDE the conversation is caught in there and
+        # consolidates.  This only covers an interrupt before or after it.
         sys.exit(130)

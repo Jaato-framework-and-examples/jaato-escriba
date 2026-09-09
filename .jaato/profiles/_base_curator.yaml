@@ -1,39 +1,39 @@
 # Tier-1 base for 'curator' — PROVIDER-AGNOSTIC.
 name: _base_curator
 description: >
-  Juzga lo que el escriba anotó en crudo: lo valida o lo descarta.
-  Es lo que hace que «recordar» sea cierto — sin él la cola en crudo
-  no la alcanza ninguna búsqueda por tags y la próxima sesión despierta
-  sin nada.
+  Judges what the scribe wrote down raw: validates it or lets it go.
+  It is what makes "remembering" true — without it the raw queue is
+  reachable by no tag search, and the next session wakes up with nothing.
 
-# NO declara completion_payload_schema, igual que el escriba, y por un
-# motivo distinto: es una FACULTAD, no un servicio al que se llama.  No
-# puede decidir que ha terminado.  Retener el esquema es lo que quita
-# `signal_completion` del todo.
+# It declares no completion_payload_schema, like the scribe, and for a
+# different reason: it is a FACULTY, not a service that gets called.  It
+# cannot decide it is finished.  Withholding the schema is what removes
+# `signal_completion` entirely.
 #
-# Tampoco habla ni oye: aquí no hay tiers ni modalidades.  La cosa que
-# juzga las memorias no es la misma que las escribe.
+# It neither speaks nor hears: there are no tiers or modalities here.  The
+# thing that judges the memories is not the thing that writes them.
 
 plugins:
-  # TRES herramientas, y ninguna más EXISTE en esta sesión.
+  # THREE tools, and nothing else EXISTS in this session.
   #
-  # `mode:preload` porque `update_memory` está DIFERIDA tras
-  # descubrimiento — un curador que tiene que llamar a `list_tools` antes
-  # de poder validar nada gasta su primer turno buscándose las manos.
+  # `mode:preload` because `update_memory` is DEFERRED behind discovery —
+  # a curator that has to call `list_tools` before it can validate
+  # anything spends its first turn looking for its own hands.
   #
-  # `tools:[...]` es la parte que importa: deja fuera `store_memory` y
-  # `delete_memory` del registro entero, no solo del permiso. Hace falta
-  # porque la lista blanca NO alcanza a `store_memory`: el plugin lo
-  # marca como auto-aprobado (memory/plugin.py:740) junto con
-  # `retrieve_memories` y `list_memory_tags`, y un tool auto-aprobado se
-  # salta la política. `delete_memory` quedaba bloqueado solo porque no
-  # está en esa lista — suerte, no diseño.
+  # `tools:[...]` is the part that matters: it leaves `store_memory` and
+  # `delete_memory` out of the whole registry, not just out of the
+  # permission policy.  That is necessary because the whitelist does NOT
+  # reach `store_memory`: the plugin marks it auto-approved
+  # (memory/plugin.py:740) along with `retrieve_memories` and
+  # `list_memory_tags`, and an auto-approved tool bypasses the policy.
+  # `delete_memory` was blocked only because it is not on that list —
+  # luck, not design.
   #
-  # Medido 2026-09-09: con `store_memory` a mano, el curador descartó una
-  # memoria buena y la volvió a guardar en crudo con `content` y
-  # `description` intercambiados. Cada drenaje la descartaba y la
-  # recreaba, así que no se validaba nunca y el conocimiento no llegaba a
-  # cuajar. El curador JUZGA lo que ya está escrito; no escribe.
+  # Measured 2026-09-09: with `store_memory` within reach, the curator
+  # discarded a good memory and stored it again raw with `content` and
+  # `description` swapped.  Every drain discarded and recreated it, so it
+  # never got validated and the knowledge never set.  The curator JUDGES
+  # what is already written; it does not write.
   - "memory(mode:preload, tools:[retrieve_memories, update_memory, list_memory_tags])"
 
 gc:
@@ -43,51 +43,26 @@ gc:
 
 plugin_configs:
   memory:
-    # El segundo cerebro tiene su PROPIA memoria, y las dos rutas lo dicen.
-    #
-    # `storage_path` es el nivel de workspace; `global_storage_path` es el
-    # nivel cruzado, que por defecto apunta a `~/.jaato/memories.jsonl` —
-    # el almacén de TODA la máquina, compartido con los ~40 repos vecinos.
-    # Redirigirlo aquí es lo que impide que el escriba lea, juzgue o toque
-    # memorias que no son suyas.
-    #
-    # Hace falta porque `allowed_scopes` no sirve para esto: se aplica solo
-    # al escribir (memory/plugin.py:1064).  Ni `retrieve_memories` ni
-    # `update_memory` lo consultan, así que sin redirigir la ruta global el
-    # curador alcanzaba las memorias personales del usuario — y en el primer
-    # arranque borró tres.
-    #
-    # CAVEAT: `global_storage_path` está documentado como knob «for testing»
-    # (plugin.py:308).  Es una opción declarada y leída de la config, pero si
-    # una versión futura la retira, esta separación se pierde en silencio.
-    # DIRECTORIOS, no ficheros.  `MemoryStorage` acepta un `.jsonl` por
-    # compatibilidad, pero lo trata como RAÍZ: `x.jsonl` se convierte en
-    # el directorio `x/` con `raw/` y `curated.jsonl` dentro, y el fichero
-    # suelto se ignora sin migrarlo (storage.py:250-270).  Nombrar el
-    # directorio evita esa traducción silenciosa.
-    storage_path: .jaato/memoria/escriba
-    global_storage_path: .jaato/memoria/escriba-global
+    # Same store as the scribe, and same reasoning — see _base_escriba.
+    storage_path: .jaato/memory/escriba
+    global_storage_path: .jaato/memory/escriba-global
     allowed_scopes: ["project"]
   permission:
     policy:
       defaultPolicy: deny
       whitelist:
-        # SIN `delete_memory`, y esto es una garantía, no una preferencia.
+        # WITHOUT `delete_memory`, and this is a guarantee, not a
+        # preference.
         #
-        # Incidente 2026-09-09: el curador borró tres memorias reales del
-        # usuario en su primer arranque —  entre ellas dos personales, con
-        # 22 y 18 usos.  La persona SÍ decía «prefiere descartar a borrar»;
-        # la prosa es una sugerencia y la lista blanca es el contrato, así
-        # que ganó el contrato.
+        # Incident 2026-09-09: on its first run the curator deleted three
+        # of the user's real memories — two of them personal, with 22 and
+        # 18 uses.  The persona DID say "prefer discarding to deleting";
+        # prose is a suggestion and the whitelist is the contract, so the
+        # contract won.
         #
-        # Y `allowed_scopes: ["project"]` no protegía de nada: se aplica
-        # SOLO en la ruta de escritura (memory/plugin.py:1064, «write-side
-        # gate»).  Ni `retrieve_memories` ni `delete_memory` lo consultan,
-        # así que el curador alcanzaba el almacén global `universal` del
-        # usuario entero.
-        #
-        # Descartar hace todo lo que la curación necesita y es reversible:
-        # es un cambio de `maturity`, no una pérdida.  Borrar no se
-        # recupera — estas tres solo volvieron porque el journal de la
-        # sesión conservaba su contenido íntegro, que es suerte y no diseño.
+        # Discarding does everything curation needs and is reversible: it
+        # is a change of `maturity`, not a loss.  Deleting is not
+        # recoverable — those three only came back because the session
+        # journal happened to hold their full content, which is luck and
+        # not design.
         tools: [retrieve_memories, update_memory, list_memory_tags]
