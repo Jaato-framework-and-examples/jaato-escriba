@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent", "aceptadas", "descartadas"],
+  "properties": {
+    "agent": { "type": "string", "const": "juez" },
+
+    "aceptadas": {
+      "type": "array",
+      "description": "Los candidatos que de verdad tratan del tema. Vacío es una respuesta correcta y frecuente: una búsqueda que no encontró nada bueno no rinde nada.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url", "nombre", "descripcion"],
+        "properties": {
+          "url": { "type": "string", "minLength": 8,
+            "description": "La URL del candidato, copiada TAL CUAL de la lista. No la inventes ni la retoques." },
+          "nombre": { "type": "string", "minLength": 1, "maxLength": 80,
+            "description": "Nombre corto y humano de la fuente, como se diría al mencionarla en voz alta." },
+          "descripcion": { "type": "string", "minLength": 1,
+            "description": "Una frase que diga QUÉ APORTA sobre el tema. Con esta frase se volverá a encontrar la referencia más adelante por parecido semántico, así que nombra los conceptos, no la calidad ('explica X e Y', no 'artículo muy completo')." }
+        }
+      }
+    },
+
+    "descartadas": {
+      "type": "array",
+      "description": "Los candidatos que NO valen, con el motivo. No es papeleo: esta lista es lo que impide que la misma URL se vuelva a juzgar en cada búsqueda futura, y es donde se ve si estás descartando bien.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url", "motivo"],
+        "properties": {
+          "url": { "type": "string", "minLength": 8,
+            "description": "La URL del candidato, copiada TAL CUAL de la lista." },
+          "motivo": { "type": "string", "minLength": 1, "maxLength": 200,
+            "description": "Por qué no vale, en pocas palabras y concreto: 'es una tienda', 'coincide por la palabra suelta pero habla de arneses de escalada', 'agregador sin contenido propio'." }
+        }
+      }
+    },
+
+    "warnings": { "type": "array", "items": { "type": "string" },
+      "description": "Avisos que no bloquean nada." },
+    "errors": { "type": "array", "items": { "type": "string" },
+      "description": "Marcadores de fallo duro: no pudiste juzgar." }
+  }
+}

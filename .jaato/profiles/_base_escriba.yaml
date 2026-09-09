@@ -27,6 +27,17 @@ plugins:
   # tendría en un agente de texto: cada herramienta del esquema es un
   # nombre que este modelo puede leer EN VOZ ALTA.
   - "memory(mode:preload, tools:[store_memory, retrieve_memories])"
+  # El catálogo de lo que se ha encontrado fuera.  Se carga para que
+  # `enrich_tool_result` inyecte avisos de referencias cuyos tags casen
+  # con el resultado de `store_memory` — que es lo que trae los tags.
+  # Así la referencia aparece delante del escribano justo cuando está
+  # escribiendo de ese tema, sin que nadie tenga que pedirla.
+  #
+  # DOS herramientas, por `tools:[...]` y no por la lista blanca: el
+  # plugin marca las CUATRO como auto-aprobadas (references/plugin.py:4356),
+  # y un tool auto-aprobado se salta la política.  Subconjuntar es lo
+  # único que deja fuera `validateReference` y `compute_embedding`.
+  - "references(mode:preload, tools:[listReferences, selectReferences])"
 
 # Fuera las capas de instrucciones inyectadas por el framework.  Este
 # agente conversa; las constantes de la plataforma (task-completion,

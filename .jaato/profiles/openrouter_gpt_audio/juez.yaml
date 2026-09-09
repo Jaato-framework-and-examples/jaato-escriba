@@ -1,0 +1,9 @@
+name: juez
+inherits: [_base_juez]
+plugins: []
+model: openai/gpt-4o-mini
+provider: openrouter
+plugin_configs:
+  openrouter:
+    api_params:
+      temperature: 0.0   # el mismo veredicto para los mismos candidatos

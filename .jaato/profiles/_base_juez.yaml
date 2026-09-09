@@ -1,0 +1,16 @@
+name: _base_juez
+description: >
+  Decide si unos resultados de búsqueda tratan del tema. Un turno, un
+  veredicto, y se acaba.
+plugins: []          # no necesita herramientas: juzga lo que se le da
+suppress_base_instructions: true
+completion_payload_schema: completion_schemas/juez.json
+completion_processors:
+  # Cuadra el veredicto contra los candidatos que se le dieron: cada URL
+  # en una lista y solo en una.  Sin esto, rendir dos aceptadas y callar
+  # sobre el resto valida igual y parece trabajo hecho.
+  - script: scripts/processors/todas_juzgadas.py
+    name: todas_juzgadas
+    on_error: fail_completion
+    max_refusals: 3
+    on_exhausted: allow

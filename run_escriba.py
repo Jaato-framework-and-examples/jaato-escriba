@@ -46,6 +46,7 @@ from jaato_sdk import ClientType, IPCClient
 
 import memoria
 import ptt_capture
+import referencias
 import voice
 
 WORKSPACE = Path(__file__).resolve().parent
@@ -119,6 +120,15 @@ async def main() -> int:
         async with IPCClient.session(profile="escriba", agent="escriba",
                                      **conexion) as escriba:
 
+            # Un ojo puesto en lo que se va guardando: cada memoria nueva
+            # dispara por detrás una búsqueda fuera, un juez que decide si
+            # los resultados valen, y el catálogo de `references` — que a
+            # partir de ahí las ofrece solas cuando la conversación vuelve
+            # a rozar el tema.  En tareas de fondo: la conversación no
+            # espera a algo que como mucho sirve para el turno siguiente.
+            ojo = referencias.Observador(conexion, WORKSPACE)
+            ojo.enganchar(escriba.client)
+
             await escriba.ask(SALUDO, on_media=boca.hablar)
             print(f"escriba: {boca.ultimo() or '(habló)'}")
 
@@ -137,6 +147,9 @@ async def main() -> int:
                 print("· nadie al otro lado")
             except (KeyboardInterrupt, asyncio.CancelledError):
                 print("\n· hasta luego")
+
+            # Que termine lo que estuviera buscando antes de cerrar.
+            await ojo.esperar()
 
         # Y ahora sí, con la conversación cerrada y nadie esperando, el
         # curador: consolidar lo aprendido es lo que hará que la próxima
