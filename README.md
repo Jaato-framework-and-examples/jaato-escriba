@@ -52,6 +52,34 @@ irreversible: ni `session.wake` ni `inject_prompt` transportan un
 adjunto, así que a una sesión multimodal terminada no se le puede volver
 a hablar. La sesión sigue viva y el driver vuelve a preguntar.
 
+## Quién abre la conversación
+
+La abre el driver, con una acotación — `[La sesión se abre…]` — y las
+palabras las pone la persona. El escriba saluda y hace **dos preguntas
+a la vez**, que es la única vez que le está permitido: si quieres
+enseñarle algo nuevo, o si seguís con un tema concreto que **elige él**
+de lo que ya sabe, nombrando qué le falta de ese tema.
+
+Para poder elegirlo tiene que saber qué sabe en el momento de despertar,
+y ahí no vale la inyección automática de memorias: `enrich_prompt`
+escoge las pistas POR PALABRAS CLAVE del prompt
+(`memory/plugin.py:847-861`), y una acotación no tiene ninguna, así que
+no engancharía con nada. El inventario se calcula antes del primer turno
+con un prefetch:
+
+    .jaato/agents/escriba.md      {{!py:scripts/inventario.py}}
+    .jaato/scripts/inventario.py  render(context, args) -> str
+
+Corre en la preparación de la sesión, llega al plugin de memoria por
+`context.registry` y rinde los temas con sus cuentas y su antigüedad. Sin
+round-trip al modelo y **sin herramientas nuevas en el esquema** — que
+importa, porque cada nombre del esquema es una palabra que el modelo de
+voz puede leer en voz alta.
+
+El reparto es el de siempre: aquí se cuenta lo CONTABLE — qué temas hay,
+cuántas piezas, cuándo se tocó cada uno. Cuál está flojo lo juzga el
+escriba, porque eso es una valoración y no una cuenta.
+
 ## Los ficheros
 
 | | |

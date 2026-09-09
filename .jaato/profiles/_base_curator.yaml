@@ -45,8 +45,13 @@ plugin_configs:
     # CAVEAT: `global_storage_path` está documentado como knob «for testing»
     # (plugin.py:308).  Es una opción declarada y leída de la config, pero si
     # una versión futura la retira, esta separación se pierde en silencio.
-    storage_path: .jaato/memoria/escriba.jsonl
-    global_storage_path: .jaato/memoria/escriba-global.jsonl
+    # DIRECTORIOS, no ficheros.  `MemoryStorage` acepta un `.jsonl` por
+    # compatibilidad, pero lo trata como RAÍZ: `x.jsonl` se convierte en
+    # el directorio `x/` con `raw/` y `curated.jsonl` dentro, y el fichero
+    # suelto se ignora sin migrarlo (storage.py:250-270).  Nombrar el
+    # directorio evita esa traducción silenciosa.
+    storage_path: .jaato/memoria/escriba
+    global_storage_path: .jaato/memoria/escriba-global
     allowed_scopes: ["project"]
   permission:
     policy:
