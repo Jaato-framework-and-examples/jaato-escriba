@@ -1,0 +1,8 @@
+# Local env holds a LIVE provider credential — never commit it.
+.env
+!.env.example
+.jaato/memoria/
+.jaato/sessions/
+.jaato/logs/
+.jaato/.artifact_tracker.json
+__pycache__/

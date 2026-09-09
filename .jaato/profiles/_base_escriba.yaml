@@ -1,0 +1,80 @@
+# Tier-1 base for 'escriba' — PROVIDER-AGNOSTIC.
+# El modelo y el proveedor viven en profiles/<set>/escriba.yaml.
+name: _base_escriba
+description: >
+  Entrevista al usuario en voz y confía a la memoria lo que aprende.
+  Es residente: despierta sabiendo lo que le contaron la última vez.
+
+# NO HAY completion_payload_schema, y esa ausencia es todo el diseño.
+#
+# Declarar el esquema es lo que habilita `signal_completion`, y llamarlo
+# deja la sesión QUIESCENTE: el daemon emite SESSION_TERMINATED y suelta
+# el runner.  Una conversación no es un one-shot.  Completar tras cada
+# respuesta mata la sesión con la que la persona sigue hablando.
+#
+# Y no hay vuelta atrás: jaato#845 — ni `session.wake` ni `inject_prompt`
+# transportan un adjunto, así que a una sesión multimodal que ya terminó
+# NO se le puede volver a hablar.  La sesión simplemente sigue viva y el
+# driver vuelve a preguntar.  Termina cuando la persona deja de hablarle,
+# que es lo que significa terminar una conversación.
+
+plugins:
+  # Solo DOS herramientas, y eagerly.
+  #
+  # `mode:preload` las mete en el esquema inicial para que un turno
+  # hablado no gaste un viaje en `list_tools`.  `tools:[...]` deja fuera
+  # las otras tres del plugin — y eso importa aquí por una razón que no
+  # tendría en un agente de texto: cada herramienta del esquema es un
+  # nombre que este modelo puede leer EN VOZ ALTA.
+  - "memory(mode:preload, tools:[store_memory, retrieve_memories])"
+
+# Fuera las capas de instrucciones inyectadas por el framework.  Este
+# agente conversa; las constantes de la plataforma (task-completion,
+# batching en paralelo, resúmenes de turno) hablan de trabajo que no
+# hace — y un modelo de audio paga ese prompt en CADA turno.
+suppress_base_instructions: true
+
+# La conversación acumula audio como una de texto no lo hace: cada
+# intervención se queda en el historial como base64 y se reenvía en
+# TODOS los turnos siguientes.  El audio ya contestado no vale nada —
+# lo que lleva el sentido es la conversación — así que los turnos
+# viejos son justo lo que hay que soltar.
+gc:
+  type: budget
+  threshold_percent: 60.0
+
+plugin_configs:
+  memory:
+    # El segundo cerebro tiene su PROPIA memoria, y las dos rutas lo dicen.
+    #
+    # `storage_path` es el nivel de workspace; `global_storage_path` es el
+    # nivel cruzado, que por defecto apunta a `~/.jaato/memories.jsonl` —
+    # el almacén de TODA la máquina, compartido con los ~40 repos vecinos.
+    # Redirigirlo aquí es lo que impide que el escriba lea, juzgue o toque
+    # memorias que no son suyas.
+    #
+    # Hace falta porque `allowed_scopes` no sirve para esto: se aplica solo
+    # al escribir (memory/plugin.py:1064).  Ni `retrieve_memories` ni
+    # `update_memory` lo consultan, así que sin redirigir la ruta global el
+    # curador alcanzaba las memorias personales del usuario — y en el primer
+    # arranque borró tres.
+    #
+    # CAVEAT: `global_storage_path` está documentado como knob «for testing»
+    # (plugin.py:308).  Es una opción declarada y leída de la config, pero si
+    # una versión futura la retira, esta separación se pierde en silencio.
+    storage_path: .jaato/memoria/escriba.jsonl
+    global_storage_path: .jaato/memoria/escriba-global.jsonl
+    allowed_scopes: ["project"]
+  permission:
+    # Una llamada hablada no tiene dónde enseñar un prompt de permiso ni
+    # quién lo pulse.  Sin respuesta el turno simplemente se para: la
+    # sesión se queda callada, sin error.  Lista blanca explícita.
+    policy:
+      defaultPolicy: deny
+      whitelist:
+        tools:
+          - store_memory
+          - retrieve_memories
+          # El propio salto entre tiers.  Un `enter_tier` denegado deja
+          # al tier de voz con algo que decir y sin manera de escribirlo.
+          - enter_tier

@@ -1,0 +1,73 @@
+# Tier-1 base for 'curator' — PROVIDER-AGNOSTIC.
+name: _base_curator
+description: >
+  Juzga lo que el escriba anotó en crudo: lo valida o lo descarta.
+  Es lo que hace que «recordar» sea cierto — sin él la cola en crudo
+  no la alcanza ninguna búsqueda por tags y la próxima sesión despierta
+  sin nada.
+
+# NO declara completion_payload_schema, igual que el escriba, y por un
+# motivo distinto: es una FACULTAD, no un servicio al que se llama.  No
+# puede decidir que ha terminado.  Retener el esquema es lo que quita
+# `signal_completion` del todo.
+#
+# Tampoco habla ni oye: aquí no hay tiers ni modalidades.  La cosa que
+# juzga las memorias no es la misma que las escribe.
+
+plugins:
+  # `preload` porque `update_memory` y `delete_memory` están DIFERIDAS
+  # tras descubrimiento — un curador que tiene que llamar a `list_tools`
+  # antes de poder validar nada gasta su primer turno buscándose las
+  # manos.
+  - memory(preload)
+
+gc:
+  type: hybrid
+  threshold_percent: 75.0
+  preserve_recent_turns: 4
+
+plugin_configs:
+  memory:
+    # El segundo cerebro tiene su PROPIA memoria, y las dos rutas lo dicen.
+    #
+    # `storage_path` es el nivel de workspace; `global_storage_path` es el
+    # nivel cruzado, que por defecto apunta a `~/.jaato/memories.jsonl` —
+    # el almacén de TODA la máquina, compartido con los ~40 repos vecinos.
+    # Redirigirlo aquí es lo que impide que el escriba lea, juzgue o toque
+    # memorias que no son suyas.
+    #
+    # Hace falta porque `allowed_scopes` no sirve para esto: se aplica solo
+    # al escribir (memory/plugin.py:1064).  Ni `retrieve_memories` ni
+    # `update_memory` lo consultan, así que sin redirigir la ruta global el
+    # curador alcanzaba las memorias personales del usuario — y en el primer
+    # arranque borró tres.
+    #
+    # CAVEAT: `global_storage_path` está documentado como knob «for testing»
+    # (plugin.py:308).  Es una opción declarada y leída de la config, pero si
+    # una versión futura la retira, esta separación se pierde en silencio.
+    storage_path: .jaato/memoria/escriba.jsonl
+    global_storage_path: .jaato/memoria/escriba-global.jsonl
+    allowed_scopes: ["project"]
+  permission:
+    policy:
+      defaultPolicy: deny
+      whitelist:
+        # SIN `delete_memory`, y esto es una garantía, no una preferencia.
+        #
+        # Incidente 2026-09-09: el curador borró tres memorias reales del
+        # usuario en su primer arranque —  entre ellas dos personales, con
+        # 22 y 18 usos.  La persona SÍ decía «prefiere descartar a borrar»;
+        # la prosa es una sugerencia y la lista blanca es el contrato, así
+        # que ganó el contrato.
+        #
+        # Y `allowed_scopes: ["project"]` no protegía de nada: se aplica
+        # SOLO en la ruta de escritura (memory/plugin.py:1064, «write-side
+        # gate»).  Ni `retrieve_memories` ni `delete_memory` lo consultan,
+        # así que el curador alcanzaba el almacén global `universal` del
+        # usuario entero.
+        #
+        # Descartar hace todo lo que la curación necesita y es reversible:
+        # es un cambio de `maturity`, no una pérdida.  Borrar no se
+        # recupera — estas tres solo volvieron porque el journal de la
+        # sesión conservaba su contenido íntegro, que es suerte y no diseño.
+        tools: [retrieve_memories, update_memory, list_memory_tags]

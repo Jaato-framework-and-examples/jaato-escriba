@@ -1,0 +1,13 @@
+# curator — set openrouter: solo texto, y bueno llamando herramientas.
+name: curator
+inherits: [_base_curator]
+plugins: []  # vacío = conserva la superficie heredada de _base_curator
+model: openai/gpt-4o-mini
+provider: openrouter
+plugin_configs:
+  openrouter:
+    api_params:
+      # Aquí sí: el curador es texto, no arrastra el defecto del modelo
+      # de audio, y su trabajo — el mismo veredicto para la misma
+      # memoria — es justo donde el determinismo vale algo.
+      temperature: 0.0

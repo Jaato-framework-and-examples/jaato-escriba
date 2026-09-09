@@ -1,0 +1,80 @@
+# escriba — set openrouter: oye y habla con openai/gpt-audio.
+name: escriba
+inherits: [_base_escriba]
+plugins: []  # vacío = conserva la superficie heredada de _base_escriba
+
+# NO se declaran `model:` ni `provider:` en el nivel superior: los dos
+# tiers los declaran enteros, y desde jaato#822 eso basta.
+#
+# `runner_spawn.py:455-464` documenta la cadena — profile.provider →
+# `model_tiers[initial].provider` → `session_env["JAATO_PROVIDER"]` — y
+# el comentario del propio arreglo dice que derivar del tier inicial «is
+# what makes that advice true», refiriéndose al aviso del validador que
+# invita a quitarlos.  Antes de ese arreglo un perfil solo-tiers moría
+# con `envelope.provider_name is empty`, que en el cliente se veía como
+# un timeout de 60 s; ya no.
+
+# DOS TIERS, porque hablar y usar herramientas quieren modelos distintos.
+#
+# Un tier lleva modelo, proveedor, modalidades y una regla de salida —
+# NO herramientas.  El esquema de herramientas es de toda la sesión y
+# vive en el prefijo de la caché de prompt, así que ambos tiers ven
+# `store_memory`; lo que cambia el tier es QUÉ MODELO está al volante
+# cuando se decide llamarla.  Y ahí está el motivo: un modelo de audio
+# ANUNCIA la herramienta en vez de invocarla — medido en el repo de
+# referencia, dijo «voy a abrir el parte» y no llamó a nada.  Ninguna
+# redacción de persona convierte a un mal tool-caller en uno bueno.
+#
+# La sesión ARRANCA en `voz` porque la entrada es audio: un modelo de
+# texto no puede oír al usuario, así que no puede ser el tier al que
+# llega la intervención.
+model_tiers:
+  # El único tier que se oye.  `bidirectional` no son dos papeles
+  # pegados: outbound hace que el daemon pida `modalities: [text, audio]`
+  # en la petición, e inbound es lo que deja que un adjunto `audio/*`
+  # llegue al cable como bloque `input_audio` en vez de ser retenido
+  # (jaato#830).  Declarar solo outbound lo dejaría hablando en una
+  # habitación que no oye.
+  voz:
+    # El gpt-audio COMPLETO, no el `-mini`, y el motivo es el acento.
+    # El mini habla español de América y no se le puede mover de ahí:
+    # seis voces y una instrucción nombrando Madrid, castellano y la
+    # distinción c/z dieron el mismo seseo.  El completo sí produce
+    # castellano peninsular con esa misma instrucción.
+    model: openai/gpt-audio
+    provider: openrouter
+    modalities: {audio: bidirectional}
+    description: 'el único tier que el usuario oye; entra aquí para decir cualquier cosa en voz alta'
+  # Se entra a escribir en la memoria, y se sale solo.  `exit_on:
+  # completion` significa UNA completion aquí y el control vuelve, sin
+  # que el modelo entrado tenga que devolverlo — que es exactamente lo
+  # que el tier de audio no hizo nunca por su cuenta en cuatro medidas.
+  #
+  # No se llama `planner`: ese es uno de los cuatro nombres canónicos y
+  # carga el significado del framework, «decide la respuesta y cierra la
+  # sesión», que es lo contrario de este trabajo.  La descripción se
+  # renderiza literal en el esquema de `enter_tier`, así que es esto lo
+  # que el modelo lee al decidir a dónde va.
+  escribano:
+    model: openai/gpt-4o-mini
+    provider: openrouter
+    exit_on: completion
+    description: 'anota y consulta lo aprendido; AQUÍ NO SE OYE — para decir algo, vuelve a voz'
+  initial: voz
+  fallback: voz
+
+plugin_configs:
+  openrouter:
+    framework_overrides:
+      # AFIRMA lo que el modelo puede emitir.  Ningún catálogo del árbol
+      # reporta modalidades de salida, así que sin esto el suelo se queda
+      # en solo-texto y el papel outbound del tier se RECHAZA al arrancar.
+      output_modalities: [text, audio]
+    api_params:
+      # SIN `temperature` — y es deliberado, no un olvido.  El scaffold
+      # escribe `temperature: 0.0` como knob de determinismo; en este
+      # modelo eso provoca bucles catastróficos: 818 s de habla medidos
+      # para una respuesta de una frase.
+      audio:
+        voice: marin
+        format: pcm16
