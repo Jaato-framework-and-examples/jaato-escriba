@@ -5,22 +5,41 @@ description: >
   Interviews the user by voice and entrusts what it learns to memory.
   It is resident: it wakes up knowing what it was told last time.
 
-# THERE IS NO completion_payload_schema, and that absence is the whole
-# design.
+# IT DOES declare a completion_payload_schema, and that is new: until
+# jaato#913 and #845 landed (2026-09-09) it could not.
 #
-# Declaring the schema is what enables `signal_completion`, and calling it
-# leaves the session QUIESCENT: the daemon emits SESSION_TERMINATED and
-# releases the runner.  A conversation is not a one-shot.  Completing
-# after every reply kills the session the person is still talking to.
+# Declaring it enables `signal_completion`, and calling it used to leave
+# the session unusable: the answer was never written into history, so the
+# next turn replayed a `tool_call` with no response and the provider
+# rejected it with a 400.  On top of that, neither resume verb carried an
+# attachment, so a voice session that completed could never be spoken to
+# again.  Both are fixed (#915, #914), and both were verified here before
+# this was turned on: three consecutive completions on one session, and a
+# completed session woken with an audio attachment.
 #
-# And there is no way back: jaato#845 — neither `session.wake` nor
-# `inject_prompt` carries an attachment, so a multimodal session that has
-# ended can never be spoken to again — and jaato#913 — the answer to
-# `signal_completion` is never written into history, which is left with a
-# `tool_call` that has no response, and the provider rejects it with a
-# 400.  The session simply stays alive and the driver asks again.  It ends
-# when the person stops talking to it, which is what ending a
-# conversation means.
+# WHY COMPLETE EVERY TURN.  It is the only thing that makes the scribe
+# write.  The persona asked it to and it did not — measured, 0 tool calls
+# across 5 turns and 5.6 minutes of real conversation, because an audio
+# model announces a tool instead of invoking it.  A completion processor
+# reads the tool-call ledger, which the model cannot rewrite, and refuses
+# the turn if nothing was stored.  Prose is a suggestion; a gate is a
+# contract.
+#
+# It costs almost nothing: measured 1.40 s per turn with completion
+# against 1.30 s without, because the session stays warm rather than
+# cold-restarting.
+completion_payload_schema: completion_schemas/escriba.json
+completion_processors:
+  # Refuses a turn that stored nothing and did not say why.
+  - script: scripts/processors/wrote_something.py
+    name: wrote_something
+    on_error: fail_completion
+    max_refusals: 2
+    # `allow`: after two refusals the turn stands.  The alternative is
+    # blocking a spoken conversation on a memory, and a person waiting in
+    # silence for a second brain to satisfy its own bookkeeping is worse
+    # than a memory lost.
+    on_exhausted: allow
 
 plugins:
   # Only TWO tools, and eagerly.

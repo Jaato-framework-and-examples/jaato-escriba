@@ -14,12 +14,12 @@ Push to talk. Ctrl-C says goodbye, and it consolidates on the way out.
 > written in Spanish. Docs, code and comments are English, like the
 > sibling repos.
 
-> **Status.** The conversation works; memory does not fill itself yet. The
-> scribe converses but never enters its writing tier, so it never calls
-> `store_memory` — measured: 0 calls across 5 turns and 5.6 minutes. That
-> is [jaato#913](https://github.com/Jaato-framework-and-examples/jaato/issues/913).
-> Everything hanging off that call — curation and reference enrichment —
-> is built and tested in isolation, and waiting.
+> **Status.** It works end to end: it converses, it writes down what it is
+> told, it curates on the way out, and it searches outside for what it
+> just learned. It writes because it is *made* to — see the gate below.
+> One rough edge remains: the audio tier does the work and then does not
+> always say it is done, so some turns end unclosed. The memory is on disk
+> either way and the conversation carries on.
 
 ---
 
@@ -43,6 +43,7 @@ flowchart TB
     you -- "audio/wav" --> voz
     voz -- "audio" --> you
     esc -- "store_memory (raw)" --> mem
+    esc -. "gate: no memory, no turn" .-> esc
     mem -- "once the talk ends" --> cur
     cur -- "maturity: validated" --> mem
     mem -- "auto-injected on waking" --> voz
@@ -62,20 +63,46 @@ reach"*). Without something to promote it to `validated`, the second brain
 remembers nothing. The curator is not tidying: it is what makes
 "remembers" true.
 
-**Why the conversation declares no `completion_payload_schema`.**
-Declaring it enables `signal_completion`, and calling it leaves the
-session quiescent. A conversation is not a one-shot — and today it is
-irreversible twice over:
-[jaato#845](https://github.com/Jaato-framework-and-examples/jaato/issues/845)
-(neither `session.wake` nor `inject_prompt` carries an attachment, so a
-multimodal session that ended can never be spoken to again) and
+**Why every turn now completes.** Declaring a
+`completion_payload_schema` enables `signal_completion`, and until
+2026-09-09 calling it left the session unusable:
 [jaato#913](https://github.com/Jaato-framework-and-examples/jaato/issues/913)
-(the answer to `signal_completion` is never written into history, which is
-left holding a `tool_call` with no response, and the provider rejects it).
-The session simply stays alive and the driver asks again.
+(its answer was never written into history, so the next turn replayed a
+`tool_call` with no response and the provider rejected it with a 400) and
+[jaato#845](https://github.com/Jaato-framework-and-examples/jaato/issues/845)
+(neither resume verb carried an attachment, so a voice session that
+completed could never be spoken to again). Both are fixed — #915 and #914
+— and both were verified here before this was switched on: three
+consecutive completions on one session, and a completed session woken
+with an audio attachment.
 
-The **judge** does declare a schema, and that is right: it is single-turn,
-and terminating is exactly its job.
+Completing every turn is the only thing that makes the scribe write. The
+persona asked it to and it did not: measured, **0 tool calls across 5
+turns and 5.6 minutes** of real conversation, because an audio model
+announces a tool instead of invoking it. A completion processor reads the
+tool-call ledger — which the model cannot rewrite — and refuses a turn
+that stored nothing without saying why. With the gate: **4 memories
+across 5 turns.** Prose is a suggestion; a gate is a contract.
+
+It costs almost nothing: 1.40 s per turn with completion against 1.30 s
+without, because the session stays warm rather than cold-restarting.
+
+**And the gate has an escape hatch, deliberately.** Forcing a memory on
+every turn would force one on "hello" and on "go on", and the only way to
+satisfy that is to invent one — which for a second brain is the worst
+possible failure, and has already happened once here. So the gate demands
+a memory OR an explicit `nada_que_anotar: true` with a reason, which is
+visible in the payload and therefore auditable.
+
+**What still misfires.** The audio tier stores reliably and closes
+unreliably: it writes the memory, writes a line saying it wrote it, and
+never calls `signal_completion`; the framework nudges twice
+(`MAX_COMPLETION_NUDGES`, a daemon constant rather than a profile knob)
+and gives up. Measured across five turns: four memories written, three
+turns unclosed. The driver tolerates it — the memory is what matters and
+it is already on disk, the person has already heard the reply, and
+killing a conversation over bookkeeping would trade the part that works
+for the part that does not.
 
 ## One conversation, end to end
 
@@ -255,9 +282,12 @@ SESSION_TERMINATED}`), so a turn cannot hang here. Subscribing to events,
 counting terminals and unsubscribing do not appear in this repo because
 they do not belong to whoever writes the driver.
 
-`ask` and not `complete`: **one call is one TURN**, and the conversation is
-the loop that repeats it over the SAME session. `complete` waits for the
-session to END — right for the judge, fatal for a conversation.
+`ask` and `complete` divide by whether the profile is completion-gated.
+`ask` returns on whichever terminal comes first and hands back text;
+`complete` waits for `signal_completion` and hands back the typed
+payload. The scribe and the judge are gated, so they use `complete`; the
+curator is not, so it uses `ask`. Before #913 that choice did not exist
+for a conversation — completing once made the session unusable.
 
 The symmetry that makes speaking possible: `ask` returns what the model
 WROTE and `on_media` hands over what it SAID, as it sounds. The user's
@@ -309,8 +339,8 @@ installed 0.7.0:
 | | actual state in 0.7.0 |
 |---|---|
 | **#822** a tiers-only profile without top-level `model`/`provider` will not start | **FIXED.** `runner_spawn.py:455-464` documents the chain `profile.provider → model_tiers[initial].provider → JAATO_PROVIDER`. Verified: this profile, tiers-only, creates a session in 1.5 s. |
-| **#845** neither `wake` nor `inject_prompt` carries an attachment | **STILL LIVE.** `inject_prompt(text, source_type, source_id, timeout)`; `command_router.py` never mentions attachments. |
-| **#913** the answer to `signal_completion` never reaches history | **OPEN**, found here. `jaato_session.py:5992` cuts the turn short and skips the continuation that would write it; history is left with a `tool_call` with no response and the provider rejects it with a 400. |
+| **#845** neither `wake` nor `inject_prompt` carries an attachment | **FIXED** (#914). Verified: a completed session woken with an audio attachment ran the next turn. |
+| **#913** the answer to `signal_completion` never reaches history | **FIXED** (#915), found here. `_record_terminal_tool_results` now runs before the early return. Verified: three consecutive completions on one session, where the second used to 400. |
 | **#912** a `.jsonl` `storage_path` is reinterpreted as a directory | **OPEN**, found here. |
 
 Not verified, inherited from that repo: that `temperature: 0.0` makes

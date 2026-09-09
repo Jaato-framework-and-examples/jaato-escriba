@@ -204,6 +204,12 @@ class Observer:
         self._args: Dict[str, Dict[str, Any]] = {}
         self._tasks: set = set()
         self._client = None
+        #: Key sets already searched in this session.  The same memory can
+        #: reach us twice — observed: two `store_memory` calls carrying the
+        #: same content, deduplicated into one memory by the plugin but
+        #: emitting two tool-call events — and searching twice buys nothing
+        #: while spending a DuckDuckGo request that is rate-limited per IP.
+        self._searched: set = set()
         self.found: List[str] = []
 
     def attach(self, client) -> None:
@@ -225,6 +231,10 @@ class Observer:
         task.add_done_callback(self._tasks.discard)
 
     async def _work(self, args: Dict[str, Any]) -> None:
+        query = " ".join(keys_from(args))
+        if not query or query in self._searched:
+            return
+        self._searched.add(query)
         names = await enrich(args, self._conn, self._workspace, self._log)
         if not names:
             return

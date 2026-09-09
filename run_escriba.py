@@ -44,7 +44,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from jaato_sdk import ClientType, IPCClient
+from jaato_sdk import AgentError, ClientType, IPCClient
 
 import enrichment
 import memory
@@ -76,6 +76,40 @@ DRAIN = "Juzga lo que haya en crudo."
 #: Generous on purpose.  It is the safety net for someone getting up and
 #: leaving; the DELIBERATE way to end is Ctrl-C, which consolidates too.
 SILENCE_S = 120.0
+
+
+async def _turn(scribe, prompt: str, said, mouth) -> None:
+    """One turn, tolerating a turn that does its work but never closes.
+
+    `complete` and not `ask`, now that the scribe is completion-gated: its
+    turn ends at `signal_completion`, and `complete` is what waits for
+    that and hands back the typed payload.
+
+    AND IT IS ALLOWED TO FAIL.  The audio model reliably does the work and
+    unreliably reports it done: measured, it stores the memory, writes a
+    line saying it stored it, and never calls `signal_completion` — the
+    framework nudges twice (`MAX_COMPLETION_NUDGES`, a daemon constant, not
+    a profile knob) and gives up.  Across five turns: four memories
+    written, three turns unclosed.
+
+    The memory is what matters and it is already on disk; the close is
+    bookkeeping.  Killing a conversation over it would trade the thing
+    that works for the thing that does not.  The person has already heard
+    the reply either way — speech streams through `on_media` during the
+    turn, before the failure.
+    """
+    try:
+        payload = await scribe.complete(prompt, attachments=
+                                        None if said is None else [said],
+                                        on_media=mouth.speak)
+    except AgentError as exc:
+        payload = None
+        print(f"escriba: {mouth.last() or '(spoke)'}")
+        print(f"   ↳ (turn not closed: {str(exc)[:60]})")
+        return
+    print(f"escriba: {mouth.last() or '(spoke)'}")
+    if payload and payload.get("anotado"):
+        print(f"   ↳ {payload['anotado']}")
 
 
 async def main() -> int:
@@ -129,8 +163,12 @@ async def main() -> int:
             watcher = enrichment.Observer(conn, WORKSPACE)
             watcher.attach(scribe.client)
 
-            await scribe.ask(GREETING, on_media=mouth.speak)
-            print(f"escriba: {mouth.last() or '(spoke)'}")
+            # `complete` and not `ask`, now that the scribe is
+            # completion-gated: its turn ends at `signal_completion`, and
+            # `complete` is what waits for that and hands back the typed
+            # payload.  `ask` would return on whichever terminal came
+            # first and throw the payload away.
+            await _turn(scribe, GREETING, None, mouth)
 
             # The prompt goes EMPTY on a spoken turn: the question IS the
             # attachment.  Text beside it would be a second question the
@@ -141,9 +179,7 @@ async def main() -> int:
             # conversation is lost entirely if consolidation never runs.
             try:
                 while (said := await ears.listen(SILENCE_S)) is not None:
-                    await scribe.ask("", attachments=[said],
-                                     on_media=mouth.speak)
-                    print(f"escriba: {mouth.last() or '(spoke)'}")
+                    await _turn(scribe, "", said, mouth)
                 print("· nobody on the other side")
             except (KeyboardInterrupt, asyncio.CancelledError):
                 print("\n· goodbye")
