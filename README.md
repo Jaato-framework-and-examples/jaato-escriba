@@ -76,6 +76,22 @@ round-trip al modelo y **sin herramientas nuevas en el esquema** — que
 importa, porque cada nombre del esquema es una palabra que el modelo de
 voz puede leer en voz alta.
 
+**El inventario es la lista completa de lo que sabe, y la persona se lo
+dice así.** Un ejemplo con contenido realista en la persona es munición
+para confabular: la primera versión traía un saludo de muestra que hablaba
+de hidroponía, y con el inventario vacío el modelo lo recitó y lo adornó
+—«apunté que usas un sistema hidropónico, pero no sé qué nutrientes
+añades»— inventándose la vida del usuario en su primera frase. Para un
+segundo cerebro eso es la peor avería posible: si se inventa lo que sabe,
+ya no se le puede creer nada.
+
+Arreglado quitando el ejemplo (la forma se describe en prosa, que no se
+puede recitar) y poniendo la regla donde están los datos: cada rama del
+prefetch enuncia la suya, porque el prefetch es quien sabe si hay temas o
+no. Comprobado en los dos casos — sin memorias dice «empezamos de cero» y
+no nombra ningún tema; con memorias propone el más flojo y cita su
+descripción real.
+
 El reparto es el de siempre: aquí se cuenta lo CONTABLE — qué temas hay,
 cuántas piezas, cuándo se tocó cada uno. Cuál está flojo lo juzga el
 escriba, porque eso es una valoración y no una cuenta.

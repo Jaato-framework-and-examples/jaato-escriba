@@ -61,10 +61,13 @@ def render(context, args) -> str:
                 if getattr(m, "maturity", "") == "validated"]
 
     if not memorias:
-        return ("Nada todavía: es la primera vez que despiertas, o aún no se "
-                "ha validado nada de lo que anotaste. No tienes ningún tema "
-                "previo que ofrecer — dilo con naturalidad y pregunta por "
-                "dónde quiere empezar.")
+        return ("NADA. No sabes absolutamente nada de esta persona: es la "
+                "primera vez que despiertas, o aún no se ha validado nada de "
+                "lo que anotaste.\n\n"
+                "No tienes NINGÚN tema que ofrecer. No nombres ninguno — "
+                "cualquier tema que se te ocurra ahora te lo estarías "
+                "inventando, porque no hay nada de donde sacarlo. Saluda, di "
+                "que empezáis de cero, y pregunta por dónde quiere empezar.")
 
     por_tema: dict[str, list] = defaultdict(list)
     for m in memorias:
@@ -79,7 +82,9 @@ def render(context, args) -> str:
                    key=lambda r: (r[1], -r[2][0]))
 
     ancho = max(len(t) for t, _, _ in filas)
-    lineas = [f"{len(memorias)} piezas validadas, por tema:", ""]
+    lineas = [f"{len(memorias)} piezas validadas. Esta es la lista COMPLETA "
+              f"de lo que sabes de esta persona: un tema que no salga aquí no "
+              f"te lo ha contado nunca, así que no lo nombres.", ""]
     for tema, n, (_, cuando) in sorted(filas, key=lambda r: -r[1]):
         lineas.append(f"    {tema.ljust(ancho)}   {n:>3}   {cuando}")
 
