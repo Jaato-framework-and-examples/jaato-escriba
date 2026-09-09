@@ -8,14 +8,19 @@ La próxima vez despierta sabiendo lo que le contaste.
 ------------------------------------------------------------------
 Lo que este fichero quiere demostrar
 ------------------------------------------------------------------
-Todo el trato con el framework son CINCO líneas — dos sesiones y tres
+Todo el trato con el framework son CUATRO líneas — dos sesiones y tres
 `ask` — y ninguna de ellas es fontanería:
 
-    async with IPCClient.session(...) as escriba, \
-               IPCClient.session(...) as curator:
-        await curator.ask(DRENAJE)
+    async with IPCClient.session(profile="escriba", ...) as escriba:
         await escriba.ask(SALUDO, on_media=boca.hablar)
         await escriba.ask("", attachments=[dicho], on_media=boca.hablar)
+
+    async with IPCClient.session(profile="curator", ...) as curador:
+        await curador.ask(DRENAJE)
+
+Dos bloques y no uno anidado, porque son dos momentos: el curador no
+participa en la conversación, es lo que pasa DESPUÉS de ella — y
+abrirlo antes costaba 5,6 s de silencio delante de la persona.
 
 `IPCClient.session` conecta, configura y crea la sesión; `Session.ask`
 es dueño de la receta de enviar-y-esperar (`first-of {TURN_COMPLETED,

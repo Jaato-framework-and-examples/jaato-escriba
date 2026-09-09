@@ -96,6 +96,24 @@ El reparto es el de siempre: aquí se cuenta lo CONTABLE — qué temas hay,
 cuántas piezas, cuándo se tocó cada uno. Cuál está flojo lo juzga el
 escriba, porque eso es una valoración y no una cuenta.
 
+## Arranque
+
+Se saluda a los **3,8 s**: 1,6 s de crear la sesión y 2,2 s de lo que el
+modelo de audio tarda en soltar el primer byte.
+
+Eran 8,8 s, y el 64 % se iba en el curador — 1,6 s en abrir su sesión y
+4,0 s en un drenaje de apertura que **no podía servir para nada**. El
+inventario del escriba se rinde al CREAR su sesión, antes de que el
+curador promueva nada, así que lo que validara no entraba en ese saludo
+por construcción. Tampoco era la red de seguridad que parecía: si una
+sesión muere a medias, el drenaje del FINAL de la siguiente conversación
+recoge esas sobras junto con las suyas. Abrir por delante y cerrar por
+detrás llevan al mismo estado; la diferencia es que uno se paga en
+silencio, delante de la persona.
+
+El curador se abre ahora con la conversación ya cerrada, que es donde su
+coste no se lo come nadie.
+
 ## Cómo se termina
 
 **Ctrl-C** es la despedida normal, y consolida antes de salir.
