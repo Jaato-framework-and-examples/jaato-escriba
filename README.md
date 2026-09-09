@@ -14,12 +14,11 @@ Push to talk. Ctrl-C says goodbye, and it consolidates on the way out.
 > written in Spanish. Docs, code and comments are English, like the
 > sibling repos.
 
-> **Status.** It works end to end: it converses, it writes down what it is
-> told, it curates on the way out, and it searches outside for what it
-> just learned. It writes because it is *made* to — see the gate below.
-> One rough edge remains: the audio tier does the work and then does not
-> always say it is done, so some turns end unclosed. The memory is on disk
-> either way and the conversation carries on.
+> **Status.** Working end to end: it converses, writes down what it is
+> told, curates on the way out, searches outside for what it just learned,
+> and is offered those findings again when it writes on the same topic.
+> Four framework defects found building it are fixed and verified here;
+> see Provenance.
 
 ---
 
@@ -94,13 +93,21 @@ possible failure, and has already happened once here. So the gate demands
 a memory OR an explicit `nada_que_anotar: true` with a reason, which is
 visible in the payload and therefore auditable.
 
-**What still misfires.** The audio tier stores reliably and closes
-unreliably: it writes the memory, writes a line saying it wrote it, and
-never calls `signal_completion`; the framework nudges twice
-(`MAX_COMPLETION_NUDGES`, a daemon constant rather than a profile knob)
-and gives up. Measured across five turns: four memories written, three
-turns unclosed. The driver tolerates it — the memory is what matters and
-it is already on disk, the person has already heard the reply, and
+**What still misfires, less than it did.** The audio tier stores reliably
+and closes unreliably: it writes the memory, writes a line saying it wrote
+it, and never calls `signal_completion`. The nudge budget used to be a
+daemon constant of 2, which is right for a strong tool-caller and tight
+here — one nudge is routinely spent on a redundant `enter_tier(voz)` that
+returns "already_at_tier", leaving a single real attempt. That is
+[jaato#919](https://github.com/Jaato-framework-and-examples/jaato/issues/919),
+found here and shipped as a profile knob in #927; escriba sets
+`max_completion_nudges: 4`. Measured across the same five turns:
+
+    2 nudges  ->  2 turns closed, 3 unclosed
+    4 nudges  ->  4 turns closed, 1 unclosed
+
+Memories land either way. The driver still tolerates the remainder — the
+memory is already on disk, the person has already heard the reply, and
 killing a conversation over bookkeeping would trade the part that works
 for the part that does not.
 
@@ -204,6 +211,17 @@ tool results, and the result of `store_memory` carries the tags. NOT
 through `enrich_prompt`, which matches against the words of the prompt —
 and on a spoken turn the prompt is empty, because the question is the
 attachment.
+
+That path was dead until
+[jaato#922](https://github.com/Jaato-framework-and-examples/jaato/issues/922),
+found here: enrichment only reached dict results through a six-name
+allowlist, and `store_memory` calls its text `message`. Fixed in #924 —
+the session now renders the whole dict as a text view instead of guessing
+which key holds the text. Verified on a spoken turn, where `enrich_prompt`
+cannot help:
+
+    [REFERENCES] enrich [tool:store_memory]: tag matches:
+                 {auto-testjaato1: ['jaato', 'harness', 'orquestacion']}
 
 **And the catalogue must be reloaded after writing it.** It is read at
 startup (`set_workspace_path` → `_reload_catalog`) and then stays put.
@@ -372,7 +390,8 @@ installed 0.7.0:
 | **#845** neither `wake` nor `inject_prompt` carries an attachment | **FIXED** (#914). Verified: a completed session woken with an audio attachment ran the next turn. |
 | **#913** the answer to `signal_completion` never reaches history | **FIXED** (#915), found here. Verified: three consecutive completions on one session, where the second used to 400. |
 | **#920** runner RPC sends bytes as a Python repr, 4.2x oversize | **FIXED** (#921), found here. Verified: the recording that killed a real session now completes uncompressed. |
-| **#922** tool-result enrichment never fires for `store_memory` | **OPEN**, found here. Its text field is `message`, which is not in the six-name allowlist — so catalogued references are never offered. |
+| **#922** tool-result enrichment never fires for `store_memory` | **FIXED** (#924), found here. The session renders the whole dict as a text view instead of guessing the key. Verified on a spoken turn: `enrich [tool:store_memory]: tag matches: {auto-testjaato1: [jaato, harness, orquestacion]}`. |
+| **#919** the nudge budget is a daemon constant, not a profile knob | **FIXED** (#927), found here. Verified: at 4 nudges the same five turns close 4 of 5 instead of 2 of 5. |
 | **#912** a `.jsonl` `storage_path` is reinterpreted as a directory | **OPEN**, found here. |
 
 Not verified, inherited from that repo: that `temperature: 0.0` makes

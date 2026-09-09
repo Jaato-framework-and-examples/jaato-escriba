@@ -28,6 +28,16 @@ description: >
 # It costs almost nothing: measured 1.40 s per turn with completion
 # against 1.30 s without, because the session stays warm rather than
 # cold-restarting.
+# Four attempts to close the turn, not the framework default of two
+# (jaato#919, shipped in #927).
+#
+# Two is right for a strong tool-caller and tight for this shape: the
+# audio tier reliably does the work and unreliably reports it done, and
+# one nudge is routinely spent on a redundant `enter_tier(voz)` that
+# comes back "already_at_tier" — leaving exactly one real attempt.
+# Measured before the knob existed: 4 memories written, 3 turns unclosed.
+max_completion_nudges: 4
+
 completion_payload_schema: completion_schemas/escriba.json
 completion_processors:
   # Refuses a turn that stored nothing and did not say why.
