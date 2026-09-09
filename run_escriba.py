@@ -59,11 +59,15 @@ SALUDO = "[La sesión se abre. El usuario está a la escucha.]"
 #: destruir no tiene por qué estar aquí.
 DRENAJE = "Juzga lo que haya en crudo."
 
-#: Sin pulsar el micrófono durante este rato, la conversación terminó.
-#: Es la única señal de despedida que hay: la sesión de voz no declara
-#: esquema de completion a propósito, así que no puede decidir por sí
-#: misma que ha acabado.
-SILENCIO_S = 45.0
+#: Cuánto puede estar la persona SIN EMPEZAR a hablar antes de dar la
+#: conversación por terminada.  Mide abandono, no duración: mientras la
+#: tecla esté pulsada el plazo se reinicia (`voice.Ears.escuchar`), así
+#: que una explicación larga nunca lo agota.
+#:
+#: Generoso a propósito.  Es la red de seguridad para cuando alguien se
+#: levanta y se va; la manera DELIBERADA de terminar es Ctrl-C, que
+#: consolida igual.
+SILENCIO_S = 120.0
 
 
 async def main() -> int:
@@ -93,14 +97,22 @@ async def main() -> int:
             # El prompt va VACÍO en un turno hablado: la pregunta ES el
             # adjunto.  Un texto al lado sería una segunda pregunta entre
             # las que la persona tendría que elegir.
-            while (dicho := await oidos.escuchar(SILENCIO_S)) is not None:
-                await escriba.ask("", attachments=[dicho],
-                                  on_media=boca.hablar)
-                print(f"escriba: {boca.ultimo() or '(habló)'}")
+            #
+            # Ctrl-C se recoge AQUÍ y no fuera: cortar es la manera normal
+            # de despedirse, y lo aprendido en la conversación se pierde
+            # entero si la consolidación no llega a correr.
+            try:
+                while (dicho := await oidos.escuchar(SILENCIO_S)) is not None:
+                    await escriba.ask("", attachments=[dicho],
+                                      on_media=boca.hablar)
+                    print(f"escriba: {boca.ultimo() or '(habló)'}")
+                print("· nadie al otro lado")
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                print("\n· hasta luego")
 
-            # Y al dormirse, consolidar lo aprendido: es lo que hará que
-            # la próxima vez despierte sabiéndolo.
-            print("· silencio — consolidando")
+            # Al dormirse, consolidar lo aprendido: es lo que hará que la
+            # próxima vez despierte sabiéndolo.
+            print("· consolidando")
             await curador.ask(DRENAJE)
     return 0
 
@@ -111,4 +123,6 @@ if __name__ == "__main__":
     except ptt_capture.SourceMuted as exc:
         sys.exit(f"micrófono mudo: {exc}")
     except KeyboardInterrupt:
+        # Un Ctrl-C DENTRO de la conversación ya se recoge ahí dentro y
+        # consolida.  Este solo cubre el corte antes o después de eso.
         sys.exit(130)

@@ -96,6 +96,26 @@ El reparto es el de siempre: aquí se cuenta lo CONTABLE — qué temas hay,
 cuántas piezas, cuándo se tocó cada uno. Cuál está flojo lo juzga el
 escriba, porque eso es una valoración y no una cuenta.
 
+## Cómo se termina
+
+**Ctrl-C** es la despedida normal, y consolida antes de salir.
+
+El plazo de silencio (`SILENCIO_S`, 120 s) es solo la red de seguridad
+para cuando alguien se levanta y se va. Mide **abandono, no duración**:
+mientras la tecla esté pulsada se reinicia, así que una explicación larga
+no lo agota nunca.
+
+Contarlo de otra manera fue un fallo real. Una intervención se entrega
+cuando se SUELTA la tecla, no cuando se empieza a hablar
+(`ptt_capture.py:426-432`), así que un único `wait_for` sobre la cola
+mide «cuánto tardas en terminar de hablar». Quien se paraba diez segundos
+a pensar y explicaba cuarenta entregaba a los cincuenta, y con el plazo
+en cuarenta y cinco la conversación se cerraba MIENTRAS seguía hablando:
+una explicación larga era indistinguible de una habitación vacía.
+`Ears.escuchar` mira ahora si hay pulsación abierta —o un corte cerrado
+todavía sin entregar, que es la ventana entre soltar y llegar— y en ese
+caso reinicia el plazo en vez de rendirse.
+
 ## Los ficheros
 
 | | |

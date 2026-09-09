@@ -52,21 +52,51 @@ class Ears:
     def __exit__(self, *_) -> None:
         self._mic.stop()
 
-    async def escuchar(self, timeout: float) -> Optional[dict]:
-        """La siguiente pulsación como adjunto, o None si nadie habla.
+    def _en_marcha(self) -> bool:
+        """¿Hay una intervención en curso ahora mismo?
 
-        `None` es cómo termina la conversación.  La sesión de voz no
-        puede decidir que ha acabado — no declara esquema de completion
-        a propósito — así que el silencio es la única señal de despedida
-        que hay, y el driver la convierte en el cierre ordenado.
+        Dos estados, y hacen falta los dos:
+
+        - `_press_from` deja de ser None mientras la tecla está pulsada.
+        - `_cuts` guarda los cortes ya cerrados que todavía no se han
+          entregado: entre soltar la tecla y que la intervención llegue a
+          la cola pasa el rato de la cola de audio (TAIL_MS y lo que el
+          lector tarde en alcanzar el offset), y en esa ventana la tecla
+          ya está suelta pero la frase aún viene de camino.
+
+        Mirar solo la tecla dejaría esa ventana contando como silencio.
         """
-        self._mic.raise_if_faulted()   # un hilo muerto no debe verse como silencio
-        try:
-            u = await asyncio.wait_for(self._cola.get(), timeout)
-        except asyncio.TimeoutError:
-            return None
-        return {"mime_type": UTTERANCE_MIME, "data": u.wav(),
-                "display_name": "intervencion.wav"}
+        return (self._mic._press_from is not None
+                or not self._mic._cuts.empty())
+
+    async def escuchar(self, timeout: float) -> Optional[dict]:
+        """La siguiente intervención como adjunto, o None si no hay nadie.
+
+        `timeout` mide ABANDONO, no duración: se reinicia mientras la
+        persona esté hablando.
+
+        Contarlo de otra manera fue un fallo real.  Una intervención se
+        entrega cuando se SUELTA la tecla, no cuando se empieza a hablar
+        (ptt_capture.py:426-432), así que un único `wait_for` sobre la
+        cola mide «cuánto tardas en terminar de hablar».  Quien se paraba
+        diez segundos a pensar y luego explicaba cuarenta entregaba a los
+        cincuenta, y con el plazo en cuarenta y cinco la conversación se
+        daba por acabada MIENTRAS seguía hablando. Una explicación larga
+        era indistinguible de una habitación vacía.
+
+        El tope de `MAX_UTTERANCE_SECONDS` acota la espera: una pulsación
+        no puede durar para siempre, así que esto no se cuelga.
+        """
+        while True:
+            self._mic.raise_if_faulted()  # un hilo muerto no es silencio
+            try:
+                u = await asyncio.wait_for(self._cola.get(), timeout)
+            except asyncio.TimeoutError:
+                if self._en_marcha():
+                    continue              # sigue hablando; el plazo se reinicia
+                return None
+            return {"mime_type": UTTERANCE_MIME, "data": u.wav(),
+                    "display_name": "intervencion.wav"}
 
 
 class Tongue:
