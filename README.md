@@ -233,6 +233,19 @@ The scribe **offers, it does not use**: one thing per reply, at the end,
 and it never reads a URL out loud — "an article by Martin Fowler", not the
 address. If you say yes, it enters `escribano` and selects it.
 
+**Every path says what happened.** The observer used to report only the
+one outcome where the judge accepted something and return quietly
+otherwise, so "nothing was worth keeping" and "it never searched at all"
+looked identical from the terminal — a session where the search ran twice
+showed nothing either time. It now announces the search when it starts and
+names the outcome whatever it is:
+
+    · searching: huerto_hidropónico lechugas ajuste_pH
+    · found outside: Planterista, Brotavida
+    · «...»: 8 results judged, none worth keeping
+    · «...»: all 8 results were already judged
+    · nothing to search: that memory carried no tags
+
 > Candidates are judged from title and snippet; nothing opens them. A
 > catalogued URL may have gone stale.
 

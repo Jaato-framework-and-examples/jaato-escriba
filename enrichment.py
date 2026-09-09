@@ -118,11 +118,22 @@ def _catalogue(workspace: Path, accepted: List[dict], tags: List[str]) -> List[s
 
 async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
                  workspace: Path, log=print) -> List[str]:
-    """Memory stored -> search -> judgement -> catalogue. Returns names."""
+    """Memory stored -> search -> judgement -> catalogue. Returns names.
+
+    EVERY path says what happened.  It used to report only the one
+    outcome where the judge accepted something, and return quietly
+    otherwise — so "nothing was worth keeping" and "it never searched at
+    all" looked identical from the terminal, which is the worst kind of
+    silence: the operator cannot tell a working feature from a dead one.
+    Observed 2026-09-09, a session where the search ran twice and the
+    console showed nothing either time.
+    """
     tags = keys_from(args)
     if not tags:
+        log("· nothing to search: that memory carried no tags")
         return []
     query = " ".join(tags)
+    log(f"· searching: {query}")
 
     try:
         candidates = await asyncio.wait_for(
@@ -130,11 +141,16 @@ async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
     except Exception as exc:                              # noqa: BLE001
         log(f"· search «{query}» failed: {type(exc).__name__}: {str(exc)[:120]}")
         return []
+    if not candidates:
+        log(f"· «{query}»: the search returned nothing")
+        return []
 
     seen = _already_seen(workspace)
-    candidates = [c for c in candidates if c["url"] not in seen]
-    if not candidates:
+    fresh = [c for c in candidates if c["url"] not in seen]
+    if not fresh:
+        log(f"· «{query}»: all {len(candidates)} results were already judged")
         return []
+    candidates = fresh
 
     verdict = await _judge(query, candidates, conn, log)
     if verdict is None:
@@ -143,9 +159,12 @@ async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
     # Spanish keys on purpose: they are the judge's payload fields, and
     # its completion schema is model-facing prose, so it is written in the
     # language the judge thinks in.  Code around it stays English.
-    _record_discards(workspace,
-                     [d["url"] for d in verdict.get("descartadas", [])])
-    return _catalogue(workspace, verdict.get("aceptadas", []), tags)
+    accepted = verdict.get("aceptadas", [])
+    discarded = verdict.get("descartadas", [])
+    _record_discards(workspace, [d["url"] for d in discarded])
+    if not accepted:
+        log(f"· «{query}»: {len(discarded)} results judged, none worth keeping")
+    return _catalogue(workspace, accepted, tags)
 
 
 async def _judge(query: str, candidates: List[Dict[str, str]],
@@ -232,9 +251,11 @@ class Observer:
 
     async def _work(self, args: Dict[str, Any]) -> None:
         query = " ".join(keys_from(args))
-        if not query or query in self._searched:
+        if query and query in self._searched:
+            self._log(f"· «{query}»: already searched this session")
             return
-        self._searched.add(query)
+        if query:
+            self._searched.add(query)
         names = await enrich(args, self._conn, self._workspace, self._log)
         if not names:
             return
