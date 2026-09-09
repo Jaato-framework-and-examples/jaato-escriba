@@ -43,8 +43,9 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from typing import List
 
-from jaato_sdk import AgentError, ClientType, IPCClient
+from jaato_sdk import AgentError, ClientType, EventType, IPCClient
 
 import console
 import enrichment
@@ -102,11 +103,11 @@ async def _turn(scribe, prompt: str, said, mouth) -> None:
     that and hands back the typed payload.
 
     AND IT IS ALLOWED TO FAIL.  The audio model reliably does the work and
-    unreliably reports it done: measured, it stores the memory, writes a
-    line saying it stored it, and never calls `signal_completion` — the
-    framework nudges twice (`MAX_COMPLETION_NUDGES`, a daemon constant, not
-    a profile knob) and gives up.  Across five turns: four memories
-    written, three turns unclosed.
+    unreliably reports it done: it stores the memory, writes a line saying
+    it stored it, and never calls `signal_completion`.  The profile asks
+    for four nudges (`max_completion_nudges`, jaato#919) rather than the
+    default two, which took the same five turns from 2 closed to 4 — but
+    it does not close every one.
 
     The memory is what matters and it is already on disk; the close is
     bookkeeping.  Killing a conversation over it would trade the thing
@@ -118,9 +119,36 @@ async def _turn(scribe, prompt: str, said, mouth) -> None:
     # starts hearing the answer — not when the turn settles seconds later.
     spinner = console.Spinner("escriba is thinking…")
 
+    speaking = False
+
     def sink(ev) -> None:
+        # Playback BLOCKS the event loop — `finish()` waits for the audio
+        # to finish sounding — so the spinner cannot animate through it.
+        # Replace it with a static line rather than leaving the screen
+        # dead for the length of the reply.
+        nonlocal speaking
         spinner.stop()
+        if not speaking:
+            speaking = True
+            console.log("· speaking…")
         mouth.speak(ev)
+
+    # TWO sources for what it said, because neither covers both cases.
+    #
+    # The final audio chunk carries the provider's transcript of its own
+    # speech (jaato#869) — but it is EMPTY when the model also wrote text.
+    # And `complete` hands back the typed payload, not the text, so unlike
+    # `ask` there is no return value to fall back on.  Reading only the
+    # chunk printed "(spoke)" over turns whose words were sitting in
+    # history all along.
+    written: List[str] = []
+    unsubscribe = scribe.client.subscribe(
+        EventType.AGENT_OUTPUT,
+        lambda ev: written.append(getattr(ev, "text", "") or "")
+        if getattr(ev, "source", None) == "model" else None)
+
+    def spoken() -> str:
+        return mouth.last() or "".join(written).strip() or "(spoke)"
 
     try:
         async with spinner:
@@ -128,7 +156,7 @@ async def _turn(scribe, prompt: str, said, mouth) -> None:
                                             None if said is None else [said],
                                             on_media=sink)
     except AgentError as exc:
-        console.log(f"escriba: {mouth.last() or '(spoke)'}")
+        console.log(f"escriba: {spoken()}")
         # A turn that did its work and never said so is survivable — see
         # above.  A session that ENDED is not: every later turn would go to
         # a session that no longer exists, and the driver would sit
@@ -142,7 +170,9 @@ async def _turn(scribe, prompt: str, said, mouth) -> None:
             raise SessionGone(str(exc)) from exc
         console.log(f"   ↳ (turn not closed: {str(exc)[:60]})")
         return
-    console.log(f"escriba: {mouth.last() or '(spoke)'}")
+    finally:
+        unsubscribe()
+    console.log(f"escriba: {spoken()}")
     if payload and payload.get("anotado"):
         console.log(f"   ↳ {payload['anotado']}")
 
@@ -218,6 +248,11 @@ async def main() -> int:
             # conversation is lost entirely if consolidation never runs.
             try:
                 while (said := await ears.listen(SILENCE_S)) is not None:
+                    # Acknowledge the utterance BEFORE the turn: the
+                    # person has just released the key, and the encode
+                    # plus the model's first token is several seconds of
+                    # otherwise-unexplained silence.
+                    console.log(f"· heard {said.pop('seconds', 0.0):.1f}s")
                     await _turn(scribe, "", said, mouth)
                 console.log("· nobody on the other side")
             except SessionGone:

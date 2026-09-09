@@ -152,8 +152,12 @@ class Ears:
             # Encoding is CPU work on a 2-minute buffer; off the loop so
             # the SDK's drain task keeps running while it happens.
             data = await asyncio.to_thread(_to_mp3, u.wav())
+            #: `seconds` rides along so the driver can acknowledge the
+            #: utterance the moment it has it.  Encoding a two-minute
+            #: press takes a beat, and a person who has just released the
+            #: key with nothing on screen assumes it was not heard.
             return {"mime_type": UTTERANCE_MIME, "data": data,
-                    "display_name": "utterance.mp3"}
+                    "display_name": "utterance.mp3", "seconds": u.seconds}
 
 
 class Tongue:
