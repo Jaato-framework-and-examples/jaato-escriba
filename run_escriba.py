@@ -82,14 +82,23 @@ async def main() -> int:
                     client_type=ClientType.API)
 
     with voice.Ears() as oidos:
+        # El curador NO se abre aquí, y no es un descuido: es lo que hace
+        # que se pueda saludar en tres segundos en vez de en nueve.
+        #
+        # Medido: crear su sesión costaba 1,6 s y su turno de apertura
+        # otros 4,0 s, el 64 % de los 8,8 s que se tardaba en decir la
+        # primera palabra.  Y ese drenaje de apertura no podía servir para
+        # nada: el inventario del escriba se rinde al CREAR su sesión, o
+        # sea antes de que el curador llegue a promover nada, así que lo
+        # que valide no entra en este saludo de ninguna manera.
+        #
+        # Tampoco hacía falta para recoger lo que dejara una sesión que
+        # murió a medias: el drenaje del final recoge esas sobras junto
+        # con las de ahora.  Abrir por delante y cerrar por detrás
+        # convergen en el mismo estado — solo que uno se paga en silencio
+        # delante de la persona.
         async with IPCClient.session(profile="escriba", agent="escriba",
-                                     **conexion) as escriba, \
-                   IPCClient.session(profile="curator", agent="curator",
-                                     **conexion) as curador:
-
-            # Antes de saludar: lo que quedara en crudo de la última vez.
-            # Si aquella sesión murió a medias, esto lo recoge ahora.
-            await curador.ask(DRENAJE)
+                                     **conexion) as escriba:
 
             await escriba.ask(SALUDO, on_media=boca.hablar)
             print(f"escriba: {boca.ultimo() or '(habló)'}")
@@ -110,9 +119,12 @@ async def main() -> int:
             except (KeyboardInterrupt, asyncio.CancelledError):
                 print("\n· hasta luego")
 
-            # Al dormirse, consolidar lo aprendido: es lo que hará que la
-            # próxima vez despierte sabiéndolo.
-            print("· consolidando")
+        # Y ahora sí, con la conversación cerrada y nadie esperando, el
+        # curador: consolidar lo aprendido es lo que hará que la próxima
+        # vez despierte sabiéndolo.  Aquí su coste no se lo come nadie.
+        print("· consolidando")
+        async with IPCClient.session(profile="curator", agent="curator",
+                                     **conexion) as curador:
             await curador.ask(DRENAJE)
     return 0
 
