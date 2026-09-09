@@ -46,6 +46,7 @@ from pathlib import Path
 
 from jaato_sdk import AgentError, ClientType, IPCClient
 
+import console
 import enrichment
 import memory
 import ptt_capture
@@ -113,12 +114,21 @@ async def _turn(scribe, prompt: str, said, mouth) -> None:
     the reply either way — speech streams through `on_media` during the
     turn, before the failure.
     """
+    # The spinner stops on the FIRST audio chunk — the moment the person
+    # starts hearing the answer — not when the turn settles seconds later.
+    spinner = console.Spinner("escriba is thinking…")
+
+    def sink(ev) -> None:
+        spinner.stop()
+        mouth.speak(ev)
+
     try:
-        payload = await scribe.complete(prompt, attachments=
-                                        None if said is None else [said],
-                                        on_media=mouth.speak)
+        async with spinner:
+            payload = await scribe.complete(prompt, attachments=
+                                            None if said is None else [said],
+                                            on_media=sink)
     except AgentError as exc:
-        print(f"escriba: {mouth.last() or '(spoke)'}")
+        console.log(f"escriba: {mouth.last() or '(spoke)'}")
         # A turn that did its work and never said so is survivable — see
         # above.  A session that ENDED is not: every later turn would go to
         # a session that no longer exists, and the driver would sit
@@ -128,13 +138,13 @@ async def _turn(scribe, prompt: str, said, mouth) -> None:
         # could answer.  Tell them, and let the caller wind down cleanly so
         # the consolidation still runs.
         if _session_is_gone(exc):
-            print(f"   ↳ the session ended: {str(exc)[:90]}")
+            console.log(f"   ↳ the session ended: {str(exc)[:90]}")
             raise SessionGone(str(exc)) from exc
-        print(f"   ↳ (turn not closed: {str(exc)[:60]})")
+        console.log(f"   ↳ (turn not closed: {str(exc)[:60]})")
         return
-    print(f"escriba: {mouth.last() or '(spoke)'}")
+    console.log(f"escriba: {mouth.last() or '(spoke)'}")
     if payload and payload.get("anotado"):
-        print(f"   ↳ {payload['anotado']}")
+        console.log(f"   ↳ {payload['anotado']}")
 
 
 async def main() -> int:
@@ -162,12 +172,12 @@ async def main() -> int:
     # be invisible.
     pending = memory.uncurated_count(WORKSPACE)
     if pending:
-        print(f"· {pending} memories left uncurated last time — "
-              f"judging them before we start")
+        console.log(f"· {pending} memories left uncurated last time — "
+                    f"judging them before we start")
         async with IPCClient.session(profile="curator", agent="curator",
                                      **conn) as curator:
             await curator.ask(DRAIN)
-        print("· consolidated; I can start knowing it")
+        console.log("· consolidated; I can start knowing it")
 
     with voice.Ears() as ears:
         # The curator is not opened for the conversation, and that is not
@@ -185,7 +195,11 @@ async def main() -> int:
             # from then on offers them by itself when the conversation
             # brushes the topic again.  Background tasks: the conversation
             # does not wait for something that at best matters next turn.
-            watcher = enrichment.Observer(conn, WORKSPACE)
+            # `console.log` and not `print`: the observer writes from a
+            # background task, and a bare print lands on top of the
+            # spinner's line and mangles both.
+            watcher = enrichment.Observer(conn, WORKSPACE,
+                                          log=console.log)
             watcher.attach(scribe.client)
 
             # `complete` and not `ask`, now that the scribe is
@@ -205,12 +219,12 @@ async def main() -> int:
             try:
                 while (said := await ears.listen(SILENCE_S)) is not None:
                     await _turn(scribe, "", said, mouth)
-                print("· nobody on the other side")
+                console.log("· nobody on the other side")
             except SessionGone:
-                print("· the conversation cannot continue — consolidating "
-                      "what we have")
+                console.log("· the conversation cannot continue — consolidating "
+                            "what we have")
             except (KeyboardInterrupt, asyncio.CancelledError):
-                print("\n· goodbye")
+                console.log("\n· goodbye")
 
             # Let whatever it was searching finish before closing.
             await watcher.drain()
@@ -218,7 +232,7 @@ async def main() -> int:
         # And now, with the conversation closed and nobody waiting, the
         # curator: consolidating what was learned is what will make it
         # wake up knowing it next time.  Here its cost is nobody's.
-        print("· consolidating")
+        console.log("· consolidating")
         async with IPCClient.session(profile="curator", agent="curator",
                                      **conn) as curator:
             await curator.ask(DRAIN)

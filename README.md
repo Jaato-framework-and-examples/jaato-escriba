@@ -302,6 +302,20 @@ recording and stored the right memory from it.
 If ffmpeg is missing, escriba refuses to start rather than quietly sending
 PCM. The failure that would cause is far from its cause.
 
+## While it is thinking
+
+A spoken turn is ten to twenty-five seconds during which you have released
+the key and nothing is on screen — no way to tell thinking from hung. A
+spinner runs for exactly that window and stops on the **first audio
+chunk**, which is the moment you start hearing the answer rather than the
+moment the turn settles seconds later.
+
+`console.py` also owns `log`, because a spinner and a bare `print` cannot
+share a terminal: the print lands on the spinner's line and mangles both.
+Everything that writes during a turn — the observer's search reports, from
+a background task — goes through it. On a pipe or a file the spinner is
+off entirely, so logs and captured test output stay clean.
+
 ## How it ends
 
 **Ctrl-C** is the normal goodbye, and it consolidates before exiting.
@@ -326,6 +340,7 @@ restarts the deadline instead of giving up.
 |---|---|
 | `run_escriba.py` | The driver. All the SDK is two sessions and three `ask` calls. |
 | `voice.py` | Ears and mouth: the thread↔asyncio bridge and the audio sink. |
+| `console.py` | The terminal side: the thinking spinner, and the only safe way to write while it runs. |
 | `memory.py` | What was left uncurated last time. |
 | `enrichment.py` | Search, judge and catalogue what is outside. |
 | `ptt_capture.py`, `pulse_playback.py` | Copied unchanged from `jaato-cascade-audio-interchange`. They know nothing about jaato. |
