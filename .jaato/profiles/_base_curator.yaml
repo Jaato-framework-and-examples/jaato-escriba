@@ -15,11 +15,26 @@ description: >
 # juzga las memorias no es la misma que las escribe.
 
 plugins:
-  # `preload` porque `update_memory` y `delete_memory` están DIFERIDAS
-  # tras descubrimiento — un curador que tiene que llamar a `list_tools`
-  # antes de poder validar nada gasta su primer turno buscándose las
-  # manos.
-  - memory(preload)
+  # TRES herramientas, y ninguna más EXISTE en esta sesión.
+  #
+  # `mode:preload` porque `update_memory` está DIFERIDA tras
+  # descubrimiento — un curador que tiene que llamar a `list_tools` antes
+  # de poder validar nada gasta su primer turno buscándose las manos.
+  #
+  # `tools:[...]` es la parte que importa: deja fuera `store_memory` y
+  # `delete_memory` del registro entero, no solo del permiso. Hace falta
+  # porque la lista blanca NO alcanza a `store_memory`: el plugin lo
+  # marca como auto-aprobado (memory/plugin.py:740) junto con
+  # `retrieve_memories` y `list_memory_tags`, y un tool auto-aprobado se
+  # salta la política. `delete_memory` quedaba bloqueado solo porque no
+  # está en esa lista — suerte, no diseño.
+  #
+  # Medido 2026-09-09: con `store_memory` a mano, el curador descartó una
+  # memoria buena y la volvió a guardar en crudo con `content` y
+  # `description` intercambiados. Cada drenaje la descartaba y la
+  # recreaba, así que no se validaba nunca y el conocimiento no llegaba a
+  # cuajar. El curador JUZGA lo que ya está escrito; no escribe.
+  - "memory(mode:preload, tools:[retrieve_memories, update_memory, list_memory_tags])"
 
 gc:
   type: hybrid

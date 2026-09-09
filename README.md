@@ -114,6 +114,28 @@ silencio, delante de la persona.
 El curador se abre ahora con la conversación ya cerrada, que es donde su
 coste no se lo come nadie.
 
+**Salvo que quedara algo sin juzgar.** Si la sesión anterior murió a
+medias —o guardó más de ocho cosas, que es lo que el curador juzga de una
+vez— hay memorias en crudo esperando, y entonces sí compensa pagar el
+drenaje por delante: el inventario del escriba se rinde al crear su
+sesión, así que hacerlo antes es lo único que puede meter lo de la última
+vez en el saludo de hoy. Se dice en voz alta, que no es una acción que
+tenga por qué ser invisible:
+
+    · quedaron 2 memorias sin consolidar de la última vez — las juzgo antes de empezar
+    · consolidado; ya puedo empezar sabiéndolo
+
+La condición se mira en `memoria.py`, contando el almacén en crudo en vez
+de llevar una bandera de «la última sesión terminó bien»: una bandera hay
+que escribirla al abrir y borrarla al cerrar, y un `kill -9` entre medias
+la deja mintiendo. Las memorias en crudo SON la condición, y además cogen
+el caso que la bandera no ve — una sesión que terminó limpia puede dejar
+cola.
+
+Comprobado con una memoria en crudo sembrada a mano: se anuncia, se
+valida, y el saludo sale proponiendo ese tema («¿seguimos con la
+restauración de esa Vespa, que aún nos falta el carburador?»).
+
 ## Cómo se termina
 
 **Ctrl-C** es la despedida normal, y consolida antes de salir.

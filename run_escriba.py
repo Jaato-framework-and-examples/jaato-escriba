@@ -44,6 +44,7 @@ from pathlib import Path
 
 from jaato_sdk import ClientType, IPCClient
 
+import memoria
 import ptt_capture
 import voice
 
@@ -86,22 +87,35 @@ async def main() -> int:
                     # el filtro aplique lo correcto.
                     client_type=ClientType.API)
 
+    # Lo que quedara sin juzgar de la última vez, y SOLO si quedó algo.
+    #
+    # Va por delante de abrir al escriba a propósito: su inventario se
+    # rinde al CREAR su sesión, así que esto es lo único que puede hacer
+    # que lo de la última vez entre en el saludo de hoy.  Al revés —que
+    # es como estaba— el drenaje terminaba después de que el inventario
+    # ya estuviera hecho, y no servía para nada.
+    #
+    # Condicional, porque incondicional costaba 5,6 s de silencio en cada
+    # arranque para no hacer nada el 99 % de las veces.  Y dicho en voz
+    # alta en la terminal: es trabajo que se hace antes de saludar y no
+    # tiene por qué ser invisible.
+    pendientes = memoria.sin_consolidar(WORKSPACE)
+    if pendientes:
+        print(f"· quedaron {pendientes} memorias sin consolidar de la última "
+              f"vez — las juzgo antes de empezar")
+        async with IPCClient.session(profile="curator", agent="curator",
+                                     **conexion) as curador:
+            await curador.ask(DRENAJE)
+        print("· consolidado; ya puedo empezar sabiéndolo")
+
     with voice.Ears() as oidos:
-        # El curador NO se abre aquí, y no es un descuido: es lo que hace
+        # El curador no se abre para la conversación, y no es un descuido:
         # que se pueda saludar en tres segundos en vez de en nueve.
         #
-        # Medido: crear su sesión costaba 1,6 s y su turno de apertura
-        # otros 4,0 s, el 64 % de los 8,8 s que se tardaba en decir la
-        # primera palabra.  Y ese drenaje de apertura no podía servir para
-        # nada: el inventario del escriba se rinde al CREAR su sesión, o
-        # sea antes de que el curador llegue a promover nada, así que lo
-        # que valide no entra en este saludo de ninguna manera.
-        #
-        # Tampoco hacía falta para recoger lo que dejara una sesión que
-        # murió a medias: el drenaje del final recoge esas sobras junto
-        # con las de ahora.  Abrir por delante y cerrar por detrás
-        # convergen en el mismo estado — solo que uno se paga en silencio
-        # delante de la persona.
+        # medido, abrirlo aquí costaba 1,6 s de sesión más 4,0 s de turno,
+        # el 64 % de los 8,8 s que se tardaba en decir la primera palabra.
+        # Solo se paga ese precio cuando hay algo que juzgar (arriba), y
+        # entonces sirve para algo porque va antes del inventario.
         async with IPCClient.session(profile="escriba", agent="escriba",
                                      **conexion) as escriba:
 

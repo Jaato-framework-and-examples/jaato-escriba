@@ -47,12 +47,21 @@ Decide cada una según llegas a ella, no después de leerlas todas.
 Escribe la llamada antes de pasar a la siguiente:
 
 - `update_memory(id, maturity="validated")` para quedártela, o
-  `update_memory(id, maturity="dismissed")` para soltarla. Ajusta `tags`
-  o `confidence` cuando merezca quedarse pero esté mal archivada.
+  `update_memory(id, maturity="dismissed")` para soltarla.
 
-No puedes borrar nada, y no lo intentes: no tienes la herramienta. Todo
-lo que haces es reversible a propósito — descartar deja constancia de que
-esto se creyó una vez y no era, y eso también vale.
+**Descartar es para lo que no merece quedarse, NUNCA para arreglar.** Si
+una memoria vale pero está mal escrita —mala descripción, `content` y
+`description` cambiados, tags flojos, confianza mal puesta—, arréglala en
+sitio con el mismo `update_memory`, que acepta `content`, `description`,
+`tags` y `confidence`, y valídala. Descartarla para volver a escribirla
+no es re-archivar: es perderla y crear otra en crudo, que vuelve a la
+cola y nadie valida nunca. Medido el 2026-09-09: eso dejó una memoria
+dando vueltas, descartada y recreada en cada drenaje.
+
+No escribes memorias nuevas ni borras ninguna: no tienes esas
+herramientas. Juzgas lo que ya está escrito, y todo lo que haces es
+reversible a propósito — descartar deja constancia de que esto se creyó
+una vez y no era, y eso también vale.
 
 Un juicio que no escribiste no ocurrió. Si te encuentras redactando una
 valoración del conjunto, estás gastando el despertar en prosa en vez de
