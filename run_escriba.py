@@ -78,6 +78,21 @@ DRAIN = "Juzga lo que haya en crudo."
 SILENCE_S = 120.0
 
 
+class SessionGone(RuntimeError):
+    """The scribe's session ended; there is nothing left to talk to."""
+
+
+#: Terminal markers in an AgentError that mean the session is gone rather
+#: than merely unhappy.  `NudgeExhausted` is deliberately NOT here: that
+#: turn did its work and the next one still runs.
+_GONE = ("runner RPC closed", "RunnerCallError", "session terminated",
+         "SessionTerminated", "not found")
+
+
+def _session_is_gone(exc: Exception) -> bool:
+    return any(m.lower() in str(exc).lower() for m in _GONE)
+
+
 async def _turn(scribe, prompt: str, said, mouth) -> None:
     """One turn, tolerating a turn that does its work but never closes.
 
@@ -103,8 +118,18 @@ async def _turn(scribe, prompt: str, said, mouth) -> None:
                                         None if said is None else [said],
                                         on_media=mouth.speak)
     except AgentError as exc:
-        payload = None
         print(f"escriba: {mouth.last() or '(spoke)'}")
+        # A turn that did its work and never said so is survivable — see
+        # above.  A session that ENDED is not: every later turn would go to
+        # a session that no longer exists, and the driver would sit
+        # listening into a corpse.  That is what a hang looked like on
+        # 2026-09-09: the runner RPC closed on an oversized frame, the
+        # session terminated, and the loop kept waiting for speech nobody
+        # could answer.  Tell them, and let the caller wind down cleanly so
+        # the consolidation still runs.
+        if _session_is_gone(exc):
+            print(f"   ↳ the session ended: {str(exc)[:90]}")
+            raise SessionGone(str(exc)) from exc
         print(f"   ↳ (turn not closed: {str(exc)[:60]})")
         return
     print(f"escriba: {mouth.last() or '(spoke)'}")
@@ -181,6 +206,9 @@ async def main() -> int:
                 while (said := await ears.listen(SILENCE_S)) is not None:
                     await _turn(scribe, "", said, mouth)
                 print("· nobody on the other side")
+            except SessionGone:
+                print("· the conversation cannot continue — consolidating "
+                      "what we have")
             except (KeyboardInterrupt, asyncio.CancelledError):
                 print("\n· goodbye")
 

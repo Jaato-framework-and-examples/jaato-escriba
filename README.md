@@ -241,6 +241,32 @@ memories ARE the condition — and they catch the case a flag cannot see,
 where a clean session leaves a backlog because the curator judges eight at
 a time.
 
+## What you say is compressed before it is sent
+
+The microphone produces 16 kHz mono PCM: a maximum-length press
+(`MAX_UTTERANCE_SECONDS` = 120) is 3.84 MB. `voice.py` encodes it to
+32 kbps MP3 — **8x smaller** — before it becomes an attachment.
+
+That is not about bandwidth. The runner RPC serialises bytes with
+`json.dumps(default=str)`, which renders them as a Python repr (`\xNN`
+per non-printable byte) and inflates the payload **4.2x** on the wire,
+against a 10.49 MB frame cap. A legal two-minute utterance therefore
+becomes a 16.7 MB frame, the transport refuses it and closes, and the
+in-flight turn dies with it — the session ends mid-conversation. That is
+[jaato#920](https://github.com/Jaato-framework-and-examples/jaato/issues/920),
+found here; measured twice with predicted-to-observed agreement within
+0.2%.
+
+Compression is defence in depth, not the fix: the same press now crosses
+as a 1.7 MB frame with the 4.2x still applied, and would be 0.64 MB once
+#920 lands. Verified by replaying the exact recording that killed a real
+session — it now completes in 21 s, stores its memory, and the model
+still understands it, which is what says 32 kbps is enough.
+
+If ffmpeg is missing, escriba refuses to start rather than quietly
+sending PCM. A fallback would put the failure back invisibly, and
+"the transport closed mid-turn" reads as anything but a missing encoder.
+
 ## How it ends
 
 **Ctrl-C** is the normal goodbye, and it consolidates before exiting.

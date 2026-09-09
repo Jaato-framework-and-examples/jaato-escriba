@@ -18,13 +18,61 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import shutil
+import subprocess
 from typing import Optional
 
 import ptt_capture
 import pulse_playback
 
-#: What the model receives.  `Utterance.wav()` already returns trimmed WAV.
-UTTERANCE_MIME = "audio/wav"
+#: What the model receives.  MP3, not the WAV `Utterance.wav()` produces.
+#:
+#: WHY COMPRESS.  A maximum-length press (`MAX_UTTERANCE_SECONDS` = 120)
+#: is 3.84 MB of 16 kHz mono PCM, and the runner RPC serialises bytes with
+#: `json.dumps(default=str)` — a Python repr, `\xNN` per non-printable
+#: byte — which inflates it 4.2x to 16.13 MB against a 10.49 MB frame cap
+#: (jaato#920).  The transport then closes and takes the session with it.
+#: Measured, twice, predicted-to-observed within 0.2%.
+#:
+#: At 32 kbps the same two minutes is 0.48 MB, so even under that 4.2x it
+#: crosses at ~2 MB with room to spare — and once #920 is fixed it is
+#: 0.64 MB of base64.  This is defence in depth, not the fix.
+UTTERANCE_MIME = "audio/mpeg"
+#: Mono, 16 kHz, 32 kbps: 8x smaller than the PCM.  Speech at this
+#: bitrate is what telephony has always been; if it ever costs the model
+#: intelligibility, this is the one number to raise (64 kbps is still 4x).
+MP3_BITRATE = "32k"
+
+
+def _encoder() -> str:
+    """The ffmpeg binary, or a loud failure.
+
+    Deliberately NOT a fallback to sending WAV.  Falling back would put
+    the 4.2x path back in silently, and the failure it causes — the
+    transport closing mid-turn — reads as anything but "the encoder is
+    missing".  Better to refuse to start.
+    """
+    exe = shutil.which("ffmpeg")
+    if exe is None:
+        raise RuntimeError(
+            "escriba needs ffmpeg to compress what you say: raw PCM of a "
+            "long utterance overflows the runner RPC frame cap and kills "
+            "the session (jaato#920).  Install ffmpeg.")
+    return exe
+
+
+def _to_mp3(wav: bytes) -> bytes:
+    """WAV in, MP3 out. Raises on a failed encode rather than sending PCM."""
+    proc = subprocess.run(
+        [_encoder(), "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+         "-codec:a", "libmp3lame", "-b:a", MP3_BITRATE, "-ac", "1",
+         "-ar", "16000", "-f", "mp3", "pipe:1"],
+        input=wav, capture_output=True)
+    if proc.returncode != 0 or not proc.stdout:
+        raise RuntimeError(
+            f"ffmpeg could not encode the utterance "
+            f"(rc={proc.returncode}): {proc.stderr.decode()[:200]}")
+    return proc.stdout
 
 
 class Ears:
@@ -37,6 +85,7 @@ class Ears:
     """
 
     def __init__(self, source: str = ptt_capture.SOURCE) -> None:
+        _encoder()                     # fail now, not on the first utterance
         self._queue: asyncio.Queue = asyncio.Queue()
         self._loop = asyncio.get_running_loop()
         self._mic = ptt_capture.PushToTalkMic(self._deliver, source=source)
@@ -95,8 +144,11 @@ class Ears:
                 if self._in_flight():
                     continue              # still talking; deadline restarts
                 return None
-            return {"mime_type": UTTERANCE_MIME, "data": u.wav(),
-                    "display_name": "utterance.wav"}
+            # Encoding is CPU work on a 2-minute buffer; off the loop so
+            # the SDK's drain task keeps running while it happens.
+            data = await asyncio.to_thread(_to_mp3, u.wav())
+            return {"mime_type": UTTERANCE_MIME, "data": data,
+                    "display_name": "utterance.mp3"}
 
 
 class Tongue:
