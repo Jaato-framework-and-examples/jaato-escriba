@@ -102,7 +102,12 @@ def _catalogue(workspace: Path, accepted: List[dict], tags: List[str]) -> List[s
         (cat / f"{ident}.json").write_text(json.dumps({
             "id": ident,
             "name": a["nombre"],
-            "description": a["descripcion"],
+            # La descripción de una línea es con la que el plugin vuelve a
+            # encontrar esto por parecido; el resumen es lo que el escriba
+            # lee para decidir si merece ofrecerlo. Van juntos porque
+            # `description` es el único campo que `listReferences` enseña.
+            "description": a["descripcion"] + "  — " + a.get("resumen", ""),
+            "summary": a.get("resumen", ""),
             "type": "url",
             # `selectable`: offered when the conversation brushes it, not
             # loaded into the startup prompt.  `auto` would carry every

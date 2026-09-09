@@ -67,10 +67,10 @@ def render(context, args) -> str:
         return ("NADA. No sabes absolutamente nada de esta persona: es la "
                 "primera vez que despiertas, o aún no se ha validado nada de "
                 "lo que anotaste.\n\n"
-                "No tienes NINGÚN tema que ofrecer. No nombres ninguno — "
-                "cualquier tema que se te ocurra ahora te lo estarías "
-                "inventando, porque no hay nada de donde sacarlo. Saluda, di "
-                "que empezáis de cero, y pregunta por dónde quiere empezar.")
+                "No tienes NINGÚN tema que OFRECER — cualquiera que se te "
+                "ocurra ahora te lo estarías inventando. Pero puedes "
+                "aprender lo que sea: saluda, di que empezáis de cero, y "
+                "pregunta por dónde quiere empezar.")
 
     by_topic: dict[str, list] = defaultdict(list)
     for m in memories:
@@ -85,9 +85,12 @@ def render(context, args) -> str:
                   key=lambda r: (r[1], -r[2][0]))
 
     width = max(len(t) for t, _, _ in rows)
-    lines = [f"{len(memories)} piezas validadas. Esta es la lista COMPLETA "
-             f"de lo que sabes de esta persona: un tema que no salga aquí no "
-             f"te lo ha contado nunca, así que no lo nombres.", ""]
+    lines = [f"{len(memories)} piezas validadas. Esto es todo lo que YA te "
+             f"han contado: si un tema no sale aquí, no lo menciones como si "
+             f"lo supieras.", "",
+             "No es una lista de temas permitidos. Es lo que ya sabes, no el "
+             "límite de lo que puedes aprender: cuando te cuenten algo que no "
+             "está aquí, eso es exactamente para lo que existes.", ""]
     for topic, n, (_, when) in sorted(rows, key=lambda r: -r[1]):
         lines.append(f"    {topic.ljust(width)}   {n:>3}   {when}")
 

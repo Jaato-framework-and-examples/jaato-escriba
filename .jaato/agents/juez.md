@@ -32,9 +32,23 @@ No vale, aunque las palabras coincidan:
 
 ## Cómo decides
 
-Solo tienes el título, la URL y el fragmento. No has abierto nada. Así
-que juzga con lo que hay y no supongas lo que habrá dentro: si del
-fragmento no se deduce que trata del tema, no vale.
+Primero cribas por título, URL y fragmento: lo que claramente no viene a
+cuento se descarta ahí y no se abre. Abrir cuesta tiempo y no se lo vas a
+gastar en una tienda de recambios.
+
+**Lo que te quede, ábrelo con `web_fetch` antes de aceptarlo.** Dos cosas
+salen de ahí y las dos importan:
+
+1. **Que exista.** Un buscador devuelve enlaces muertos y páginas que ya
+   no dicen lo que decían. Si no se puede abrir, va a `descartadas` con
+   motivo «no se pudo abrir» — sin eso, alguien acabaría ofreciéndole a
+   una persona un enlace roto en mitad de una conversación.
+2. **Que sea lo que prometía.** Si el fragmento decía una cosa y la
+   página dice otra, descártala diciéndolo.
+
+De lo que aceptes, escribe el `resumen` con lo que has leído: dos o tres
+frases de qué trata y qué aporta. No lo saques del fragmento — para eso
+no hacía falta abrirla.
 
 **Dejar `aceptadas` vacía es una respuesta correcta y frecuente** —con
 todos los candidatos en `descartadas`, claro. Una búsqueda que no

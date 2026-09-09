@@ -71,6 +71,13 @@ plugins:
   # auto-approved tool bypasses the policy.  Subsetting is the only thing
   # that keeps `validateReference` and `compute_embedding` out.
   - "references(mode:preload, tools:[listReferences, selectReferences])"
+  # Para poder LEER una referencia cuando la persona dice que sí.  Sin
+  # esto el escriba puede ofrecerla y nada más: `selectReferences`
+  # autoriza la URL, no la abre.
+  #
+  # Una sola herramienta del plugin, por la razón de siempre: cada nombre
+  # del esquema es una palabra que el tier de voz puede leer en alto.
+  - "web_fetch(mode:preload, tools:[web_fetch])"
 
 # Drop the instruction layers the framework injects.  This agent
 # converses; the platform constants (task-completion, parallel batching,
@@ -120,6 +127,11 @@ plugin_configs:
     # second brain is consulted by talking to it, not by polluting every
     # other agent's prompt.
     allowed_scopes: ["project"]
+  web_fetch:
+    # Read out loud, eventually: a wall of page is no use to someone
+    # listening, and it would sit in history for the rest of the talk.
+    max_length: 6000
+    timeout: 15
   permission:
     # A spoken call has nowhere to show a permission prompt and nobody to
     # click it.  Unanswered, the turn simply stops: the session goes quiet
@@ -134,3 +146,4 @@ plugin_configs:
           # the voice tier holding something to write and no way to write
           # it.
           - enter_tier
+          - web_fetch

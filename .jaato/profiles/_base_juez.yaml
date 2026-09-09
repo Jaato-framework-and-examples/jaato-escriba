@@ -3,12 +3,32 @@ name: _base_juez
 description: >
   Decides whether some search results are about the topic. One turn, one
   verdict, and it is done.
-plugins: []          # needs no tools: it judges what it is handed
+plugins:
+  # ONE tool, eagerly.  The judge used to decide from the title and the
+  # snippet alone, having opened nothing — so a dead link or a page that
+  # is not what its snippet claims got catalogued and then offered to a
+  # person mid-conversation.  Fetching what it is about to accept both
+  # verifies the page exists and lets it say what is actually in it.
+  #
+  # `tools:[web_fetch]` drops the plugin's other surface; the judge has no
+  # business doing anything else.
+  - "web_fetch(mode:preload, tools:[web_fetch])"
 suppress_base_instructions: true
 # It DOES declare a schema, unlike the conversational profiles, and that
 # is correct: this session is single-turn and terminating is exactly its
 # job, so jaato#913 never bites it.
 completion_payload_schema: completion_schemas/juez.json
+plugin_configs:
+  permission:
+    policy:
+      defaultPolicy: deny
+      whitelist: {tools: [web_fetch]}
+  web_fetch:
+    # A summary needs the top of the page, not the whole of it: the judge
+    # reads several of these in one turn and the context is not free.
+    max_length: 6000
+    timeout: 15
+
 completion_processors:
   # Reconciles the verdict against the candidates it was handed: every URL
   # in one list and only one.  Without this, returning two accepted and

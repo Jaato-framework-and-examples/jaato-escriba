@@ -2,47 +2,92 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["agent", "aceptadas", "descartadas"],
+  "required": [
+    "agent",
+    "aceptadas",
+    "descartadas"
+  ],
   "properties": {
-    "agent": { "type": "string", "const": "juez" },
-
+    "agent": {
+      "type": "string",
+      "const": "juez"
+    },
     "aceptadas": {
       "type": "array",
       "description": "Los candidatos que de verdad tratan del tema. Vacío es una respuesta correcta y frecuente: una búsqueda que no encontró nada bueno no rinde nada.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["url", "nombre", "descripcion"],
+        "required": [
+          "url",
+          "nombre",
+          "descripcion",
+          "resumen"
+        ],
         "properties": {
-          "url": { "type": "string", "minLength": 8,
-            "description": "La URL del candidato, copiada TAL CUAL de la lista. No la inventes ni la retoques." },
-          "nombre": { "type": "string", "minLength": 1, "maxLength": 80,
-            "description": "Nombre corto y humano de la fuente, como se diría al mencionarla en voz alta." },
-          "descripcion": { "type": "string", "minLength": 1,
-            "description": "Una frase que diga QUÉ APORTA sobre el tema. Con esta frase se volverá a encontrar la referencia más adelante por parecido semántico, así que nombra los conceptos, no la calidad ('explica X e Y', no 'artículo muy completo')." }
+          "url": {
+            "type": "string",
+            "minLength": 8,
+            "description": "La URL del candidato, copiada TAL CUAL de la lista. No la inventes ni la retoques."
+          },
+          "nombre": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Nombre corto y humano de la fuente, como se diría al mencionarla en voz alta."
+          },
+          "descripcion": {
+            "type": "string",
+            "minLength": 1,
+            "description": "UNA frase de qué aporta sobre el tema. Con esta frase se vuelve a encontrar la referencia más adelante por parecido semántico, así que nombra los conceptos. El detalle va en `resumen`."
+          },
+          "resumen": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600,
+            "description": "Dos o tres frases de lo que DICE la página, sacadas de haberla abierto — no del fragmento del buscador. Es lo que el escriba leerá para decidir si vale la pena ofrecerla, así que di de qué trata y qué aporta, no si está bien escrita."
+          }
         }
       }
     },
-
     "descartadas": {
       "type": "array",
       "description": "Los candidatos que NO valen, con el motivo. No es papeleo: esta lista es lo que impide que la misma URL se vuelva a juzgar en cada búsqueda futura, y es donde se ve si estás descartando bien.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["url", "motivo"],
+        "required": [
+          "url",
+          "motivo"
+        ],
         "properties": {
-          "url": { "type": "string", "minLength": 8,
-            "description": "La URL del candidato, copiada TAL CUAL de la lista." },
-          "motivo": { "type": "string", "minLength": 1, "maxLength": 200,
-            "description": "Por qué no vale, en pocas palabras y concreto: 'es una tienda', 'coincide por la palabra suelta pero habla de arneses de escalada', 'agregador sin contenido propio'." }
+          "url": {
+            "type": "string",
+            "minLength": 8,
+            "description": "La URL del candidato, copiada TAL CUAL de la lista."
+          },
+          "motivo": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Por qué no vale, en pocas palabras y concreto: 'es una tienda', 'coincide por la palabra suelta pero habla de arneses de escalada', 'no se pudo abrir', 'la página no trata de lo que prometía el fragmento'."
+          }
         }
       }
     },
-
-    "warnings": { "type": "array", "items": { "type": "string" },
-      "description": "Avisos que no bloquean nada." },
-    "errors": { "type": "array", "items": { "type": "string" },
-      "description": "Marcadores de fallo duro: no pudiste juzgar." }
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Avisos que no bloquean nada."
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Marcadores de fallo duro: no pudiste juzgar."
+    }
   }
 }
