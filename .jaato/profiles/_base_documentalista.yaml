@@ -58,8 +58,18 @@ budget_control:
 # diagnosing a writeNewFile failure there meant reading another project's
 # session at the same timestamps.
 trace:
-  session_log: .jaato/logs/documentalista-session.log
-  provider_log: .jaato/logs/documentalista-provider.log
+  # `{agent}` is the EXPLICIT form (#961): substituted wherever it appears,
+  # `main` for the parent and `subagent_1`… for each spawned child. Under
+  # the implicit form — a plain path, agent id appended before the
+  # extension — the provider log split per agent but the session log did
+  # not, so the parent's lines and the documenter's shared one file and
+  # every query had to be filtered by the `agent=` field to mean anything.
+  # Measured: `subagent_1/session.log` holds ONLY this agent's lines, which
+  # is the view that was being filtered for. `main/session.log` still carries
+  # some of the child's too — a superset, not a clean split — so read the
+  # child's own file when the child is the question.
+  session_log: .jaato/logs/{agent}/session.log
+  provider_log: .jaato/logs/{agent}/provider.log
 
 suppress_base_instructions: true
 

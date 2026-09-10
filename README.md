@@ -458,9 +458,20 @@ logged nothing, and outlived its driver by 76 seconds — stopped by
 `kill -TERM` on the pool slot.
 
 **Per-agent trace logs.** `trace: {session_log, provider_log}` on the
-documenter, workspace-relative. The global `/tmp/rich_client_trace.log`
+documenter, workspace-relative — the global `/tmp/rich_client_trace.log`
 interleaves every workspace on the machine, and diagnosing this meant
-reading another project's session at the same timestamps.
+reading another project's session at the same timestamps and attributing
+its lines to mine.
+
+The paths use the explicit `{agent}` placeholder
+([jaato#961](https://github.com/Jaato-framework-and-examples/jaato/issues/961)),
+so they land as `logs/main/…` and `logs/subagent_1/…`. Under the implicit
+form — a plain path, agent id appended before the extension — the provider
+log split per agent but the session log did not, so the scribe's decisions
+and the documenter's shared one file and every query had to be filtered by
+the `agent=` field to mean anything. Measured: the child's file now holds
+only the child's lines; `main/session.log` still carries some of the
+child's, so it is a superset rather than a clean split.
 
 ## Starting over
 
