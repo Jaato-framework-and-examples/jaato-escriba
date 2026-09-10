@@ -8,3 +8,4 @@
 __pycache__/
 .jaato/references/auto-*.json
 .jaato/discarded_references.json
+.jaato/forgotten/

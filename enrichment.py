@@ -291,3 +291,29 @@ class Observer:
         """Let anything in flight finish before closing."""
         if self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
+
+
+def forget(workspace: Path) -> int:
+    """Move the reference catalogue and the discard list aside.
+
+    Returns how many references went. Same reasoning as `memory.forget`:
+    moved, not deleted.
+    """
+    import shutil
+    from datetime import datetime
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    attic = workspace / ".jaato/forgotten" / stamp
+    moved = 0
+    cat = workspace / CATALOGUE
+    if cat.is_dir():
+        found = sorted(cat.glob("auto-*.json"))
+        if found:
+            (attic / "references").mkdir(parents=True, exist_ok=True)
+            for f in found:
+                shutil.move(str(f), str(attic / "references" / f.name))
+                moved += 1
+    disc = workspace / DISCARDS
+    if disc.is_file():
+        attic.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(disc), str(attic / disc.name))
+    return moved

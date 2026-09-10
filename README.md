@@ -4,7 +4,8 @@
 what it was told.**
 
 ```bash
-python run_escriba.py
+python run_escriba.py                 # talk
+python run_escriba.py --forget        # start over, forgetting everything
 ```
 
 Push to talk. Ctrl-C says goodbye, and it consolidates on the way out.
@@ -364,6 +365,21 @@ share a terminal: the print lands on the spinner's line and mangles both.
 Everything that writes during a turn — the observer's search reports, from
 a background task — goes through it. On a pipe or a file the spinner is
 off entirely, so logs and captured test output stay clean.
+
+## Starting over
+
+`--forget` clears the slate: every memory, the reference catalogue and the
+discard list. It shows what it is about to lose first, because *"erase
+everything"* and *"erase the nineteen things you told me over three
+weeks"* are the same command and very different decisions:
+
+    · about to forget 19 validated memories, 3 still raw, and 8 references
+      type «olvida» to confirm:
+
+**Nothing is deleted.** Both halves move under
+`.jaato/forgotten/<timestamp>/` and the path is printed, so a mistake is a
+`mv` away from being undone rather than gone. Delete that directory when
+you are sure. `--yes` skips the prompt for unattended use.
 
 ## How it ends
 

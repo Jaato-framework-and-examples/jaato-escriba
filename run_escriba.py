@@ -40,6 +40,7 @@ and underneath them two modules copied unchanged from
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
 from pathlib import Path
@@ -177,7 +178,46 @@ async def _turn(scribe, prompt: str, said, mouth) -> None:
         console.log(f"   ↳ {payload['anotado']}")
 
 
-async def main() -> int:
+def _forget(assume_yes: bool) -> int:
+    """Move memories and references aside, on purpose and out loud.
+
+    Nothing is unlinked: both halves move under `.jaato/forgotten/<stamp>/`
+    and the path is printed.  Erasing a second brain should not be a thing
+    a person has to get right on the first try, and a rename costs nothing
+    against the alternative.
+
+    The confirmation shows the COUNTS first, because "erase everything" and
+    "erase the nineteen things you told me over three weeks" are the same
+    command and very different decisions.
+    """
+    held = memory.counts(WORKSPACE)
+    total = held["raw"] + held["curated"]
+    refs = len(list((WORKSPACE / enrichment.CATALOGUE).glob("auto-*.json"))) \
+        if (WORKSPACE / enrichment.CATALOGUE).is_dir() else 0
+    if not total and not refs:
+        print("· nothing to forget: the store is already empty")
+        return 0
+
+    print(f"· about to forget {held['curated']} validated memories, "
+          f"{held['raw']} still raw, and {refs} references")
+    if not assume_yes:
+        try:
+            if input("  type «olvida» to confirm: ").strip() != "olvida":
+                print("· left alone")
+                return 1
+        except (EOFError, KeyboardInterrupt):
+            print("\n· left alone")
+            return 1
+
+    where = memory.forget(WORKSPACE)
+    moved = enrichment.forget(WORKSPACE)
+    print(f"· forgotten. Moved, not deleted: {where.parent if where else '—'}")
+    print(f"  ({total} memories, {moved} references — delete that directory "
+          f"when you are sure)")
+    return 0
+
+
+async def main(assume_yes: bool = False) -> int:
     mouth = voice.Tongue()
     conn = dict(workspace_path=str(WORKSPACE),
                 env_file=str(WORKSPACE / ".env"),
@@ -275,8 +315,21 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="escriba — a second brain that interviews by voice.")
+    parser.add_argument("--forget", action="store_true",
+                        help="move every memory and reference aside and start "
+                             "from scratch (recoverable: they are moved under "
+                             ".jaato/forgotten/, not deleted)")
+    parser.add_argument("--yes", action="store_true",
+                        help="skip the confirmation for --forget")
+    args = parser.parse_args()
+
+    if args.forget and _forget(args.yes) != 0:
+        sys.exit(1)
+
     try:
-        sys.exit(asyncio.run(main()))
+        sys.exit(asyncio.run(main(args.yes)))
     except ptt_capture.SourceMuted as exc:
         sys.exit(f"microphone muted: {exc}")
     except KeyboardInterrupt:
