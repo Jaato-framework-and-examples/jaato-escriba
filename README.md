@@ -19,8 +19,8 @@ Push to talk. Ctrl-C says goodbye, and it consolidates on the way out.
 > told, curates on the way out, searches outside for what it just learned,
 > is offered those findings again when it writes on the same topic, and
 > commissions a documenter that writes markdown from the memories on
-> request. Nine framework defects found building it are fixed and verified
-> here; two remain open; see Provenance.
+> request. Eleven framework defects found building it are fixed and verified
+> here; one remains open; see Provenance.
 
 ---
 
@@ -428,11 +428,15 @@ each was wrong first:
 | `config_root` on the session | Without it `file_edit` refuses to initialise and is **not exposed** — while `writeNewFile` still reaches the model. A tool advertised with no executor returns nothing, so the model retries forever. 127 attempts before it was killed by hand. |
 | `profile=` on the spawn | Omitted, `spawn_subagent` inherits the parent's plugins and gets **no persona** — a nameless agent with no `file_edit`. Now unrepresentable: the schema requires it ([jaato#944](https://github.com/Jaato-framework-and-examples/jaato/issues/944), found here). |
 | `permission` in `plugins:` | `plugin_configs.permission` for an undeclared plugin loads, validates, and does nothing ([jaato#950](https://github.com/Jaato-framework-and-examples/jaato/issues/950), found here, fixed). |
-| `writeNewFile` on the **parent's** whitelist | A subagent is judged by the policy the PARENT initialized. The documenter's own profile granted it and that was not enough ([jaato#957](https://github.com/Jaato-framework-and-examples/jaato/issues/957), found here, OPEN). |
+| `writeNewFile` on the documenter's whitelist | It was once not enough: a subagent was judged by the policy the PARENT initialized, so the grant had to be repeated on the scribe — which has no `file_edit` and cannot call it ([jaato#957](https://github.com/Jaato-framework-and-examples/jaato/issues/957), found here, **fixed**). The child's own profile governs now, and the scribe's whitelist describes the scribe again. |
 
-The last one is the trap worth remembering: the child profile names its
-tools, declares `permission`, grants exactly the two it needs — everything
-an author would do — and none of it governs the session it describes.
+The last one was the trap worth remembering, and it is worth remembering
+even fixed: for two days the child profile named its tools, declared
+`permission`, granted exactly the two it needed — everything an author
+would do — and none of it governed the session it described. A grant that
+belongs to the documenter had to be written on the scribe. `validate` could
+not see it, because the relationship that mattered was not local to either
+file.
 
 **One tool at a time.** `runtime_limits.max_parallel_tools: 1`, because the
 documenter emitted three `selectReferences` calls in a single turn, two
@@ -447,10 +451,11 @@ happen.
 80% and `abort` at 100%, on all four. `abort` is the load-bearing rung:
 `finalize` injects "wrap up with what you have", which a looping model can
 ignore — this one ignored 192 consecutive failures without emitting a word.
-The ceilings do **not** yet bind a subagent
+They did **not** bind a subagent at first
 ([jaato#955](https://github.com/Jaato-framework-and-examples/jaato/issues/955),
-found here, OPEN): a run declaring `tool_calls: 100` reached 196 and
-outlived its driver.
+found here, **fixed**): a run declaring `tool_calls: 100` reached 196,
+logged nothing, and outlived its driver by 76 seconds — stopped by
+`kill -TERM` on the pool slot.
 
 **Per-agent trace logs.** `trace: {session_log, provider_log}` on the
 documenter, workspace-relative. The global `/tmp/rich_client_trace.log`
@@ -594,8 +599,8 @@ installed **0.10.0** (`68e2cdfc`):
 | **#947** a profile with no `budget_control` is unbounded on every dimension and nothing says so | **FIXED** (#948), found here. `validate` now flags it — and flags limits that no rung enforces. |
 | **#950** `plugin_configs` for a plugin absent from `plugins:` loads, validates, and does nothing | **FIXED** (#952), found here. A permission whitelist was inert for 55 ASKs with no diagnostic. |
 | **#951** no permission decision was observable: only the ASK branch traced, and terminal decisions went to an in-memory list | **FIXED** (#953), found here. Every branch now logs `allowed=`/`method=`/`reason=` with the agent attributed — `agent=subagent:documentalista`. It turned three sessions of guessing into one `grep`. |
-| **#955** `budget_control` does not bind a subagent | **OPEN**, found here. 196 tool calls under `tool_calls: 100` with `abort` at 100%, nothing logged, and the loop outlived its driver. |
-| **#957** a subagent is judged by the PARENT's permission whitelist, not its own profile's | **OPEN**, found here. Split out of #951 once its own description proved unreliable. |
+| **#955** `budget_control` does not bind a subagent | **FIXED** (#960), found here. 196 tool calls under `tool_calls: 100` with `abort` at 100%, nothing logged, and the loop outlived its driver. |
+| **#957** a subagent is judged by the PARENT's permission whitelist, not its own profile's | **FIXED** (#958), found here. Split out of #951 once its own description proved unreliable. |
 
 One of those reports was partly wrong, and the cause is worth recording:
 #951's description listed "whitelist on the parent profile — no change,

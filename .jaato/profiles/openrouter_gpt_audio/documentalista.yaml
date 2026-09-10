@@ -1,5 +1,9 @@
 # documentalista — openrouter set: text only, and it has to write well.
 name: documentalista
+description: >
+  Writes markdown documentation about one topic, from the second brain's
+  memories and references and from nothing else. Spawned by the scribe on
+  the person's request; reports the files it wrote.
 inherits: [_base_documentalista]
 plugins: []
 model: openai/gpt-4o-mini

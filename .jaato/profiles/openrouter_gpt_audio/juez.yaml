@@ -1,5 +1,8 @@
 # juez — openrouter set: text only, one turn.
 name: juez
+description: >
+  Decides whether some search results are about the topic. One turn, one
+  verdict, and it is done.
 inherits: [_base_juez]
 plugins: []
 model: openai/gpt-4o-mini

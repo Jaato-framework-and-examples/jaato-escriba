@@ -1,5 +1,8 @@
 # escriba — openrouter set: hears and speaks with openai/gpt-audio.
 name: escriba
+description: >
+  Interviews the user by voice and entrusts what it learns to memory.
+  It is resident: it wakes up knowing what it was told last time.
 inherits: [_base_escriba]
 plugins: []  # empty keeps the surface inherited from _base_escriba
 
