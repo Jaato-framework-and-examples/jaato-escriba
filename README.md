@@ -40,6 +40,10 @@ flowchart TB
 
     mem[("the scribe's memory<br/>raw/ · curated.jsonl")]
     cur["<b>curator</b> · gpt-4o-mini<br/>validates or discards"]
+    jz["<b>juez</b> · gpt-4o-mini<br/>is this result relevant?"]
+    ref[("references<br/>auto-*.json")]
+    doc["<b>documentalista</b> · gpt-4o-mini<br/>spawned ON REQUEST<br/>writes and reports"]
+    md[/"docs/&lt;topic&gt;/*.md"/]
 
     you -- "audio/wav" --> voz
     voz -- "audio" --> you
@@ -48,6 +52,18 @@ flowchart TB
     mem -- "once the talk ends" --> cur
     cur -- "maturity: validated" --> mem
     mem -- "auto-injected on waking" --> voz
+
+    mem -- "tags become search keys" --> jz
+    jz -- "accepted" --> ref
+    ref -- "enrich_tool_result" --> esc
+    esc -- "the voice offers it" --> voz
+
+    esc -- "spawn_subagent(profile)" --> doc
+    mem -- "retrieve_memories" --> doc
+    ref -- "selectReferences · once" --> doc
+    doc -- "writeNewFile" --> md
+    doc -. "gate: files exist, links resolve,<br/>cited ids exist" .-> doc
+    md -- "the voice says where" --> voz
 ```
 
 **The hand-off, measured.** `enter_tier(escribano)` is the real
@@ -78,6 +94,21 @@ waking (`list_memory_tags`: *"pending_curation … which no tag search can
 reach"*). Without something to promote it to `validated`, the second brain
 remembers nothing. The curator is not tidying: it is what makes
 "remembers" true.
+
+**Why the documenter is spawned and not driven.** Every other agent here
+runs on a schedule the driver owns: the curator at the edges of the
+conversation, the judge whenever a memory is stored. A document is
+different — it is asked for, in the middle of talking, in words. So the
+scribe spawns it, `spawn_subagent` returns immediately, and the
+conversation carries on while it writes. Nothing in `run_escriba.py`
+mentions it: the driver would have to poll or block, and both are worse
+than letting the agent that took the request also place it.
+
+That also decides where its rules live. The documenter's profile carries
+its own tool subset, its own permission whitelist, its own persona
+(`default_agent`) and its own ceiling — because the caller passes only a
+`task`, and everything else has to be true of the profile before the call
+is made.
 
 **Why every turn now completes.** Declaring a
 `completion_payload_schema` enables `signal_completion`, and until
@@ -158,6 +189,7 @@ sequenceDiagram
     participant D as run_escriba.py
     participant E as escriba session
     participant C as curator session
+    participant M as documentalista<br/>(subagent, on request)
 
     D->>D: any memories left uncurated?
     opt yes
@@ -174,6 +206,14 @@ sequenceDiagram
         T->>D: push and talk
         D->>E: ask("", attachments=[wav])
         E-->>T: spoken reply
+        opt "write me a document about X"
+            E->>M: spawn_subagent(profile="documentalista")
+            Note right of M: BACKGROUND — the conversation<br/>does not stop for it
+            E-->>T: "I have commissioned it"
+            M->>M: memories + references -> docs/X/*.md
+            M-->>E: the paths it wrote
+            E-->>T: what it contains, and where
+        end
     end
 
     Note over T,D: Ctrl-C, or 120 s without starting to speak
@@ -510,7 +550,7 @@ restarts the deadline instead of giving up.
 
 | | |
 |---|---|
-| `run_escriba.py` | The driver. All the SDK is two sessions and three `ask` calls. |
+| `run_escriba.py` | The driver. All the SDK is two sessions and three turns; the judge and the documenter are spawned, not driven. |
 | `voice.py` | Ears and mouth: the thread↔asyncio bridge and the audio sink. |
 | `console.py` | The terminal side: the thinking spinner, and the only safe way to write while it runs. |
 | `memory.py` | What was left uncurated last time. |
