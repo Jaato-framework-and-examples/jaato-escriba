@@ -221,6 +221,14 @@ async def main(assume_yes: bool = False) -> int:
     mouth = voice.Tongue()
     conn = dict(workspace_path=str(WORKSPACE),
                 env_file=str(WORKSPACE / ".env"),
+                # The framework writes its own artefacts — backups, session
+                # journals — under config_root, never into the tenant's
+                # workspace.  Without it `file_edit` refuses to initialise
+                # and is silently NOT exposed, so the documentalista gets
+                # `writeNewFile` in its tool surface with no executor behind
+                # it: every call returns nothing and the model retries for
+                # as long as someone lets it.
+                config_root=str(WORKSPACE / ".jaato"),
                 # API: a headless driver.  The server strips
                 # `signal_completion` from root sessions of a
                 # TERMINAL/WEB/CHAT client, and we do not use it here —

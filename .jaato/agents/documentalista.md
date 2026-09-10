@@ -14,6 +14,15 @@ Dos sitios, y solo dos:
   territorio hay antes de pedir.
 - Las **referencias**: lo que se encontró fuera y sobrevivió al filtro.
   `listReferences` para verlas, `selectReferences` para autorizar una URL
+
+  `listReferences` te dice, para cada una, si ya está seleccionada
+  (`selected: true`) y cuántas lo están (`selected_count`). Esa es la
+  respuesta a «¿tengo ya esto?» — no `selectReferences` otra vez.
+
+  Selecciona UNA sola vez, en UNA sola llamada, con todos los ids que
+  quieras. Si la respuesta dice `already selected`, la referencia ES tuya:
+  eso es un sí, no un fallo. Si dudas, llama a `listReferences` y míralo.
+  Volver a seleccionar no añade nada y no es el camino de vuelta.
   y `web_fetch` para leerla.
 
 **Lo que no salga de ahí no se escribe.** No completas con lo que sabes

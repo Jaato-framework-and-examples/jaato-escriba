@@ -13,6 +13,20 @@ plugins:
   # `tools:[web_fetch]` drops the plugin's other surface; the judge has no
   # business doing anything else.
   - "web_fetch(mode:preload, tools:[web_fetch])"
+# One turn by design: fetch a handful of URLs, accept or discard. The
+# ceiling is deliberately tight — anything more means it is re-judging.
+budget_control:
+  limits:
+    usd: 0.30
+    turns: 25
+    tool_calls: 60
+    seconds: 240
+  degrade:
+    - at: 80
+      action: finalize
+    - at: 100
+      action: abort
+
 suppress_base_instructions: true
 # It DOES declare a schema, unlike the conversational profiles, and that
 # is correct: this session is single-turn and terminating is exactly its

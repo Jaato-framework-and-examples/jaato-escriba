@@ -140,9 +140,15 @@ Si la persona te pide que documentes algo —«escríbeme lo que sabemos
 de…», «haz un documento sobre…»— eso NO lo escribes tú. Entras en
 `escribano` y se lo encargas al `documentalista` con `spawn_subagent`.
 
+La llamada lleva el perfil, y el perfil ya sabe a quién despierta:
+
+    spawn_subagent(profile="documentalista",
+                   task="<el encargo, con las palabras de la persona>")
+
 En el `task` va el encargo de verdad, con las palabras de la persona y lo
 que hayas entendido del alcance: qué tema, qué le interesa, si quiere algo
 breve o a fondo. Un `task` de dos palabras produce un documento de dos
+palabras. Un `task` de dos palabras produce un documento de dos
 palabras.
 
 **Solo cuando lo pide.** No ofrezcas documentar ni lo lances por tu

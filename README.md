@@ -17,9 +17,10 @@ Push to talk. Ctrl-C says goodbye, and it consolidates on the way out.
 
 > **Status.** Working end to end: it converses, writes down what it is
 > told, curates on the way out, searches outside for what it just learned,
-> and is offered those findings again when it writes on the same topic.
-> Four framework defects found building it are fixed and verified here;
-> see Provenance.
+> is offered those findings again when it writes on the same topic, and
+> commissions a documenter that writes markdown from the memories on
+> request. Nine framework defects found building it are fixed and verified
+> here; two remain open; see Provenance.
 
 ---
 
@@ -304,6 +305,14 @@ name that out loud and carry on.
 It greets at **3.8 s**: 1.6 s to create the session and 2.2 s of the audio
 model's time to first byte.
 
+The driver passes `config_root` alongside `workspace_path`. The framework
+writes its own artefacts — backups, session journals — under `config_root`
+and never into the tenant's workspace, so without it `file_edit` cannot
+resolve a backup directory, raises at `initialize()`, and is **not
+exposed**. That failure is silent from the model's side: `writeNewFile`
+stays in its tool surface with no executor behind it. See the documenter
+section for what that costs.
+
 It used to be 8.8 s, and 64% of that was the curator — 1.6 s to open its
 session and 4.0 s on an opening drain that **could not possibly help**,
 because the inventory is rendered when the scribe's session is CREATED,
@@ -409,13 +418,44 @@ absence. So `documento_encargado` in the payload is cross-checked against
 claim is in the payload, the truth is in the ledger, and the ledger is the
 one the model cannot rewrite.
 
-> **Blocked as of writing.** The first spawn kills the parent's turn with
-> `RuntimeError: Set changed size during iteration` —
-> `registry.get_plugin_for_tool` scans `self._exposed` without a snapshot
-> while the spawn mutates it
-> ([jaato#938](https://github.com/Jaato-framework-and-examples/jaato/issues/938),
-> found here, one-line fix). The agent, its gate and the wiring are done
-> and validated; the hand-off cannot run until that lands.
+**Verified 2026-09-10.** The hand-off runs: the scribe commissions, the
+subagent reads the memories, selects the reference catalogue once, and
+writes `docs/<topic>/index.md`. Four separate things had to be right, and
+each was wrong first:
+
+| | |
+|---|---|
+| `config_root` on the session | Without it `file_edit` refuses to initialise and is **not exposed** — while `writeNewFile` still reaches the model. A tool advertised with no executor returns nothing, so the model retries forever. 127 attempts before it was killed by hand. |
+| `profile=` on the spawn | Omitted, `spawn_subagent` inherits the parent's plugins and gets **no persona** — a nameless agent with no `file_edit`. Now unrepresentable: the schema requires it ([jaato#944](https://github.com/Jaato-framework-and-examples/jaato/issues/944), found here). |
+| `permission` in `plugins:` | `plugin_configs.permission` for an undeclared plugin loads, validates, and does nothing ([jaato#950](https://github.com/Jaato-framework-and-examples/jaato/issues/950), found here, fixed). |
+| `writeNewFile` on the **parent's** whitelist | A subagent is judged by the policy the PARENT initialized. The documenter's own profile granted it and that was not enough ([jaato#957](https://github.com/Jaato-framework-and-examples/jaato/issues/957), found here, OPEN). |
+
+The last one is the trap worth remembering: the child profile names its
+tools, declares `permission`, grants exactly the two it needs — everything
+an author would do — and none of it governs the session it describes.
+
+**One tool at a time.** `runtime_limits.max_parallel_tools: 1`, because the
+documenter emitted three `selectReferences` calls in a single turn, two
+byte-identical. The first selected; the twin was told "no sources matched
+criteria" because its sibling had just done the work — and the model read
+its own race as a failure and repeated it **192 times**. `listReferences`
+was the answer it never asked: it reports `selected: true` per source. The
+persona now says so, and the tool pool is serialised so the race cannot
+happen.
+
+**Every profile carries a ceiling.** `budget_control` with `finalize` at
+80% and `abort` at 100%, on all four. `abort` is the load-bearing rung:
+`finalize` injects "wrap up with what you have", which a looping model can
+ignore — this one ignored 192 consecutive failures without emitting a word.
+The ceilings do **not** yet bind a subagent
+([jaato#955](https://github.com/Jaato-framework-and-examples/jaato/issues/955),
+found here, OPEN): a run declaring `tool_calls: 100` reached 196 and
+outlived its driver.
+
+**Per-agent trace logs.** `trace: {session_log, provider_log}` on the
+documenter, workspace-relative. The global `/tmp/rich_client_trace.log`
+interleaves every workspace on the machine, and diagnosing this meant
+reading another project's session at the same timestamps.
 
 ## Starting over
 
@@ -460,7 +500,7 @@ restarts the deadline instead of giving up.
 | `memory.py` | What was left uncurated last time. |
 | `enrichment.py` | Search, judge and catalogue what is outside. |
 | `ptt_capture.py`, `pulse_playback.py` | Copied unchanged from `jaato-cascade-audio-interchange`. They know nothing about jaato. |
-| `.jaato/agents/*.md` | The three personas: escriba, curator, juez. |
+| `.jaato/agents/*.md` | The four personas: escriba, curator, juez, documentalista. |
 | `.jaato/profiles/` | Provider-agnostic `_base_*` plus the `openrouter_gpt_audio` set. |
 
 Everything that is not SDK lives outside the driver on purpose:
@@ -516,6 +556,17 @@ that list — luck, not design. **The real boundary is `tools:[...]` in
 `plugins:`**, which keeps the tool out of the registry. It has bitten
 three times in this repo.
 
+**Corollary 2026-09-10 — and it points the other way.** The whitelist is
+not a boundary, but it *is* load-bearing for a subagent, and not the one
+you would expect: the child is judged by the policy the **parent**
+initialized. The documenter's profile granted `writeNewFile` to itself and
+was denied `method=default` fourteen times; granting it on the scribe's
+profile — which has no `file_edit` and cannot call it — is what let the
+write through
+([jaato#957](https://github.com/Jaato-framework-and-examples/jaato/issues/957)).
+So both statements hold at once: `tools:[...]` is what keeps a tool out of
+reach, and the parent's whitelist is what lets a child's gated tool run.
+
 Corollary, same day: with `store_memory` within reach, the curator
 discarded a good memory and stored it again raw with `content` and
 `description` swapped — every drain discarded and recreated it, so it was
@@ -526,9 +577,9 @@ what is already written.
 
 Much of the design comes from `jaato-cascade-audio-interchange`, whose
 `KNOWN_ISSUES.md` is a snapshot against an older server. Against the
-installed 0.7.0:
+installed **0.10.0** (`68e2cdfc`):
 
-| | actual state in 0.7.0 |
+| | actual state in 0.10.0 |
 |---|---|
 | **#822** a tiers-only profile without top-level `model`/`provider` will not start | **FIXED.** `runner_spawn.py:455-464` documents the chain `profile.provider → model_tiers[initial].provider → JAATO_PROVIDER`. Verified: this profile, tiers-only, creates a session in 1.5 s. |
 | **#845** neither `wake` nor `inject_prompt` carries an attachment | **FIXED** (#914). Verified: a completed session woken with an audio attachment ran the next turn. |
@@ -537,6 +588,23 @@ installed 0.7.0:
 | **#922** tool-result enrichment never fires for `store_memory` | **FIXED** (#924), found here. The session renders the whole dict as a text view instead of guessing the key. Verified on a spoken turn: `enrich [tool:store_memory]: tag matches: {auto-testjaato1: [jaato, harness, orquestacion]}`. |
 | **#919** the nudge budget is a daemon constant, not a profile knob | **FIXED** (#927), found here. Verified: at 4 nudges the same five turns close 4 of 5 instead of 2 of 5. |
 | **#912** a `.jsonl` `storage_path` is reinterpreted as a directory | **OPEN**, found here. |
+| **#934** the nudge budget is rationed per SESSION, not per turn | **FIXED** (#936), found here. A conversation spent its whole allowance in the first few turns. |
+| **#938** `registry.get_plugin_for_tool` iterates `self._exposed` without a snapshot | **FIXED** (#941), found here. The first `spawn_subagent` killed the parent's turn with `RuntimeError: Set changed size during iteration`. |
+| **#944** `spawn_subagent` lets `profile` be omitted, silently inheriting the parent's plugins with no instructions — and `allow_inline`, the knob against it, was never read | **FIXED** (#946), found here. `profile` is now `required` in the schema when inline spawning is off, which is the new default. |
+| **#947** a profile with no `budget_control` is unbounded on every dimension and nothing says so | **FIXED** (#948), found here. `validate` now flags it — and flags limits that no rung enforces. |
+| **#950** `plugin_configs` for a plugin absent from `plugins:` loads, validates, and does nothing | **FIXED** (#952), found here. A permission whitelist was inert for 55 ASKs with no diagnostic. |
+| **#951** no permission decision was observable: only the ASK branch traced, and terminal decisions went to an in-memory list | **FIXED** (#953), found here. Every branch now logs `allowed=`/`method=`/`reason=` with the agent attributed — `agent=subagent:documentalista`. It turned three sessions of guessing into one `grep`. |
+| **#955** `budget_control` does not bind a subagent | **OPEN**, found here. 196 tool calls under `tool_calls: 100` with `abort` at 100%, nothing logged, and the loop outlived its driver. |
+| **#957** a subagent is judged by the PARENT's permission whitelist, not its own profile's | **OPEN**, found here. Split out of #951 once its own description proved unreliable. |
+
+One of those reports was partly wrong, and the cause is worth recording:
+#951's description listed "whitelist on the parent profile — no change,
+hypothesis falsified". It had never been applied. A duplicate
+`permission:` key under `plugin_configs` in `_base_escriba.yaml` meant
+YAML's last-wins silently discarded the block, and `validate` saw nothing
+to complain about — both keys are individually well-formed. An untested
+edit was reported upstream as a negative result. **Parse a profile after
+editing it and assert the effective value; do not trust the diff.**
 
 Not verified, inherited from that repo: that `temperature: 0.0` makes
 gpt-audio loop (818 s measured) and that the `-mini` cannot leave the

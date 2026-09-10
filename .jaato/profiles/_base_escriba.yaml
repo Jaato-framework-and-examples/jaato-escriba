@@ -88,11 +88,34 @@ plugins:
   # going.  Not `close_subagent` or `cancel_subagent`: it finishes on its
   # own, and a voice model with a cancel button is a way to lose work.
   - "subagent(mode:preload, tools:[spawn_subagent, list_active_subagents])"
+  # Declared for the SUBAGENT's sake, not its own. A subagent shares the
+  # parent's PluginRegistry, so the permission plugin the documentalista
+  # meets is THIS session's instance — configured from this profile.
+  # Measured: documentalista writes fine as a direct session and not at
+  # all as escriba's subagent, because the whitelist lived on the child's
+  # profile and the plugin answering was the parent's.
+  # This grants escriba nothing: `file_edit` is not in its plugin list at
+  # all, so it has no write tool to approve. The subset stays the boundary.
+  - "permission(mode:preload)"
 
 # Drop the instruction layers the framework injects.  This agent
 # converses; the platform constants (task-completion, parallel batching,
 # turn summaries) describe work it does not do — and an audio model pays
 # for that prompt on EVERY turn.
+# The person is in the room and the conversation is open-ended, so the
+# ceiling is generous — but `turns` is what stops a tier ping-pong and
+# `usd` is what stops a bad night costing real money.
+budget_control:
+  limits:
+    usd: 2.00
+    turns: 120
+    tool_calls: 300
+  degrade:
+    - at: 80
+      action: finalize
+    - at: 100
+      action: abort
+
 suppress_base_instructions: true
 
 # A conversation accumulates audio in a way a text one does not: every
@@ -159,3 +182,13 @@ plugin_configs:
           - web_fetch
           - spawn_subagent
           - list_active_subagents
+          # The DOCUMENTALISTA's write tools, not the scribe's — the scribe
+          # has no `file_edit` at all and cannot call these. A subagent is
+          # judged by the permission plugin the PARENT initialized (one
+          # shared instance per registry), so a tool the child needs that
+          # the parent's whitelist omits is denied `method=default`.
+          # Measured 2026-09-10: 14 × "Permission denied: Denied by default
+          # policy" on writeNewFile, while the child's own profile granted
+          # it and a direct session on that same profile wrote the file.
+          - writeNewFile
+          - updateFile

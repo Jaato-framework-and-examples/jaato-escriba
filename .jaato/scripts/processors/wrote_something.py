@@ -42,9 +42,35 @@ def _document_claim(payload: Dict[str, Any], calls: list) -> List[str]:
     Same shape as the memory check: the claim is in the payload, the truth
     is in the ledger, and the ledger is the one the model cannot rewrite.
     """
+    spawned = any(c.get("name") == SPAWN and c.get("success") for c in calls)
+
     if not payload.get("documento_encargado"):
+        # It said it commissioned nothing. Then it must not be TELLING the
+        # person otherwise — measured twice: "documento consolidado …
+        # guardado" and "he anotado un documento sobre apicultura", both
+        # with no spawn, both while the flag was simply absent. Omitting the
+        # flag was the way to make the claim without owning it, so the flag
+        # is required now and this catches the remaining contradiction.
+        #
+        # A narrow keyword check, deliberately: it fires only when the
+        # sentence the scribe will SAY OUT LOUD announces a document that
+        # does not exist. The cost of a false positive is one retry; the
+        # cost of a miss is a person waiting for a file forever.
+        said = str(payload.get("anotado") or "").lower()
+        claims = any(k in said for k in (
+            "documento", "documentación", "lo he escrito", "lo he guardado en"))
+        if claims and not spawned:
+            return [
+                "Tu `anotado` habla de un documento, pero `documento_encargado` "
+                "es false y no has llamado a `spawn_subagent`: no hay ningún "
+                "documento. Una de dos. Si la persona lo pidió, entra en "
+                "`escribano` y encárgaselo al `documentalista` — TÚ NO LO "
+                "ESCRIBES, y guardar una memoria sobre el tema no es "
+                "escribirlo. Si no lo pidió, quita del `anotado` lo que suene "
+                "a que existe un fichero."
+            ]
         return []
-    if any(c.get("name") == SPAWN and c.get("success") for c in calls):
+    if spawned:
         return []
     return [
         "Dices `documento_encargado: true` pero no has llamado a "

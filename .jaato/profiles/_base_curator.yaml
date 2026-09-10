@@ -36,6 +36,19 @@ plugins:
   # what is already written; it does not write.
   - "memory(mode:preload, tools:[retrieve_memories, update_memory, list_memory_tags])"
 
+# Judges raw memories eight at a time and stops. If it is still going
+# after 40 turns it is not curating, it is looping.
+budget_control:
+  limits:
+    usd: 0.40
+    turns: 40
+    tool_calls: 120
+  degrade:
+    - at: 80
+      action: finalize
+    - at: 100
+      action: abort
+
 gc:
   type: hybrid
   threshold_percent: 75.0

@@ -16,6 +16,50 @@ plugins:
   - "references(mode:preload, tools:[listReferences, selectReferences])"
   - "web_fetch(mode:preload, tools:[web_fetch])"
   - "file_edit(mode:preload, tools:[writeNewFile, updateFile, readFile])"
+  # Declared for its CONFIG, not its tools: get_tool_schemas() returns []
+  # (plugin.py:725 — askPermission is deliberately not exposed), so this
+  # adds no tool surface. Without the declaration the profile's
+  # plugin_configs.permission never reaches the plugin and the whitelist
+  # below is inert — measured: 55 ASKs on a pre-approved tool.
+  - "permission(mode:preload)"
+
+# The persona belongs to the profile, not to every caller (#944). With this,
+# `spawn_subagent(profile="documentalista")` yields a subagent that has both
+# the tools AND the instructions — the scribe cannot get the pair half-right.
+default_agent: documentalista
+
+# Writes a document tree and reports. `tool_calls` is the load-bearing
+# one here: on 2026-09-10 this agent called writeNewFile 35 times in five
+# minutes against a file_edit that had failed to initialise, and nothing
+# stopped it — the session had to be killed by hand.
+# One tool at a time. Measured 2026-09-10: this agent emitted three
+# selectReferences calls in a single turn, two of them byte-identical. The
+# first selected; the second was told "no sources matched criteria" because
+# its twin had just done the work — and the model read its own race as a
+# failure and retried 192 times. `max_parallel_tools` is the one
+# runtime_limits field an in-process subagent can honour (#862).
+runtime_limits:
+  max_parallel_tools: 1
+
+budget_control:
+  limits:
+    usd: 0.60
+    turns: 50
+    tool_calls: 100
+    seconds: 600
+  degrade:
+    - at: 80
+      action: finalize
+    - at: 100
+      action: abort
+
+# Both logs, workspace-relative so they land in THIS tree. The global
+# /tmp/rich_client_trace.log interleaves every workspace on the machine —
+# diagnosing a writeNewFile failure there meant reading another project's
+# session at the same timestamps.
+trace:
+  session_log: .jaato/logs/documentalista-session.log
+  provider_log: .jaato/logs/documentalista-provider.log
 
 suppress_base_instructions: true
 
@@ -54,3 +98,24 @@ plugin_configs:
   web_fetch:
     max_length: 8000
     timeout: 15
+  permission:
+    # `writeNewFile` is NOT auto-approved (file_edit exposes only readFile,
+    # undoFileChange, restoreFile, listBackups as such), so the policy
+    # resolves to ASK — and a headless API session has no channel to ask.
+    # Measured: the ASK returned no decision at all, the write never
+    # happened, and the model retried every 1.5s until it was killed.
+    #
+    # The whitelist names the two write tools this agent already has via
+    # `tools:[...]`; it grants nothing the tool subset has not granted.
+    # The subset stays the real boundary — a whitelist cannot widen it.
+    policy:
+      # deny, not ask. `ask` routes an unmatched tool to an approval
+      # channel, and a headless driver has none — the call then neither
+      # runs nor refuses, and the model, given no error to react to,
+      # re-issues it. That is the silent retry loop this workspace has
+      # already paid for once. `deny` is deterministic, is the library's
+      # own default (config_loader.py:19), and produces a refusal the
+      # model can actually see.
+      defaultPolicy: deny
+      whitelist:
+        tools: [writeNewFile, updateFile]
