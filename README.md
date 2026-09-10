@@ -93,27 +93,39 @@ possible failure, and has already happened once here. So the gate demands
 a memory OR an explicit `nada_que_anotar: true` with a reason, which is
 visible in the payload and therefore auditable.
 
-**Why every turn needs a nudge, and why that used to run out.** The audio
-tier never calls `signal_completion` on its own: measured across 43
-sessions, every turn ends in text and waits to be re-prompted. That would
-be a curiosity except the nudge budget is per SESSION —
-`_completion_nudges_fired` is zeroed only in `__init__`, and
-`_begin_turn_completion_state` deliberately refuses to reset it, because
+**Why every turn needs a nudge.** The audio tier never calls
+`signal_completion` unprompted: measured across 43 sessions, every turn
+ends in text and waits to be re-prompted. So the nudge is load-bearing on
+every turn rather than an exception path.
+
+That was survivable until it met a second fact: the budget was per
+SESSION. `_completion_nudges_fired` was zeroed only in `__init__`, and
+`_begin_turn_completion_state` deliberately refused to reset it, because
 resetting it once cost the framework its only bound on the nudge loop
-(jaato#767, a session that turned 735 times in 40 seconds).
-
-That reasoning ends on "a completion-gated session is one-shot by
+(jaato#767 — a session that turned 735 times in 40 seconds). Sound
+reasoning, resting on "a completion-gated session is one-shot by
 construction" — true until #913/#915 made a completed session revivable,
-which is exactly what lets this one be gated *and* multi-turn. So a budget
-meant to bound a retry loop now bounds the conversation, draining one per
-turn:
+which is exactly what lets this one be gated *and* multi-turn.
 
-    max_completion_nudges: 4   ->  turns 1-4 close, turn 5 onward cannot
+So one nudge per turn drained a session-lifetime budget and the
+conversation died at turn N+1. That is
+[jaato#934](https://github.com/Jaato-framework-and-examples/jaato/issues/934),
+found here and fixed in #936 with the distinction the old code
+approximated by never resetting: `_completion_nudge_turn_pending` is
+latched when a nudge fires, so a **nudge-originated** turn keeps the
+counter (the loop still terminates) while a turn the caller started clears
+it (a conversation is not rationed). Verified: six turns, all six close,
+with the budget at 2 — before the fix, turns 3-6 died.
 
-Raising it to 2 then 4 only moved the wall. It is set to 40 here — longer
-than anyone talks in one sitting. A ceiling, not a fix: the real answer is
-for the bound to be per turn, so a single turn still cannot loop forever.
-Verified at 40: six consecutive turns, six closed.
+The profile asks for 3: one for the ordinary "you have not closed the
+turn", one spare for a turn where the memory gate rejects once and the
+payload has to be fixed.
+
+**And the payload no longer carries ceremony.** The schema used to require
+`agent`, a `const` echoing which agent was completing — which the
+framework already knows. The model kept omitting it: 22 rejections from
+that alone, each costing a retry *and* a nudge. Removed; nothing
+downstream read it.
 
 Memories land either way. The driver still tolerates the remainder — the
 memory is already on disk, the person has already heard the reply, and

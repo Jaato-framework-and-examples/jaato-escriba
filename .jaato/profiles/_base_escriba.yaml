@@ -28,23 +28,19 @@ description: >
 # It costs almost nothing: measured 1.40 s per turn with completion
 # against 1.30 s without, because the session stays warm rather than
 # cold-restarting.
-# One nudge per TURN, so this has to cover the whole conversation.
+# Nudges are PER TURN since jaato#934 (fixed in #936), so this is a retry
+# allowance for one turn rather than a ceiling on the conversation.
 #
-# The budget is per SESSION by design: `_completion_nudges_fired` is
-# zeroed only in `__init__`, and `_begin_turn_completion_state` refuses to
-# reset it because resetting it once cost the framework its only bound on
-# the nudge loop (jaato#767 — a session that turned 735 times in 40
-# seconds).  The reasoning ends on "a completion-gated session is one-shot
-# by construction", which was true until #913/#915 made a completed
-# session revivable — which is exactly what lets this one be gated AND
-# multi-turn.
+# It had to be 40 while the budget was per session: this model never calls
+# `signal_completion` unprompted — it finishes speaking and considers the
+# turn done — so one nudge went on every turn and the conversation died at
+# turn N+1.  Verified after the fix: six turns all close with the budget
+# at 2.
 #
-# This model never completes on its own: measured across 43 sessions,
-# every turn ends in text and waits for the nudge.  So the budget drains
-# at one per turn and the conversation dies at turn N+1.  At 4 it died at
-# the fifth.  40 is roughly "longer than anyone talks in one sitting" —
-# a ceiling, not a fix.
-max_completion_nudges: 40
+# 3, not the default 2: one nudge is spent on the ordinary "you have not
+# closed the turn" prompt, and the spare covers a turn where the
+# `wrote_something` gate rejects once and the model has to fix its payload.
+max_completion_nudges: 3
 
 completion_payload_schema: completion_schemas/escriba.json
 completion_processors:
