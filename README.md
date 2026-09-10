@@ -378,6 +378,45 @@ Everything that writes during a turn — the observer's search reports, from
 a background task — goes through it. On a pipe or a file the spinner is
 off entirely, so logs and captured test output stay clean.
 
+## Documentation, on request
+
+Ask for a document and the scribe hands the job to the `documentalista`
+with `spawn_subagent`. It writes markdown under `docs/<topic>/`, `index.md`
+first, a tree with relative links when the material warrants one. It runs
+in the BACKGROUND, so asking for a document does not stop the
+conversation; when it finishes, the scribe says what it contains and where
+in two sentences, and the driver prints each exact path as the file lands
+(`· wrote docs/…`) — a path has to be read, not heard.
+
+**"Accurate" is enforced, not hoped for.** The documenter may use only the
+memories and the references — never what a model happens to know about the
+world — and a completion processor checks four things mechanically:
+
+    every file it claims to have written exists
+    `raiz` is one of them
+    every relative link inside them resolves
+    every cited id (mem_… / auto-…) EXISTS
+
+The fourth is the one that matters. A fabricated citation reads exactly
+like provenance and is worse than no citation at all.
+
+**And the scribe cannot claim a document it did not commission.** Measured
+2026-09-10: asked for one, it read the memories, stored one, and said
+"documento consolidado … guardado" — having spawned nothing. The person is
+then waiting for a file nobody is writing, and the only clue is its
+absence. So `documento_encargado` in the payload is cross-checked against
+`spawn_subagent` in the tool ledger, the same trick as the memory gate: the
+claim is in the payload, the truth is in the ledger, and the ledger is the
+one the model cannot rewrite.
+
+> **Blocked as of writing.** The first spawn kills the parent's turn with
+> `RuntimeError: Set changed size during iteration` —
+> `registry.get_plugin_for_tool` scans `self._exposed` without a snapshot
+> while the spawn mutates it
+> ([jaato#938](https://github.com/Jaato-framework-and-examples/jaato/issues/938),
+> found here, one-line fix). The agent, its gate and the wiring are done
+> and validated; the hand-off cannot run until that lands.
+
 ## Starting over
 
 `--forget` clears the slate: every memory, the reference catalogue and the

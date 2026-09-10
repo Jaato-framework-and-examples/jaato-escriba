@@ -1,0 +1,12 @@
+# documentalista — openrouter set: text only, and it has to write well.
+name: documentalista
+inherits: [_base_documentalista]
+plugins: []
+model: openai/gpt-4o-mini
+provider: openrouter
+plugin_configs:
+  openrouter:
+    api_params:
+      # Prose, not a verdict: a little room is right here, unlike the
+      # judge and the curator which are pinned at 0.
+      temperature: 0.3

@@ -1,0 +1,56 @@
+# Tier-1 base for 'documentalista' — PROVIDER-AGNOSTIC.
+name: _base_documentalista
+description: >
+  Writes markdown documentation about one topic, from the second brain's
+  memories and references and from nothing else. Spawned by the scribe on
+  the person's request; reports the files it wrote.
+
+plugins:
+  # Read the brain, read what was found outside, write files. Nothing else.
+  #
+  # Subset per plugin rather than a permission whitelist: `memory` and
+  # `references` mark their tools auto-approved (plugin.py:740 and :4356),
+  # and an auto-approved tool bypasses the policy — so the whitelist is not
+  # a boundary here. `tools:[...]` is. It has bitten this repo three times.
+  - "memory(mode:preload, tools:[retrieve_memories, list_memory_tags])"
+  - "references(mode:preload, tools:[listReferences, selectReferences])"
+  - "web_fetch(mode:preload, tools:[web_fetch])"
+  - "file_edit(mode:preload, tools:[writeNewFile, updateFile, readFile])"
+
+suppress_base_instructions: true
+
+# It reads memories, fetched pages and its own drafts: the context fills up
+# fast and the older halves of a long document are not needed to write the
+# next page.
+gc:
+  type: budget
+  threshold_percent: 70.0
+
+completion_payload_schema: completion_schemas/documentalista.json
+completion_processors:
+  # What it claims it wrote must be on disk, the tree must hang together,
+  # and every cited id must exist. See the module docstring for why the
+  # fourth check is the one that matters.
+  - script: scripts/processors/docs_are_real.py
+    name: docs_are_real
+    on_error: fail_completion
+    max_refusals: 3
+    on_exhausted: allow
+
+plugin_configs:
+  memory:
+    # Same store as the scribe — it is documenting THAT brain — and the
+    # same reason for redirecting the global tier: see _base_escriba.
+    storage_path: .jaato/memory/escriba
+    global_storage_path: .jaato/memory/escriba-global
+    # Read-only in practice: `store_memory` is not in its tool list. The
+    # gate is here too so a future edit cannot quietly grant it.
+    allowed_scopes: ["project"]
+  file_edit:
+    # An explicit backup dir: file_edit refuses to initialise without one
+    # when no config_root is set, and the failure is a plugin that simply
+    # is not exposed — observed on another profile in this workspace.
+    backup_dir: .jaato/backups
+  web_fetch:
+    max_length: 8000
+    timeout: 15

@@ -28,6 +28,10 @@
         "type": "string"
       },
       "description": "Marcadores de fallo duro: intentaste y no pudiste."
+    },
+    "documento_encargado": {
+      "type": "boolean",
+      "description": "true SOLO si en este turno has llamado de verdad a `spawn_subagent` para encargar un documento. Se comprueba contra lo que hiciste: decir que encargaste uno sin haberlo encargado deja a la persona esperando un fichero que nadie está escribiendo."
     }
   },
   "description": "El campo `agent` NO está aquí a propósito. Era un `const` que el modelo tenía que repetir, y repetir una constante que el framework ya conoce es papeleo: se olvidaba, `signal_completion` se rechazaba con \"'agent' is a required property\", y cada olvido gastaba un intento Y un nudge del presupuesto de la sesión. Medido: 22 rechazos por esa sola causa."

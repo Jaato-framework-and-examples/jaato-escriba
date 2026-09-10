@@ -82,6 +82,12 @@ plugins:
   # Una sola herramienta del plugin, por la razón de siempre: cada nombre
   # del esquema es una palabra que el tier de voz puede leer en alto.
   - "web_fetch(mode:preload, tools:[web_fetch])"
+  # To hand a documentation request to the `documentalista`, which runs in
+  # the BACKGROUND — so asking for a document does not stop the
+  # conversation.  Two tools: spawn it, and check whether it is still
+  # going.  Not `close_subagent` or `cancel_subagent`: it finishes on its
+  # own, and a voice model with a cancel button is a way to lose work.
+  - "subagent(mode:preload, tools:[spawn_subagent, list_active_subagents])"
 
 # Drop the instruction layers the framework injects.  This agent
 # converses; the platform constants (task-completion, parallel batching,
@@ -151,3 +157,5 @@ plugin_configs:
           # it.
           - enter_tier
           - web_fetch
+          - spawn_subagent
+          - list_active_subagents

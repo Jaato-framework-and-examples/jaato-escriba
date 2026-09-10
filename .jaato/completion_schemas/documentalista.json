@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["raiz", "ficheros", "fuentes", "resumen"],
+  "description": "Sin `agent`: repetir una constante que el framework ya conoce solo produce rechazos (ver los otros esquemas de este repo).",
+  "properties": {
+    "raiz": {
+      "type": "string", "minLength": 1,
+      "description": "La ruta del documento por el que se empieza a leer, relativa al workspace: 'docs/<tema>/index.md'. Tiene que estar también en `ficheros`."
+    },
+    "ficheros": {
+      "type": "array", "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "TODOS los ficheros que has escrito, rutas relativas al workspace. Se comprueban uno por uno: si dices que escribiste algo que no está, el turno se rechaza."
+    },
+    "fuentes": {
+      "type": "array", "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Los ids de las memorias (mem_...) y de las referencias (auto-...) en los que se apoya lo que has escrito. Se comprueba que cada uno EXISTA. No inventes ids: un id que no existe es una cita falsa, y una cita falsa es peor que no citar."
+    },
+    "resumen": {
+      "type": "string", "minLength": 1, "maxLength": 300,
+      "description": "Una o dos frases que el escriba pueda DECIR EN VOZ ALTA: de qué va el documento y qué contiene. Sin rutas ni nombres de fichero — eso lo dice el driver."
+    },
+    "warnings": {
+      "type": "array", "items": { "type": "string" },
+      "description": "Lo que quedó flojo: un apartado con poco respaldo, una pregunta que las memorias no contestan."
+    },
+    "errors": {
+      "type": "array", "items": { "type": "string" },
+      "description": "Fallo duro: no pudiste documentar lo que se pedía."
+    }
+  }
+}

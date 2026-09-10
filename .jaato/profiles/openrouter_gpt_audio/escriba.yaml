@@ -64,7 +64,7 @@ model_tiers:
     # que `exit_on: completion` ya le da hecha.  Medido: el 74 % de los
     # `enter_tier(voz)` volvían "already_at_tier"; con la regla en la
     # persona bajó al 30 %, y el 30 % restante lo pedía esta frase.
-    description: 'anota y consulta lo aprendido; AQUÍ NO SE OYE. Al terminar vuelves a voz TÚ SOLO: no pidas volver, ya estás de vuelta'
+    description: 'anota, consulta, y ENCARGA DOCUMENTOS con spawn_subagent (perfil documentalista) — tú no los escribes. AQUÍ NO SE OYE. Al terminar vuelves a voz TÚ SOLO: no pidas volver, ya estás de vuelta'
   initial: voz
   fallback: voz
 

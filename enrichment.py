@@ -241,6 +241,18 @@ class Observer:
         self._client = client
         client.subscribe(EventType.TOOL_CALL_START, self._started)
         client.subscribe(EventType.TOOL_CALL_END, self._ended)
+        # The documenter runs as the scribe's SUBAGENT, so its tool calls
+        # surface on this same client.  Reporting each file as it lands is
+        # what gives the person an exact path: the scribe can say "in the
+        # docs folder" out loud, but a path has to be read, not heard.
+        client.subscribe(EventType.TOOL_CALL_START, self._wrote)
+
+    def _wrote(self, ev) -> None:
+        if getattr(ev, "tool_name", None) not in ("writeNewFile", "updateFile"):
+            return
+        path = (getattr(ev, "tool_args", None) or {}).get("path")
+        if path:
+            self._log(f"· wrote {path}")
 
     def _started(self, ev) -> None:
         if getattr(ev, "tool_name", None) == "store_memory":
