@@ -14,6 +14,7 @@ import asyncio
 import itertools
 import sys
 import threading
+from datetime import datetime
 
 FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 INTERVAL = 0.09
@@ -25,16 +26,38 @@ _lock = threading.Lock()
 _active: "Spinner | None" = None
 
 
+#: Width of the stamp, so continuation lines can be indented under it.
+STAMP = len("[00:00:00] ")
+
+
 def log(message: str) -> None:
-    """Write a line without mangling a running spinner.
+    """Write a timestamped line without mangling a running spinner.
 
     The spinner redraws itself on its next tick, so clearing the line and
     printing above it is enough.
+
+    Every line is stamped because a voice conversation has long silences
+    in it — the model thinking, a search running behind — and "how long
+    did that take" is the first question anyone asks of the transcript.
+    A blank line stays blank: stamping it would be noise.
+
+    Multi-line messages get the stamp once and the rest indented under it,
+    so a wrapped reply stays readable as one entry.
     """
+    now = datetime.now().strftime("%H:%M:%S")
+    out, stamped = [], False
+    for line in message.split("\n"):
+        if not line.strip():
+            out.append("")                     # a blank line stays blank
+        elif not stamped:
+            out.append(f"[{now}] {line}")      # the FIRST non-blank carries it
+            stamped = True
+        else:
+            out.append(" " * STAMP + line)
     with _lock:
         if LIVE and _active is not None:
             sys.stdout.write("\r\033[K")
-        print(message, flush=True)
+        print("\n".join(out), flush=True)
 
 
 class Spinner:
@@ -56,7 +79,8 @@ class Spinner:
             if self._stop.is_set():
                 return
             with _lock:
-                sys.stdout.write(f"\r\033[K{frame} {self._text}")
+                now = datetime.now().strftime("%H:%M:%S")
+                sys.stdout.write(f"\r\033[K[{now}] {frame} {self._text}")
                 sys.stdout.flush()
             try:
                 await asyncio.wait_for(self._stop.wait(), INTERVAL)

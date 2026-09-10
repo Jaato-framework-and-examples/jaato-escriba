@@ -360,6 +360,18 @@ spinner runs for exactly that window and stops on the **first audio
 chunk**, which is the moment you start hearing the answer rather than the
 moment the turn settles seconds later.
 
+Every line is stamped `[HH:MM:SS]`, including the spinner's, because a
+voice conversation is mostly silence — the model thinking, a search
+running behind — and "how long did that take" is the first question anyone
+asks of a transcript. A multi-line reply gets the stamp once and the rest
+indented under it, so it stays one entry:
+
+    [07:55:34] · searching: varroa apicultura control_de_plagas
+    [07:55:39] escriba: He anotado que tienes cuatro colmenas…
+               ¿Te gustaría que te diera más información?
+    [07:55:39]    ↳ He anotado que la persona tiene cuatro colmenas…
+    [07:55:57] · found outside: Penn State Extension, Véto-pharma…
+
 `console.py` also owns `log`, because a spinner and a bare `print` cannot
 share a terminal: the print lands on the spinner's line and mangles both.
 Everything that writes during a turn — the observer's search reports, from
