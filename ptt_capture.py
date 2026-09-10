@@ -15,7 +15,20 @@ attempt to infer where a stream ended was wrong in some case, and the
 one that shipped closed a player mid-utterance and started a second over
 the top of it.
 
-Contract, per the producer's spec:
+Two backends share the same audio ring and delivery logic:
+
+* ``PushToTalkMic`` -- the original wraith_mic backend.  A PipeWire
+  source named ``wraith_mic`` supplies continuous PCM; ``pw-metadata``
+  carries the ``wraith.ptt`` key that marks press and release.
+
+* ``KeyboardPushToTalkMic`` -- a keyboard-toggle backend for
+  environments without wraith (WSL, CI, any headless Linux).  Space
+  starts recording, Space again stops it.  Source is the PulseAudio
+  default, discovered at start-up.
+
+``create_mic()`` picks the right one for the running environment.
+
+Contract, per the producer's spec (wraith backend):
 
 * the source is ALWAYS readable -- between presses it yields digital
   silence, never EOF and never a stall.  Silence is not end-of-stream.
@@ -34,8 +47,12 @@ Contract, per the producer's spec:
 from __future__ import annotations
 
 import audioop
+import os
 import re
+import select
 import shutil
+import signal
+import sys
 import queue
 import subprocess
 import threading
@@ -101,6 +118,11 @@ LATENCY_MS = 50
 #: 2500 ms, so cutting 1300 ms still leaves every one of them whole.
 TAIL_MS = 1200
 
+#: Tail for the keyboard backend.  There is no link to compensate for:
+#: the Space key and the microphone share the same machine, so the
+#: signal and the audio are synchronous.  Only the silence margin matters.
+KEYBOARD_TAIL_MS = 200
+
 #: Refuse to grow the ring without bound.  A press that outruns this is
 #: a producer or operator fault, not something to absorb silently.
 MAX_UTTERANCE_SECONDS = 120
@@ -122,6 +144,11 @@ SILENCE_RMS = 120
 #: consonant is not clipped, far less than the seconds the press
 #: boundaries leave in.
 SILENCE_MARGIN_MS = 200
+
+#: Subprocess environment with a stable locale.  Preserves PULSE_SERVER
+#: (and everything else in the caller's env) so pactl finds the server
+#: in WSL/WSLg without hard-coding the socket path.
+_CLEAN_ENV = {**os.environ, "LC_ALL": "C"}
 
 
 @dataclass
@@ -223,8 +250,29 @@ def source_is_muted(source: str = SOURCE) -> Optional[bool]:
     return None
 
 
-class PushToTalkMic:
-    """Reads a PTT source and yields one :class:`Utterance` per press.
+def _wraith_available() -> bool:
+    """True when wraith_mic exists as a PulseAudio source and pw-metadata is on PATH."""
+    if not shutil.which("pw-metadata") or not shutil.which("parec"):
+        return False
+    out = subprocess.run(
+        ["pactl", "list", "sources", "short"],
+        capture_output=True, text=True, env=_CLEAN_ENV)
+    return SOURCE in out.stdout
+
+
+def _default_source() -> str:
+    """The running PulseAudio default input source, or @DEFAULT_SOURCE@ as fallback."""
+    if shutil.which("pactl"):
+        out = subprocess.run(
+            ["pactl", "info"], capture_output=True, text=True, env=_CLEAN_ENV)
+        for line in out.stdout.splitlines():
+            if line.startswith("Default Source:"):
+                return line.split(":", 1)[1].strip()
+    return "@DEFAULT_SOURCE@"
+
+
+class _PushToTalkBase:
+    """Audio ring, cut delivery, and boundary application.
 
     Three threads.  Two because the halves are genuinely independent:
     audio arrives continuously whether or not anyone is speaking, and the
@@ -239,10 +287,14 @@ class PushToTalkMic:
     clock, so a transition is recorded as "the offset the reader had
     reached when the line arrived", which is the only quantity both
     halves can agree on.
+
+    Subclasses supply ``start()``, ``stop()``, and ``_read_signal()``.
+    Everything else -- the ring, slicing, ``_on_edge``, ``_drain`` -- is
+    identical regardless of how the signal arrives.
     """
 
     def __init__(self, on_utterance: Callable[[Utterance], None],
-                 source: str = SOURCE, tail_ms: int = TAIL_MS) -> None:
+                 source: str, tail_ms: int) -> None:
         self._on_utterance = on_utterance
         self._source = source
         #: The tail is carried as BYTES, not seconds.  The source runs at
@@ -260,46 +312,25 @@ class PushToTalkMic:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._audio: Optional[subprocess.Popen] = None
-        self._signal: Optional[subprocess.Popen] = None
         self._fault: Optional[BaseException] = None
         #: Last value seen for the press key, or None before the first.
-        #: An update repeating it is not an edge -- see _read_signal.
+        #: An update repeating it is not an edge.
         self._state: Optional[str] = None
         #: None until a press is open; otherwise the offset it began at.
         self._press_from: Optional[int] = None
         self._press_started: float = 0.0
 
-    # -- lifecycle ---------------------------------------------------
-    def start(self) -> None:
-        """Open both halves, refusing rather than recording silence."""
-        muted = source_is_muted(self._source)
-        if muted:
-            raise SourceMuted(
-                f"{self._source} is muted; capture would record digital "
-                f"silence while looking perfectly healthy. Unmute it "
-                f"(pactl set-source-mute {self._source} 0) and retry.")
+    def raise_if_faulted(self) -> None:
+        """Surface a thread's fatal error on the caller's thread."""
+        if self._fault is not None:
+            raise self._fault
+
+    def _open_audio(self) -> None:
         self._audio = subprocess.Popen(
             ["parec", "-d", self._source, "--format=s16le",
              f"--rate={RATE}", f"--channels={CHANNELS}",
              f"--latency-msec={LATENCY_MS}"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        self._signal = subprocess.Popen(
-            ["pw-metadata", "-m"], stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, bufsize=1)
-        threading.Thread(target=self._read_audio, daemon=True).start()
-        threading.Thread(target=self._read_signal, daemon=True).start()
-        threading.Thread(target=self._drain, daemon=True).start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        for proc in (self._audio, self._signal):
-            if proc and proc.poll() is None:
-                proc.terminate()
-
-    def raise_if_faulted(self) -> None:
-        """Surface a thread's fatal error on the caller's thread."""
-        if self._fault is not None:
-            raise self._fault
 
     # -- audio -------------------------------------------------------
     def _read_audio(self) -> None:
@@ -338,43 +369,6 @@ class PushToTalkMic:
         return b"".join(out)
 
     # -- the press signal --------------------------------------------
-    def _read_signal(self) -> None:
-        """Follow ``wraith.ptt``, acting only on genuine CHANGES.
-
-        `pw-metadata -m` replays the whole metadata set on connect, and
-        SOMETIMES replays it twice -- four keys, then the same four
-        again, both dumps landing at t=0.00.  Measured on this startup
-        path it happens in about 1 run in 10.  What triggers it is NOT
-        known: a capture stream attaching afterwards never caused it in
-        testing, and neither did one already settled, so it is a race at
-        connect rather than a consequence of anything a consumer does.
-
-        Which is exactly why the rule is worth more than the diagnosis.
-        Deduplicating by value makes the trigger irrelevant: a repeated
-        `held` cannot fabricate a press no matter what re-announced it,
-        and the key is a LEVEL, so this subsumes the duplicate-`held`
-        rule too.  The value already standing when we connect is STATE,
-        not an edge: if it says `held`, a press is in flight whose audio
-        we never saw, so that utterance is lost rather than merely late.
-        """
-        for line in self._signal.stdout:
-            if self._stop.is_set():
-                return
-            match = _LINE.search(line)
-            if not match or match.group(1) != PTT_KEY:
-                continue
-            value = match.group(2)
-            if value == self._state:
-                continue                     # a repeat, not a transition
-            known = self._state is not None
-            self._state = value
-            if known:
-                self._on_edge(value)
-        if not self._stop.is_set():
-            self._fault = SignalLost(
-                "pw-metadata -m exited; no press boundary can arrive now, "
-                "so this consumer would read audio forever and stay silent")
-
     def _on_edge(self, value: str) -> None:
         """Apply one transition, ignoring any that cannot follow this state.
 
@@ -439,3 +433,194 @@ class PushToTalkMic:
                     return True
             time.sleep(0.01)
         return False
+
+
+class PushToTalkMic(_PushToTalkBase):
+    """Reads a wraith_mic PTT source and yields one :class:`Utterance` per press."""
+
+    def __init__(self, on_utterance: Callable[[Utterance], None],
+                 source: str = SOURCE, tail_ms: int = TAIL_MS) -> None:
+        super().__init__(on_utterance, source, tail_ms)
+        self._signal: Optional[subprocess.Popen] = None
+
+    # -- lifecycle ---------------------------------------------------
+    def start(self) -> None:
+        """Open both halves, refusing rather than recording silence."""
+        muted = source_is_muted(self._source)
+        if muted:
+            raise SourceMuted(
+                f"{self._source} is muted; capture would record digital "
+                f"silence while looking perfectly healthy. Unmute it "
+                f"(pactl set-source-mute {self._source} 0) and retry.")
+        self._open_audio()
+        self._signal = subprocess.Popen(
+            ["pw-metadata", "-m"], stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        threading.Thread(target=self._read_audio, daemon=True).start()
+        threading.Thread(target=self._read_signal, daemon=True).start()
+        threading.Thread(target=self._drain, daemon=True).start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        for proc in (self._audio, self._signal):
+            if proc and proc.poll() is None:
+                proc.terminate()
+
+    def _read_signal(self) -> None:
+        """Follow ``wraith.ptt``, acting only on genuine CHANGES.
+
+        `pw-metadata -m` replays the whole metadata set on connect, and
+        SOMETIMES replays it twice -- four keys, then the same four
+        again, both dumps landing at t=0.00.  Measured on this startup
+        path it happens in about 1 run in 10.  What triggers it is NOT
+        known: a capture stream attaching afterwards never caused it in
+        testing, and neither did one already settled, so it is a race at
+        connect rather than a consequence of anything a consumer does.
+
+        Which is exactly why the rule is worth more than the diagnosis.
+        Deduplicating by value makes the trigger irrelevant: a repeated
+        `held` cannot fabricate a press no matter what re-announced it,
+        and the key is a LEVEL, so this subsumes the duplicate-`held`
+        rule too.  The value already standing when we connect is STATE,
+        not an edge: if it says `held`, a press is in flight whose audio
+        we never saw, so that utterance is lost rather than merely late.
+        """
+        for line in self._signal.stdout:
+            if self._stop.is_set():
+                return
+            match = _LINE.search(line)
+            if not match or match.group(1) != PTT_KEY:
+                continue
+            value = match.group(2)
+            if value == self._state:
+                continue                     # a repeat, not a transition
+            known = self._state is not None
+            self._state = value
+            if known:
+                self._on_edge(value)
+        if not self._stop.is_set():
+            self._fault = SignalLost(
+                "pw-metadata -m exited; no press boundary can arrive now, "
+                "so this consumer would read audio forever and stay silent")
+
+
+class KeyboardPushToTalkMic(_PushToTalkBase):
+    """PTT driven by a terminal key instead of wraith_mic / pw-metadata.
+
+    Space toggles recording: first press starts, second press stops.
+    Ctrl-C is forwarded as SIGINT so the caller's handler still fires.
+
+    Used automatically by ``create_mic()`` when wraith_mic is not
+    reachable -- WSL, CI, any machine without the wraith hardware.
+    The audio source defaults to the running PulseAudio default input.
+    """
+
+    def __init__(self, on_utterance: Callable[[Utterance], None],
+                 source: Optional[str] = None,
+                 tail_ms: int = KEYBOARD_TAIL_MS) -> None:
+        super().__init__(on_utterance, source or _default_source(), tail_ms)
+        #: Saved terminal settings, restored on stop.
+        self._old_term: Optional[list] = None
+        #: Self-pipe: stop() writes here to wake a select() in _read_signal.
+        self._wake_r, self._wake_w = os.pipe()
+
+    # -- lifecycle ---------------------------------------------------
+    def start(self) -> None:
+        if not sys.stdin.isatty():
+            raise RuntimeError(
+                "keyboard PTT requires an interactive terminal; "
+                "stdin is not a tty")
+        muted = source_is_muted(self._source)
+        if muted is True:
+            raise SourceMuted(
+                f"{self._source} is muted; capture would record digital "
+                f"silence while looking perfectly healthy. Unmute it "
+                f"(pactl set-source-mute {self._source} 0) and retry.")
+        self._open_audio()
+        threading.Thread(target=self._read_audio, daemon=True).start()
+        threading.Thread(target=self._read_signal, daemon=True).start()
+        threading.Thread(target=self._drain, daemon=True).start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        # Wake up any select() blocked in _read_signal immediately.
+        try:
+            os.write(self._wake_w, b"\x00")
+        except OSError:
+            pass
+        if self._audio and self._audio.poll() is None:
+            self._audio.terminate()
+        # Restore terminal on the calling thread so the prompt is usable
+        # before _read_signal's finally block runs.
+        self._restore_term()
+
+    def _restore_term(self) -> None:
+        if self._old_term is not None:
+            import termios
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN,
+                              self._old_term)
+            self._old_term = None
+
+    def _read_signal(self) -> None:
+        """Toggle recording on Space; forward Ctrl-C as SIGINT.
+
+        Unlike the wraith backend, every Space key event is a genuine
+        edge -- there is no "replay on connect" to filter out.  The
+        _on_edge() state machine already ignores impossible transitions
+        (e.g. two consecutive "held"), so no dedup layer is needed here.
+        """
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        self._old_term = termios.tcgetattr(fd)
+        tty.setraw(fd)
+        print("\r\033[K· Space = grabar  /  Space = parar  (Ctrl-C para salir)",
+              flush=True)
+        try:
+            while not self._stop.is_set():
+                # Monitor both stdin and the wake pipe so stop() can
+                # unblock this select() without waiting for the timeout.
+                ready, _, _ = select.select(
+                    [sys.stdin, self._wake_r], [], [], 0.5)
+                if self._wake_r in ready or self._stop.is_set():
+                    return
+                if not ready:
+                    continue
+                ch = sys.stdin.read(1)
+                if ch == "\x03":             # Ctrl-C in raw mode
+                    os.kill(os.getpid(), signal.SIGINT)
+                    return
+                if ch != " ":
+                    continue
+                new_state = "released" if self._state == "held" else "held"
+                self._state = new_state
+                self._on_edge(new_state)
+                label = "⬤ grabando…" if new_state == "held" else "◯ listo"
+                print(f"\r\033[K· {label}", flush=True)
+        finally:
+            self._restore_term()
+            for pipe_fd in (self._wake_r, self._wake_w):
+                try:
+                    os.close(pipe_fd)
+                except OSError:
+                    pass
+
+
+def create_mic(on_utterance: Callable[[Utterance], None],
+               source: Optional[str] = None) -> _PushToTalkBase:
+    """Return the right PTT implementation for the current environment.
+
+    Uses ``PushToTalkMic`` (wraith backend) when ``wraith_mic`` is
+    reachable as a PulseAudio source and ``pw-metadata`` is on PATH.
+    Falls back to ``KeyboardPushToTalkMic`` otherwise -- WSL, any Linux
+    without the wraith hardware, CI.
+
+    ``source`` overrides the audio source name.  When it names a
+    non-wraith source explicitly, the keyboard backend is used regardless
+    of wraith availability.
+    """
+    use_wraith = _wraith_available() and (source is None or source == SOURCE)
+    if use_wraith:
+        return PushToTalkMic(on_utterance, source=source or SOURCE)
+    return KeyboardPushToTalkMic(on_utterance, source=source)

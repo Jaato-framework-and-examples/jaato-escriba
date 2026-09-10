@@ -83,17 +83,21 @@ def _to_mp3(wav: bytes) -> bytes:
 class Ears:
     """The push-to-talk microphone, in `await` form.
 
-    `PushToTalkMic` delivers each press by calling a callback from its own
-    thread.  An asyncio driver cannot collect it there, so the queue is
-    the meeting point: the mic thread deposits with `call_soon_threadsafe`
-    and the driver's loop waits with `get`.
+    The mic delivers each press by calling a callback from its own thread.
+    An asyncio driver cannot collect it there, so the queue is the meeting
+    point: the mic thread deposits with `call_soon_threadsafe` and the
+    driver's loop waits with `get`.
+
+    ``create_mic()`` selects the backend: wraith_mic when available,
+    keyboard toggle otherwise.  ``source`` overrides the audio source
+    name and is passed through unchanged.
     """
 
-    def __init__(self, source: str = ptt_capture.SOURCE) -> None:
+    def __init__(self, source: Optional[str] = None) -> None:
         _encoder()                     # fail now, not on the first utterance
         self._queue: asyncio.Queue = asyncio.Queue()
         self._loop = asyncio.get_running_loop()
-        self._mic = ptt_capture.PushToTalkMic(self._deliver, source=source)
+        self._mic = ptt_capture.create_mic(self._deliver, source=source)
 
     def _deliver(self, u: "ptt_capture.Utterance") -> None:
         """Runs on the MIC's thread; only crosses the boundary."""
