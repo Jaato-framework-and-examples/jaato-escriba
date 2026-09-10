@@ -48,6 +48,21 @@ flowchart TB
     mem -- "auto-injected on waking" --> voz
 ```
 
+**The hand-off, measured.** `enter_tier(escribano)` is the real
+mechanism — 62 switches across the sessions built so far. There is no
+`exit_tier`: the way back is `exit_on: completion`, and it fires reliably
+— 10 entries produced 10 automatic returns in the last verification,
+exactly 1:1.
+
+What went wrong was the model asking to come back anyway, from a tier the
+framework had already left. 74% of `enter_tier(voz)` calls returned
+`already_at_tier` — pure wasted round-trips, and before jaato#934 each one
+could spend a nudge. A persona rule took that to 30%; the rest was my own
+tier `description`, which said "para decir algo, vuelve a voz" and renders
+verbatim into the `enter_tier` schema — so the text the model reads *while
+choosing* was inviting the call the persona forbade. Fixed at that layer:
+one such call in six turns.
+
 **Why two tiers and not one.** The tool schema is session-wide; what the
 tier changes is which model is at the wheel when the decision to call a
 tool is made. An audio model ANNOUNCES the tool instead of invoking it —

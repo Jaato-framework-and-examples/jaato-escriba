@@ -58,7 +58,13 @@ model_tiers:
     model: openai/gpt-4o-mini
     provider: openrouter
     exit_on: completion
-    description: 'anota y consulta lo aprendido; AQUÍ NO SE OYE — para decir algo, vuelve a voz'
+    # La descripción se renderiza LITERAL en el esquema de `enter_tier`, así
+    # que es lo que el modelo lee al decidir a dónde va — y decía «para
+    # decir algo, vuelve a voz», que es una invitación a pedir la vuelta
+    # que `exit_on: completion` ya le da hecha.  Medido: el 74 % de los
+    # `enter_tier(voz)` volvían "already_at_tier"; con la regla en la
+    # persona bajó al 30 %, y el 30 % restante lo pedía esta frase.
+    description: 'anota y consulta lo aprendido; AQUÍ NO SE OYE. Al terminar vuelves a voz TÚ SOLO: no pidas volver, ya estás de vuelta'
   initial: voz
   fallback: voz
 
