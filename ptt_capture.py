@@ -22,9 +22,11 @@ Two backends share the same audio ring and delivery logic:
   carries the ``wraith.ptt`` key that marks press and release.
 
 * ``KeyboardPushToTalkMic`` -- a keyboard-toggle backend for
-  environments without wraith (WSL, CI, any headless Linux).  Space
-  starts recording, Space again stops it.  Source is the PulseAudio
-  default, discovered at start-up.
+  environments without wraith: WSL, or any Linux lacking the hardware.
+  Space starts recording, Space again stops it.  Source is the
+  PulseAudio default, discovered at start-up.  It needs a TTY, so it is
+  not a CI backend -- there is no headless path here, by design: a
+  microphone nobody can press is not a fallback.
 
 ``create_mic()`` picks the right one for the running environment.
 
@@ -118,9 +120,12 @@ LATENCY_MS = 50
 #: 2500 ms, so cutting 1300 ms still leaves every one of them whole.
 TAIL_MS = 1200
 
-#: Tail for the keyboard backend.  There is no link to compensate for:
-#: the Space key and the microphone share the same machine, so the
-#: signal and the audio are synchronous.  Only the silence margin matters.
+#: Tail for the keyboard backend.  Shorter than the wraith one because
+#: there is no LINK to compensate for -- the key and the microphone are on
+#: the same machine.  Not zero, though: `parec` runs with
+#: ``--latency-msec=LATENCY_MS``, so the bytes the reader has consumed
+#: still lag the world by that much, and the cut has to cover it plus
+#: SILENCE_MARGIN_MS.  Raise LATENCY_MS and this has to rise with it.
 KEYBOARD_TAIL_MS = 200
 
 #: Refuse to grow the ring without bound.  A press that outruns this is
@@ -251,9 +256,16 @@ def source_is_muted(source: str = SOURCE) -> Optional[bool]:
 
 
 def _wraith_available() -> bool:
-    """True when wraith_mic exists as a PulseAudio source and pw-metadata is on PATH."""
-    if not shutil.which("pw-metadata") or not shutil.which("parec"):
-        return False
+    """True when wraith_mic exists as a PulseAudio source and pw-metadata is on PATH.
+
+    Every external command is checked before it is run, ``pactl`` included.
+    A factory whose job is to FALL BACK must not raise `FileNotFoundError`
+    while deciding: a machine with `pw-metadata` and `parec` but no `pactl`
+    is exactly the shape this function exists to answer "no" for.
+    """
+    for binary in ("pw-metadata", "parec", "pactl"):
+        if not shutil.which(binary):
+            return False
     out = subprocess.run(
         ["pactl", "list", "sources", "short"],
         capture_output=True, text=True, env=_CLEAN_ENV)
@@ -511,8 +523,11 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
     Ctrl-C is forwarded as SIGINT so the caller's handler still fires.
 
     Used automatically by ``create_mic()`` when wraith_mic is not
-    reachable -- WSL, CI, any machine without the wraith hardware.
-    The audio source defaults to the running PulseAudio default input.
+    reachable -- WSL, or any machine without the wraith hardware.  The
+    audio source defaults to the running PulseAudio default input.
+
+    Requires an interactive terminal: ``start()`` refuses without one
+    rather than opening a capture no key can ever close.
     """
 
     def __init__(self, on_utterance: Callable[[Utterance], None],
@@ -521,8 +536,20 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
         super().__init__(on_utterance, source or _default_source(), tail_ms)
         #: Saved terminal settings, restored on stop.
         self._old_term: Optional[list] = None
-        #: Self-pipe: stop() writes here to wake a select() in _read_signal.
-        self._wake_r, self._wake_w = os.pipe()
+        #: Guards the terminal settings: `stop()` restores on the caller's
+        #: thread so the prompt is usable immediately, and `_read_signal`
+        #: restores in its `finally` in case it exits on its own. Both
+        #: paths are live, so the sentinel is read and cleared under a lock
+        #: rather than relying on the GIL to make it look atomic.
+        self._term_lock = threading.Lock()
+        #: Self-pipe so `stop()` can wake the `select()` in `_read_signal`
+        #: at once instead of after its timeout. Opened in `start()`, not
+        #: here: `start()` can refuse (no TTY, muted source) and then no
+        #: thread ever reaches the `finally` that closes these, so a
+        #: constructor that opened them would leak two descriptors per
+        #: refused mic.
+        self._wake_r: Optional[int] = None
+        self._wake_w: Optional[int] = None
 
     # -- lifecycle ---------------------------------------------------
     def start(self) -> None:
@@ -536,6 +563,7 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
                 f"{self._source} is muted; capture would record digital "
                 f"silence while looking perfectly healthy. Unmute it "
                 f"(pactl set-source-mute {self._source} 0) and retry.")
+        self._wake_r, self._wake_w = os.pipe()
         self._open_audio()
         threading.Thread(target=self._read_audio, daemon=True).start()
         threading.Thread(target=self._read_signal, daemon=True).start()
@@ -544,10 +572,11 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
     def stop(self) -> None:
         self._stop.set()
         # Wake up any select() blocked in _read_signal immediately.
-        try:
-            os.write(self._wake_w, b"\x00")
-        except OSError:
-            pass
+        if self._wake_w is not None:
+            try:
+                os.write(self._wake_w, b"\x00")
+            except OSError:
+                pass
         if self._audio and self._audio.poll() is None:
             self._audio.terminate()
         # Restore terminal on the calling thread so the prompt is usable
@@ -555,26 +584,56 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
         self._restore_term()
 
     def _restore_term(self) -> None:
-        if self._old_term is not None:
-            import termios
-            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN,
-                              self._old_term)
-            self._old_term = None
+        """Put the terminal back. Safe to call from either thread, once each."""
+        with self._term_lock:
+            if self._old_term is None:
+                return
+            old, self._old_term = self._old_term, None
+        import termios
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old)
+
+    def _close_wake_pipe(self) -> None:
+        for attr in ("_wake_r", "_wake_w"):
+            fd = getattr(self, attr)
+            if fd is None:
+                continue
+            setattr(self, attr, None)
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
     def _read_signal(self) -> None:
-        """Toggle recording on Space; forward Ctrl-C as SIGINT.
+        """Toggle recording on Space; let the terminal turn Ctrl-C into SIGINT.
 
         Unlike the wraith backend, every Space key event is a genuine
         edge -- there is no "replay on connect" to filter out.  The
         _on_edge() state machine already ignores impossible transitions
         (e.g. two consecutive "held"), so no dedup layer is needed here.
+
+        **cbreak, not raw.** Both give unbuffered single keys, which is all
+        this needs; `raw` additionally clears ``OPOST``, and ``OPOST`` is
+        what turns ``\n`` into ``\r\n`` on the way out. This mode is held
+        for the WHOLE session, not just while recording, so under `raw`
+        every line the driver prints -- each reply, each `· searching:`,
+        the spinner -- loses its carriage return and the conversation
+        walks diagonally off the screen. Measured on a pty:
+
+            setraw    -> b'line 1\nline 2\n'
+            setcbreak -> b'line 1\r\nline 2\r\n'
+
+        `console.log` writes a plain ``\n``, and nothing outside this file
+        should have to know which terminal mode the microphone chose.
+        cbreak also leaves ``ISIG`` on, so Ctrl-C is delivered as SIGINT by
+        the terminal itself; the ``\x03`` branch below stays as a fallback
+        for a terminal that does not.
         """
         import termios
         import tty
 
         fd = sys.stdin.fileno()
         self._old_term = termios.tcgetattr(fd)
-        tty.setraw(fd)
+        tty.setcbreak(fd)
         print("\r\033[K· Space = grabar  /  Space = parar  (Ctrl-C para salir)",
               flush=True)
         try:
@@ -588,7 +647,7 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
                 if not ready:
                     continue
                 ch = sys.stdin.read(1)
-                if ch == "\x03":             # Ctrl-C in raw mode
+                if ch == "\x03":             # only if ISIG did not fire
                     os.kill(os.getpid(), signal.SIGINT)
                     return
                 if ch != " ":
@@ -600,11 +659,7 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
                 print(f"\r\033[K· {label}", flush=True)
         finally:
             self._restore_term()
-            for pipe_fd in (self._wake_r, self._wake_w):
-                try:
-                    os.close(pipe_fd)
-                except OSError:
-                    pass
+            self._close_wake_pipe()
 
 
 def create_mic(on_utterance: Callable[[Utterance], None],
@@ -613,8 +668,9 @@ def create_mic(on_utterance: Callable[[Utterance], None],
 
     Uses ``PushToTalkMic`` (wraith backend) when ``wraith_mic`` is
     reachable as a PulseAudio source and ``pw-metadata`` is on PATH.
-    Falls back to ``KeyboardPushToTalkMic`` otherwise -- WSL, any Linux
-    without the wraith hardware, CI.
+    Falls back to ``KeyboardPushToTalkMic`` otherwise -- WSL, or any
+    Linux without the wraith hardware.  That backend needs a TTY and
+    says so; neither backend runs unattended.
 
     ``source`` overrides the audio source name.  When it names a
     non-wraith source explicitly, the keyboard backend is used regardless
