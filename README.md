@@ -6,9 +6,9 @@ what it was told.**
 ```bash
 python run_escriba.py                 # talk
 python run_escriba.py --tui           # talk, with a live view
-                                      #   j/k move between panels
-                                      #   enter opens the full list
-                                      #   esc closes it
+                                      #   j/k move · enter goes deeper
+                                      #   panel -> its list -> one item
+                                      #   esc comes back one level
 python run_escriba.py --forget        # start over, forgetting everything
 ```
 

@@ -343,7 +343,9 @@ def catalogue_entries(workspace: Path, n: int = 60) -> list[dict]:
             continue
         out.append({"id": d.get("id", f.stem),
                     "text": d.get("name") or d.get("id", ""),
-                    "url": d.get("url", "")})
+                    "url": d.get("url", ""),
+                    "content": d.get("description", ""),
+                    "tags": d.get("tags") or []})
     return out
 
 

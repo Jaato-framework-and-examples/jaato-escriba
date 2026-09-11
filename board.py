@@ -80,9 +80,14 @@ class Conversation:
     #: curator writes from its own session and the documenter from a
     #: subagent, so an event-fed list is missing exactly what this is for.
     items: Dict[str, List[dict]] = field(default_factory=dict)
-    #: Which panel the cursor is on, and whether its list is open.
+    #: Where the cursor is, at each depth.  Three levels: the sidebar, the
+    #: list of one panel, and one item of that list.  `j`/`k`/`enter`/`esc`
+    #: mean something different at each, which is why the depth is STATE
+    #: rather than three sets of keys the person has to keep apart.
     focus: int = 0
     open_panel: Optional[str] = None
+    item_focus: int = 0
+    open_item: bool = False
     searching: Optional[str] = None
     thinking: bool = False
     speaking: bool = False
@@ -238,22 +243,54 @@ class StateBoard(NullBoard):
         self._refreshed()
 
     def move(self, delta: int) -> None:
-        """Move the cursor between panels, without wrapping past the ends.
+        """Move the cursor at whatever depth it is.
 
-        Clamped rather than modular: a cursor that leaps from the last
-        panel back to the first looks like a misread keypress, and there
-        are three of them — the distance saved is not worth the doubt.
+        Clamped rather than modular at every level: a cursor that leaps
+        from the last entry back to the first looks like a misread
+        keypress, and in a list of 43 it loses your place entirely.
         """
-        self.state.focus = max(0, min(len(PANELS) - 1, self.state.focus + delta))
+        s = self.state
+        if s.open_item:
+            return                      # the detail is one thing; nothing to move
+        if s.open_panel:
+            n = len(s.items.get(s.open_panel) or [])
+            s.item_focus = max(0, min(max(0, n - 1), s.item_focus + delta))
+        else:
+            s.focus = max(0, min(len(PANELS) - 1, s.focus + delta))
         self._refreshed()
 
     def open(self) -> None:
-        self.state.open_panel = PANELS[self.state.focus]
+        """Go one level deeper: sidebar -> list -> item."""
+        s = self.state
+        if s.open_item:
+            return
+        if s.open_panel:
+            if s.items.get(s.open_panel):
+                s.open_item = True
+        else:
+            s.open_panel = PANELS[s.focus]
+            s.item_focus = 0            # a list always opens at its newest
         self._refreshed()
 
     def close(self) -> None:
-        self.state.open_panel = None
+        """Come back one level, not all the way out.
+
+        `esc` closing everything from the detail would throw away the place
+        in a 43-item list to get rid of one panel, which is never what was
+        meant by it.
+        """
+        s = self.state
+        if s.open_item:
+            s.open_item = False
+        elif s.open_panel:
+            s.open_panel = None
         self._refreshed()
+
+    def selected_item(self) -> Optional[dict]:
+        """The item the cursor is on, or None."""
+        s = self.state
+        items = s.items.get(s.open_panel or "") or []
+        return items[s.item_focus] if 0 <= s.item_focus < len(items) else None
 
     def searching(self, query: str) -> None:
         self.state.searching = query

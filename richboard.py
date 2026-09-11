@@ -282,59 +282,75 @@ class RichBoard(StateBoard):
                      border_style="cyan" if focused else "grey35")
 
     def _popup(self, width: int, height: int):
-        """The focused panel's whole list, centred and modal.
+        """The focused panel's list, or one item of it, centred and modal.
 
-        Sized to the console rather than to the content: a list of 43
-        references must not render taller than the screen, for the same
-        reason everything else here is budgeted — `rich.Live` cannot
-        redraw a renderable that does not fit, and tries anyway.
+        `rich` composites nothing, so going deeper REPLACES rather than
+        floats — and `esc` comes back one level, which is what makes a
+        stack of two feel like a stack rather than a dead end.
         """
         panel = self.state.open_panel or PANELS[self.state.focus]
         items = self.state.items.get(panel) or []
-        w = max(40, min(width - 8, 96))
+        w = max(44, min(width - 8, 96))
+        if self.state.open_item:
+            return Align.center(self._detail(panel, w, height), vertical="middle")
+
         rows = max(3, height - 8)
+        cur = self.state.item_focus
+        # Scroll so the cursor stays inside the window, keeping it away from
+        # the very edge where you cannot see what is coming next.
+        top = max(0, min(cur - rows // 2, max(0, len(items) - rows)))
         body: List[Text] = []
-        for it in items[:rows]:
-            line = Text()
+        for i, it in enumerate(items[top:top + rows], start=top):
+            here = i == cur
+            line = Text(no_wrap=True, overflow="ellipsis")
+            line.append("▸ " if here else "  ", style="cyan")
             line.append(f"{(it.get('at') or ''):<17}", style="grey35")
-            line.append((it.get("text") or "")[:w - 24], style="white")
+            line.append((it.get("text") or "")[:w - 26],
+                        style="bold white" if here else "white")
             body.append(line)
         if not body:
             body = [Text("(vacío)", style="grey42")]
-        if len(items) > rows:
-            body.append(Text(f"… y {len(items) - rows} más", style="grey42"))
+        title = f"[bold cyan]{panel}[/]  ({cur + 1}/{len(items)})" if items \
+            else f"[bold cyan]{panel}[/]"
         return Align.center(
-            Panel(Group(*body), title=f"[bold cyan]{panel}[/]  ({len(items)})",
-                  title_align="left", subtitle="[grey42]esc cerrar[/]",
+            Panel(Group(*body), title=title, title_align="left",
+                  subtitle="[grey42]j/k mover · enter ver · esc volver[/]",
                   subtitle_align="right", border_style="cyan", width=w),
             vertical="middle")
 
-    def _count(self, label: str, value: int, start: Optional[int]) -> Text:
-        """A count, and the movement since the session opened.
+    def _detail(self, panel: str, w: int, height: int) -> Panel:
+        """One item, in full — the reason for drilling in.
 
-        The delta is the half that carries information: `8` does not say
-        whether the queue is draining or filling, and a run that stored 83
-        duplicates looked exactly like a healthy one until someone counted.
+        Every field the listing carried, and nothing invented: a detail
+        view that pads with empty labels teaches you to stop reading it.
         """
-        t = Text(f"{label:<9}", style="grey58")
-        t.append(f"{value:>4}", style="white")
-        if start is not None and value != start:
-            d = value - start
-            t.append(f" {'▲' if d > 0 else '▼'}{abs(d)}",
-                     style="yellow" if d > 0 else "green")
-        return t
+        it = self.selected_item() or {}
+        body: List[Text] = []
 
-    def _strip(self) -> Panel:
-        """The sidebar's narrow form: the same facts, one row, no borders."""
-        s = self.state
-        t = Table.grid(padding=(0, 2))
-        t.add_row(
-            Text(f"curadas {s.curated}", style="white"),
-            Text(f"crudas {s.raw}", style="white"),
-            Text(f"refs {s.catalogue}+{len(s.found)}/{len(s.selected)}", style="white"),
-            Text(f"docs {len(s.items.get('documentos') or s.documents)}", style="white"),
-            # The panels are gone at this width, but the keys still work and
-            # still need saying.
-            Text.from_markup(self._HINT),
-        )
-        return Panel(t, border_style="grey35", padding=(0, 1))
+        def field(label: str, value: str) -> None:
+            if not value:
+                return                  # absent is absent, not "—"
+            for i, piece in enumerate(textwrap.wrap(str(value), width=w - 14)
+                                      or [""]):
+                row = Text()
+                row.append(f"{label if i == 0 else '':<11}", style="grey42")
+                row.append(piece, style="white")
+                body.append(row)
+
+        field("id", it.get("id", ""))
+        field("fecha", it.get("at", ""))
+        field("etiquetas", ", ".join(it.get("tags") or []))
+        field("url", it.get("url", ""))
+        if it.get("confidence") is not None:
+            field("confianza", f"{it['confidence']} · {it.get('uses', 0)} usos")
+        if it.get("content"):
+            body.append(Text(""))
+            for piece in textwrap.wrap(it["content"], width=w - 4)[:height - 14]:
+                body.append(Text(piece, style="grey70"))
+        if not body:
+            body = [Text("(sin datos)", style="grey42")]
+        return Panel(Group(*body),
+                     title=f"[bold cyan]{(it.get('text') or panel)[:w - 20]}[/]",
+                     title_align="left",
+                     subtitle="[grey42]esc volver a la lista[/]",
+                     subtitle_align="right", border_style="cyan", width=w)

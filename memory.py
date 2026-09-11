@@ -90,7 +90,14 @@ def recent(workspace: Path, n: int = 40) -> list[dict]:
         out.append({"id": d.get("id", ""),
                     "text": d.get("description") or d.get("content") or "",
                     "at": (d.get("timestamp") or "")[:16].replace("T", " "),
-                    "tags": d.get("tags") or []})
+                    "tags": d.get("tags") or [],
+                    # The list shows `text`; the detail shows this. Carried
+                    # now rather than re-read on demand: the file has
+                    # already been parsed, and going back to disk for the
+                    # one field left behind would be work for nothing.
+                    "content": d.get("content") or "",
+                    "confidence": d.get("confidence"),
+                    "uses": d.get("usage_count")})
     out.sort(key=lambda m: m["at"], reverse=True)
     return out[:n]
 
