@@ -60,6 +60,7 @@ class PulsePlayer:
         #: audio: a fixed one silently orphans anything longer than it.
         self._written: dict[str, int] = {}
         self._bytes_per_second: dict[str, int] = {}
+        self._started_at: dict[str, float] = {}
         self._enabled = enabled and shutil.which("paplay") is not None
         self._complained = False
         #: What the LAST finished stream actually did.  Read by
@@ -91,6 +92,15 @@ class PulsePlayer:
                 return
             self._procs[stream_id] = proc
             self._written[stream_id] = 0
+            # WHEN the first byte was fed, not just how many followed.
+            # Model audio is STREAMED: chunks arrive as they are generated
+            # and play as they arrive, so by the time the last one lands
+            # most of it has already sounded and `finish` waits only for
+            # the remainder.  Comparing that wait against the whole
+            # duration says "not played" about audio that played
+            # perfectly — measured on a real turn: 3.42s waited for a
+            # 10.35s reply, every second of which was audible.
+            self._started_at[stream_id] = time.monotonic()
             width = 2 if params["encoding"].endswith("16le") else 1
             self._bytes_per_second[stream_id] = (
                 int(params["rate"]) * int(params["channels"]) * width)
@@ -131,14 +141,20 @@ class PulsePlayer:
         written = self._written.pop(stream_id, 0)
         seconds = (written / rate) if rate else 0.0
         started = time.monotonic()
+        first = self._started_at.pop(stream_id, started)
         try:
             proc.wait(timeout=max(15.0, seconds + 15.0))
-            waited = time.monotonic() - started
-            # Audio that "finished" in a fraction of its own duration was
-            # not played: paplay exited early, or never had the data.
+            now = time.monotonic()
+            # The interval that means anything is FIRST BYTE to player exit:
+            # that is how long the speaker was busy.  Shorter than the audio
+            # it carried means it did not all sound; the wait after the last
+            # chunk says nothing on its own, because a stream that arrived
+            # in real time has almost nothing left to drain.
+            audible = now - first
             self.outcome = {"stream_id": stream_id,
-                            "played": waited >= seconds * 0.5,
-                            "waited": round(waited, 2),
+                            "played": audible >= seconds * 0.9,
+                            "audible": round(audible, 2),
+                            "waited": round(now - started, 2),
                             "seconds": round(seconds, 2),
                             "exit": proc.returncode}
         except subprocess.TimeoutExpired:
