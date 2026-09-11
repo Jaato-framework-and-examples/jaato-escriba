@@ -257,6 +257,19 @@ async def main(assume_yes: bool = False) -> int:
             await curator.ask(DRAIN)
         console.log("· consolidated; I can start knowing it")
 
+    # What the driver believes the store holds, said out loud BEFORE the
+    # session opens.  The inventory is rendered inside the daemon and
+    # nothing records what it produced, so when the scribe greeted with
+    # "empezamos de cero" over a store holding one validated memory
+    # (2026-09-11 12:39:51, curated.jsonl written 18 s earlier) there was
+    # no way to tell whether the prefetch saw nothing or the model ignored
+    # what it saw.  One line here makes that a visible contradiction
+    # instead of a silent one: if this says 1 and the greeting says "de
+    # cero", the prefetch is the half to look at.
+    held = memory.counts(WORKSPACE)
+    console.log(f"· waking with {held['curated']} validated memories "
+                f"({held['raw']} raw)")
+
     with voice.Ears() as ears:
         # The curator is not opened for the conversation, and that is not
         # an oversight: measured, opening it here cost 1.6 s of session
