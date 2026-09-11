@@ -513,6 +513,57 @@ the `agent=` field to mean anything. Measured: the child's file now holds
 only the child's lines; `main/session.log` still carries some of the
 child's, so it is a superset rather than a clean split.
 
+## What it keeps of the audio
+
+Both halves of every conversation are recorded under `.jaato/audio/<stamp>/`,
+because **nobody else is going to**. Audio is CLIENT-audience by
+construction — `jaato_session.py:8719`: *"the model produced it, so
+replaying it back into the model's own history would be both redundant
+and, for audio, meaningless."* It reaches this process, it plays, and it is
+gone. The inbound half is the same bargain from the other side: the
+framework mints an id at ingest *"so the caller knows the id it sent, and
+can name the file it archived"*. Both are the client's to keep, and the
+client is this repo.
+
+|                          | named by | verifiable from the file |
+|---|---|---|
+| `in_att_<id>.mp3`        | the digest the daemon minted | **yes** |
+| `out_att_<sha>.wav`      | a digest we compute | **yes** |
+| `manifest.jsonl`         | one row per turn | — |
+
+**The inbound id is not ours to choose.** It is a digest of the bytes on
+the wire, so the `.mp3` and the journal's `[Media evicted … ref att_…]`
+marker can be matched by anyone holding both, with no mapping to trust:
+
+    python -c "import hashlib,sys; print('att_'+hashlib.sha256(
+        open(sys.argv[1],'rb').read()).hexdigest()[:16])" in_att_9f2c1ab73e0d4455.mp3
+
+That is why the archive holds the MP3 that was SENT and not the WAV it came
+from — the daemon hashes what it receives (`jaato_session.py:4746`), so
+keeping anything else would give a file whose digest does not match the
+marker, breaking the one property the scheme rests on.
+
+**The outbound half had no such property and now does.** Model media
+carries `model:<agent>:<n>` — a POSITION, not content, and the counter
+restarts each session, so `model:escriba:3` is ambiguous across days and
+recomputable from nothing. The manifest therefore carries the client id and
+the session id that qualify it, and this repo hashes the reassembled audio
+itself so the outbound half can be verified the same way as the inbound.
+
+**`--forget` does not touch it.** Erasing memories is what that flag is
+for; an audit archive a `--forget` erases is not an audit archive. They
+live in different directories and the forget path never names this one —
+asserted by a test, not by intention.
+
+**What this still cannot tell you.** That the transcript matches what was
+SAID: on a turn where the model both writes and speaks, `spoken_words`
+returns `""` under the #869 rule, so the provider's transcript of its own
+audio never arrives and `Tongue.spoken` gets nothing. Our turns are that
+kind. And that the person HEARD it: nothing counts chunks played or whether
+`finish()` drained. The archive establishes what existed, not what was
+understood — those are different claims and only the first is answered
+here.
+
 ## Starting over
 
 `--forget` clears the slate: every memory, the reference catalogue and the
@@ -554,6 +605,7 @@ restarts the deadline instead of giving up.
 | `voice.py` | Ears and mouth: the thread↔asyncio bridge and the audio sink. |
 | `console.py` | The terminal side: the thinking spinner, and the only safe way to write while it runs. |
 | `memory.py` | What was left uncurated last time. |
+| `archive.py` | Keeps both halves of the audio, and the manifest that ties them to the turn. |
 | `enrichment.py` | Search, judge and catalogue what is outside. |
 | `ptt_capture.py`, `pulse_playback.py` | Copied unchanged from `jaato-cascade-audio-interchange`. They know nothing about jaato. |
 | `.jaato/agents/*.md` | The four personas: escriba, curator, juez, documentalista. |

@@ -46,8 +46,10 @@ import sys
 from pathlib import Path
 from typing import List
 
+from jaato_sdk.media_identity import ATTACHMENT_ID_KEY
 from jaato_sdk import AgentError, ClientType, EventType, IPCClient
 
+import archive as _archive
 import console
 import enrichment
 import memory
@@ -96,7 +98,7 @@ def _session_is_gone(exc: Exception) -> bool:
     return any(m.lower() in str(exc).lower() for m in _GONE)
 
 
-async def _turn(scribe, prompt: str, said, mouth) -> None:
+async def _turn(scribe, prompt: str, said, mouth, log=None) -> None:
     """One turn, tolerating a turn that does its work but never closes.
 
     `complete` and not `ask`, now that the scribe is completion-gated: its
@@ -173,9 +175,23 @@ async def _turn(scribe, prompt: str, said, mouth) -> None:
         return
     finally:
         unsubscribe()
-    console.log(f"escriba: {spoken()}")
+    words = spoken()
+    console.log(f"escriba: {words}")
     if payload and payload.get("anotado"):
         console.log(f"   ↳ {payload['anotado']}")
+    # One row per turn, written AFTER the turn closed so it records what
+    # happened rather than what was attempted.  `said` carries the id we
+    # minted for the utterance; `mouth.recordings` carries what we kept of
+    # the reply.  Neither is reconstructible later: the attachment is gone
+    # from history by the next turn and model media never entered it.
+    if log is not None:
+        log(heard=(said or {}).get(ATTACHMENT_ID_KEY),
+            heard_seconds=(said or {}).get("seconds"),
+            spoke=mouth.recordings[-1] if getattr(mouth, "recordings", None) else None,
+            transcript=words if words != "(spoke)" else None,
+            anotado=(payload or {}).get("anotado"))
+        if getattr(mouth, "recordings", None):
+            mouth.recordings.clear()
 
 
 def _forget(assume_yes: bool) -> int:
@@ -218,7 +234,14 @@ def _forget(assume_yes: bool) -> int:
 
 
 async def main(assume_yes: bool = False) -> int:
-    mouth = voice.Tongue()
+    # Opened before anything can speak or be heard.  Audio is
+    # CLIENT-audience: it reaches this process, plays, and is gone unless
+    # written down here (`jaato_session.py:8719`).  The inbound half is
+    # the same bargain from the other side — the framework mints an id
+    # "so the caller knows the id it sent, and can name the file it
+    # archived".  Both halves are ours; this is where we keep them.
+    tape = _archive.Archive(WORKSPACE)
+    mouth = voice.Tongue(archive=tape)
     conn = dict(workspace_path=str(WORKSPACE),
                 env_file=str(WORKSPACE / ".env"),
                 # The framework writes its own artefacts — backups, session
@@ -270,7 +293,7 @@ async def main(assume_yes: bool = False) -> int:
     console.log(f"· waking with {held['curated']} validated memories "
                 f"({held['raw']} raw)")
 
-    with voice.Ears() as ears:
+    with voice.Ears(archive=tape) as ears:
         # The curator is not opened for the conversation, and that is not
         # an oversight: measured, opening it here cost 1.6 s of session
         # plus 4.0 s of turn, 64% of the 8.8 s it used to take to say the
@@ -279,6 +302,14 @@ async def main(assume_yes: bool = False) -> int:
         # before the inventory.
         async with IPCClient.session(profile="escriba", agent="escriba",
                                      **conn) as scribe:
+            # The outbound half has no journal ref — model media never
+            # enters history, so nothing upstream names it.  These two are
+            # what make `model:<agent>:<n>` locatable afterwards: the
+            # counter restarts each session, so the stream id alone is
+            # ambiguous across days.
+            tape.identify(scribe.session_id,
+                          getattr(scribe.client, "client_id", None))
+            console.log(f"· recording to {tape.dir}")
 
             # An eye on what gets stored: each new memory kicks off, in the
             # background, a search outside, a judge deciding whether the
@@ -298,7 +329,7 @@ async def main(assume_yes: bool = False) -> int:
             # `complete` is what waits for that and hands back the typed
             # payload.  `ask` would return on whichever terminal came
             # first and throw the payload away.
-            await _turn(scribe, GREETING, None, mouth)
+            await _turn(scribe, GREETING, None, mouth, log=tape.turn)
 
             # The prompt goes EMPTY on a spoken turn: the question IS the
             # attachment.  Text beside it would be a second question the
@@ -314,7 +345,7 @@ async def main(assume_yes: bool = False) -> int:
                     # plus the model's first token is several seconds of
                     # otherwise-unexplained silence.
                     console.log(f"· heard {said.pop('seconds', 0.0):.1f}s")
-                    await _turn(scribe, "", said, mouth)
+                    await _turn(scribe, "", said, mouth, log=tape.turn)
                 console.log("· nobody on the other side")
             except SessionGone:
                 console.log("· the conversation cannot continue — consolidating "

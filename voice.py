@@ -22,8 +22,10 @@ import shutil
 import subprocess
 from typing import Optional
 
+import archive as _archive
 import ptt_capture
 import pulse_playback
+from jaato_sdk.media_identity import ATTACHMENT_ID_KEY
 
 #: What the model receives.  MP3, not the WAV `Utterance.wav()` produces.
 #:
@@ -93,8 +95,16 @@ class Ears:
     name and is passed through unchanged.
     """
 
-    def __init__(self, source: Optional[str] = None) -> None:
+    def __init__(self, source: Optional[str] = None,
+                 archive: "_archive.Archive | None" = None) -> None:
         _encoder()                     # fail now, not on the first utterance
+        #: Optional: when present, every utterance is kept and the id we
+        #: minted travels WITH the attachment, so the daemon adopts it
+        #: instead of minting its own (`jaato_session.py:4746` takes
+        #: `att.get(ATTACHMENT_ID_KEY) or mint_attachment_id(data)`).
+        #: Both hash the same bytes, so they agree either way — sending it
+        #: only makes the agreement visible on our side of the wire.
+        self._archive = archive
         self._queue: asyncio.Queue = asyncio.Queue()
         self._loop = asyncio.get_running_loop()
         self._mic = ptt_capture.create_mic(self._deliver, source=source)
@@ -160,8 +170,11 @@ class Ears:
             #: utterance the moment it has it.  Encoding a two-minute
             #: press takes a beat, and a person who has just released the
             #: key with nothing on screen assumes it was not heard.
-            return {"mime_type": UTTERANCE_MIME, "data": data,
-                    "display_name": "utterance.mp3", "seconds": u.seconds}
+            att = {"mime_type": UTTERANCE_MIME, "data": data,
+                   "display_name": "utterance.mp3", "seconds": u.seconds}
+            if self._archive is not None:
+                att[ATTACHMENT_ID_KEY] = self._archive.heard(data)
+            return att
 
 
 class Tongue:
@@ -177,8 +190,13 @@ class Tongue:
     quiet would be recording itself.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, archive: "_archive.Archive | None" = None) -> None:
         self._player = pulse_playback.PulsePlayer()
+        #: Same bargain as `Ears`: the bytes pass through here on their way
+        #: to the speakers and are gone afterwards unless someone writes
+        #: them down. `spoke` returns the record for the manifest.
+        self._archive = archive
+        self.recordings: list[dict] = []
         #: What the provider says it said.  The FINAL chunk carries the
         #: transcript of its own audio (jaato#869); a spoken turn returns
         #: no text through `ask`, so without this nothing on screen would
@@ -186,11 +204,17 @@ class Tongue:
         self.spoken: list[str] = []
 
     def speak(self, ev) -> None:
-        self._player.feed(ev.stream_id, ev.mime_type,
-                          base64.b64decode(ev.data_b64))
+        payload = base64.b64decode(ev.data_b64)
+        self._player.feed(ev.stream_id, ev.mime_type, payload)
+        if self._archive is not None:
+            self._archive.speaking(ev.stream_id, ev.mime_type, payload)
         if ev.final:
             if getattr(ev, "chunk", ""):
                 self.spoken.append(ev.chunk)
+            if self._archive is not None:
+                kept = self._archive.spoke(ev.stream_id)
+                if kept is not None:
+                    self.recordings.append(kept)
             self._player.finish(ev.stream_id)
 
     def last(self) -> str:
