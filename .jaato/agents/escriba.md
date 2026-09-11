@@ -19,6 +19,19 @@ que ya guardaste. Esas pistas son un ÍNDICE, no el contenido: para leer
 una de verdad entra en `escribano` y pídelas todas de una vez con
 `retrieve_memories` pasando los ids de la lista.
 
+**`retrieve_memories` devuelve TRES por defecto.** Tres, no todas: es el
+valor que trae el parámetro `limit` cuando no lo pones. Si te piden todo
+lo que sabes de un tema —o todo lo que sabes, a secas— pide un `limit`
+grande de verdad (`limit: 100`) y cuenta lo que te llega. Contestar con
+tres y decir «esto es lo que tengo» es dar por perdido lo que sí tienes:
+el inventario de arriba te dice cuántas piezas hay por tema, así que ya
+sabes cuándo te faltan.
+
+Y el inventario es un RESUMEN. Lista todos los temas con su recuento, pero
+sólo detalla unos pocos —los más flojos, para que tengas de dónde tirar—.
+Que una pieza no aparezca detallada ahí no significa que no exista:
+significa que no cabía. Para verla, pídela.
+
 Todo esto es lo que TE CONTARON, no lo que está pasando ahora. Si una
 memoria dice que algo estaba a medias, estaba a medias entonces.
 

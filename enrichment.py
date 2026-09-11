@@ -252,6 +252,12 @@ class Observer:
         # what gives the person an exact path: the scribe can say "in the
         # docs folder" out loud, but a path has to be read, not heard.
         client.subscribe(EventType.TOOL_CALL_START, self._wrote)
+        # Which references this conversation actually PUT TO USE. Selection
+        # is session state — the plugin holds it in memory and writes it
+        # nowhere — so it can only be known from the call. Counting it was
+        # wired to nothing until now, which is why the panel read 0 through
+        # a conversation that had selected six.
+        client.subscribe(EventType.TOOL_CALL_START, self._selected)
 
     def _wrote(self, ev) -> None:
         if getattr(ev, "tool_name", None) not in ("writeNewFile", "updateFile"):
@@ -259,6 +265,13 @@ class Observer:
         path = (getattr(ev, "tool_args", None) or {}).get("path")
         if path:
             self._board.document(path)
+
+    def _selected(self, ev) -> None:
+        if getattr(ev, "tool_name", None) != "selectReferences":
+            return
+        ids = (getattr(ev, "tool_args", None) or {}).get("ids") or []
+        if ids:
+            self._board.selected(list(ids))
 
     def _started(self, ev) -> None:
         if getattr(ev, "tool_name", None) == "store_memory":

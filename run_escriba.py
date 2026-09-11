@@ -95,6 +95,13 @@ async def _nothing():
     yield
 
 
+#: How often the panels are reconciled against disk.  Events paint at
+#: once; this is what makes them TRUE afterwards — the curator writes from
+#: its own session, the documenter from a subagent, and a `--forget` can
+#: empty the store mid-run.  A board fed only by events drifts from all
+#: three and then reports the drift with total confidence.
+DISK_TICK_S = 2.0
+
 SILENCE_S = 120.0
 
 
@@ -254,6 +261,27 @@ def _forget(assume_yes: bool) -> int:
     return 0
 
 
+async def _reconcile(view, stop: asyncio.Event) -> None:
+    """Re-read what is on disk until told to stop.
+
+    Cheap: two directory listings and a line count, every couple of
+    seconds.  Deliberately NOT driven by events — the point is to catch
+    what no event reaches this process for.
+    """
+    while not stop.is_set():
+        try:
+            held = memory.counts(WORKSPACE)
+            view.memories(held["curated"], held["raw"])
+            cat = WORKSPACE / enrichment.CATALOGUE
+            view.catalogue(len(list(cat.glob("auto-*.json"))) if cat.is_dir() else 0)
+        except OSError:
+            pass          # a store being rewritten under us is not fatal
+        try:
+            await asyncio.wait_for(stop.wait(), DISK_TICK_S)
+        except asyncio.TimeoutError:
+            continue
+
+
 async def main(assume_yes: bool = False, tui: bool = False) -> int:
     # Opened before anything can speak or be heard.  Audio is
     # CLIENT-audience: it reaches this process, plays, and is gone unless
@@ -351,6 +379,19 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
                                 getattr(scribe.client, "client_id", None))
                   view.recording_to(str(tape.dir))
 
+              # The panels reconcile against disk on a slow tick, because
+              # three writers this process never sees touch that state: the
+              # curator from its own session, the documenter from a
+              # subagent, and `--forget` from the command line.
+              # ONLY with a live display.  The tick exists to keep PANELS
+              # honest; line mode has no panel to be wrong, and there every
+              # call is a printed line — the first run of this reconciled
+              # faithfully and repeated "· waking with 3 validated memories"
+              # every two seconds for the length of the conversation.
+              stop_tick = asyncio.Event()
+              ticker = (asyncio.create_task(_reconcile(view, stop_tick))
+                        if live else None)
+
               # An eye on what gets stored: each new memory kicks off, in the
               # background, a search outside, a judge deciding whether the
               # results are any good, and the `references` catalogue — which
@@ -395,6 +436,10 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
                             "what we have")
               except (KeyboardInterrupt, asyncio.CancelledError):
                   view.note("· goodbye")
+
+              stop_tick.set()
+              if ticker is not None:
+                  await ticker
 
               # Let whatever it was searching finish before closing.
               await watcher.drain()

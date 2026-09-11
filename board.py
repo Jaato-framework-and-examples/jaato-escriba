@@ -62,6 +62,11 @@ class Conversation:
     #: you started", and on 2026-09-11 the difference was 83 duplicates.
     curated_at_start: Optional[int] = None
     raw_at_start: Optional[int] = None
+    #: How many references the catalogue HOLDS, read from disk. Distinct
+    #: from `found`, which is what this session added: a panel showing only
+    #: the session's finds reads as a total and is wrong by the size of
+    #: everything learnt before today.
+    catalogue: int = 0
     found: Deque[str] = field(default_factory=lambda: deque(maxlen=60))
     selected: Deque[str] = field(default_factory=lambda: deque(maxlen=60))
     documents: Deque[str] = field(default_factory=lambda: deque(maxlen=40))
@@ -102,6 +107,7 @@ class NullBoard:
               audio: Optional[str] = None) -> None: ...
     # facts
     def memories(self, curated: int, raw: int) -> None: ...
+    def catalogue(self, total: int) -> None: ...
     def searching(self, query: str) -> None: ...
     def found(self, names: List[str]) -> None: ...
     def selected(self, ids: List[str]) -> None: ...
@@ -204,6 +210,10 @@ class StateBoard(NullBoard):
         if s.curated_at_start is None:
             s.curated_at_start, s.raw_at_start = curated, raw
         s.curated, s.raw = curated, raw
+        self._refreshed()
+
+    def catalogue(self, total: int) -> None:
+        self.state.catalogue = total
         self._refreshed()
 
     def searching(self, query: str) -> None:

@@ -164,8 +164,12 @@ class RichBoard(StateBoard):
                 self._count("curadas", s.curated, s.curated_at_start),
                 self._count("crudas", s.raw, s.raw_at_start)]),
             self._panel("referencias", [
-                self._count("halladas", len(s.found), 0),
-                self._count("elegidas", len(s.selected), 0)]),
+                # What the catalogue HOLDS versus what this conversation
+                # put to use. Two different questions, and showing the
+                # session's finds alone answered neither.
+                self._count("catálogo", s.catalogue, None),
+                self._count("nuevas", len(s.found), 0),
+                self._count("en uso", len(s.selected), 0)]),
             self._panel("documentos",
                         [Text(p[-22:], style="white") for p in list(s.documents)[-4:]]
                         or [Text("—", style="grey42")]),
@@ -197,7 +201,7 @@ class RichBoard(StateBoard):
         t.add_row(
             Text(f"curadas {s.curated}", style="white"),
             Text(f"crudas {s.raw}", style="white"),
-            Text(f"refs {len(s.found)}/{len(s.selected)}", style="white"),
+            Text(f"refs {s.catalogue}+{len(s.found)}/{len(s.selected)}", style="white"),
             Text(f"docs {len(s.documents)}", style="white"),
         )
         return Panel(t, border_style="grey35", padding=(0, 1))
