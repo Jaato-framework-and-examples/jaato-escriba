@@ -271,7 +271,8 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
     live = tui
 
     tape = _archive.Archive(WORKSPACE)
-    mouth = voice.Tongue(archive=tape)
+    mouth = voice.Tongue(archive=tape,
+                         on_problem=lambda m: view.note(f"· AUDIO: {m}"))
     conn = dict(workspace_path=str(WORKSPACE),
                 env_file=str(WORKSPACE / ".env"),
                 # The framework writes its own artefacts — backups, session

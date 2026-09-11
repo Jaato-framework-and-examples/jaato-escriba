@@ -195,8 +195,13 @@ class Tongue:
     quiet would be recording itself.
     """
 
-    def __init__(self, archive: "_archive.Archive | None" = None) -> None:
-        self._player = pulse_playback.PulsePlayer()
+    def __init__(self, archive: "_archive.Archive | None" = None,
+                 on_problem=None) -> None:
+        #: A playback failure must be SEEN.  The player prints by default,
+        #: which a live display swallows — and since everything downstream
+        #: records what arrived rather than what sounded, silent failure
+        #: looks exactly like working audio.
+        self._player = pulse_playback.PulsePlayer(on_problem=on_problem)
         #: Same bargain as `Ears`: the bytes pass through here on their way
         #: to the speakers and are gone afterwards unless someone writes
         #: them down. `spoke` returns the record for the manifest.
@@ -221,6 +226,11 @@ class Tongue:
                 if kept is not None:
                     self.recordings.append(kept)
             self._player.finish(ev.stream_id)
+            # What the player actually DID, folded into the record so the
+            # manifest can answer "was this heard" and not only "was this
+            # sent".  `finish` has returned, so the outcome is final.
+            if self.recordings and self._player.outcome:
+                self.recordings[-1]["playback"] = dict(self._player.outcome)
 
     def last(self) -> str:
         """What was spoken since this was last asked — and clears it."""

@@ -563,14 +563,20 @@ thing for the same reason.
 `.jaato/` entirely. An audit archive a `--forget` could reach would not be
 an audit archive. Asserted by a test, not left to intention.
 
+**Whether it was HEARD is recorded too, now.** Each `spoke` row carries a
+`playback` block — how long `paplay` was waited on against how long the
+audio runs, and its exit code. Audio that "finished" in a fraction of its
+own duration was not played, and that case used to be indistinguishable
+from success: the archive records what ARRIVED, and the recording is
+written whether or not a speaker ever saw it. A playback failure also
+reaches the display instead of `print`, which a live view swallows —
+under `--tui` a silent failure looked exactly like working audio.
+
 **What this still cannot tell you.** That the transcript matches what was
 SAID: on a turn where the model both writes and speaks, `spoken_words`
 returns `""` under the #869 rule, so the provider's transcript of its own
 audio never arrives and `Tongue.spoken` gets nothing. Our turns are that
-kind. And that the person HEARD it: nothing counts chunks played or whether
-`finish()` drained. The archive establishes what existed, not what was
-understood — those are different claims and only the first is answered
-here.
+kind.
 
 ## Starting over
 

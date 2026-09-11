@@ -8,6 +8,7 @@ it.  Nothing here knows about jaato: it takes a mime type and bytes.
 The observer stays the SDK example; this is the speaker driver.
 """
 import shutil
+import time
 import subprocess
 
 
@@ -46,7 +47,13 @@ class PulsePlayer:
     so once, loudly, rather than failing silently.
     """
 
-    def __init__(self, enabled: bool = True) -> None:
+    def __init__(self, enabled: bool = True, on_problem=None) -> None:
+        #: Where trouble goes when the caller owns the screen.  This class
+        #: PRINTS by default, which is right for a plain terminal and
+        #: invisible under a redrawing one — and a silent playback failure
+        #: is indistinguishable from working audio, because everything
+        #: downstream records what was RECEIVED, not what was heard.
+        self._on_problem = on_problem
         self._procs: dict[str, subprocess.Popen] = {}
         #: Bytes handed to each player, and the frame size to turn them
         #: back into seconds.  A drain deadline has to scale with the
@@ -55,6 +62,10 @@ class PulsePlayer:
         self._bytes_per_second: dict[str, int] = {}
         self._enabled = enabled and shutil.which("paplay") is not None
         self._complained = False
+        #: What the LAST finished stream actually did.  Read by
+        #: the caller into the manifest, because 'we handed it to
+        #: PulseAudio' is not the same claim as 'they heard it'.
+        self.outcome: dict = {}
         if enabled and not self._enabled:
             print("  (paplay not on PATH — tracing without sound)")
 
@@ -105,6 +116,12 @@ class PulsePlayer:
         """
         proc = self._procs.pop(stream_id, None)
         if proc is None:
+            # Nothing was ever fed for this stream: paplay failed to start,
+            # or the mime was unplayable.  Recorded rather than silently
+            # skipped — this is the case that looks identical to success
+            # everywhere downstream.
+            self.outcome = {"stream_id": stream_id, "played": False,
+                            "reason": "no player", "seconds": 0.0}
             return
         try:
             proc.stdin.close()
@@ -113,9 +130,20 @@ class PulsePlayer:
         rate = self._bytes_per_second.pop(stream_id, 0)
         written = self._written.pop(stream_id, 0)
         seconds = (written / rate) if rate else 0.0
+        started = time.monotonic()
         try:
             proc.wait(timeout=max(15.0, seconds + 15.0))
+            waited = time.monotonic() - started
+            # Audio that "finished" in a fraction of its own duration was
+            # not played: paplay exited early, or never had the data.
+            self.outcome = {"stream_id": stream_id,
+                            "played": waited >= seconds * 0.5,
+                            "waited": round(waited, 2),
+                            "seconds": round(seconds, 2),
+                            "exit": proc.returncode}
         except subprocess.TimeoutExpired:
+            self.outcome = {"stream_id": stream_id, "played": False,
+                            "reason": "timeout", "seconds": round(seconds, 2)}
             # Past the audio's own duration plus a margin it is wedged,
             # not playing.  Killing it is better than orphaning it: an
             # orphan outlives this process and bleeds into the next run.
@@ -128,6 +156,10 @@ class PulsePlayer:
             self.finish(stream_id)
 
     def _complain(self, message: str) -> None:
-        if not self._complained:
+        if self._complained:
+            return
+        self._complained = True
+        if self._on_problem is not None:
+            self._on_problem(message)
+        else:
             print(f"  AUDIO: {message}")
-            self._complained = True
