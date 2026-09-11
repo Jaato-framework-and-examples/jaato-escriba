@@ -214,6 +214,12 @@ class RichBoard(StateBoard):
     #: Items previewed inside a panel before the popup is needed.
     _PREVIEW = 2
 
+    #: The keys, said where the thing they act on is.  A binding nobody is
+    #: told about is a binding nobody uses: the popup announced `esc` from
+    #: the moment it opened, and the navigation that REACHES the popup
+    #: announced nothing at all.
+    _HINT = "[grey42]j/k mover · enter abrir[/]"
+
     def _sidebar(self) -> Group:
         s = self.state
         return Group(
@@ -237,6 +243,7 @@ class RichBoard(StateBoard):
                                      len(s.items.get("documentos") or s.documents),
                                      None)]
                         + self._preview("documentos")),
+            Align.center(Text.from_markup(self._HINT)),
         )
 
     def _preview(self, panel: str) -> List[Text]:
@@ -325,6 +332,9 @@ class RichBoard(StateBoard):
             Text(f"curadas {s.curated}", style="white"),
             Text(f"crudas {s.raw}", style="white"),
             Text(f"refs {s.catalogue}+{len(s.found)}/{len(s.selected)}", style="white"),
-            Text(f"docs {len(s.documents)}", style="white"),
+            Text(f"docs {len(s.items.get('documentos') or s.documents)}", style="white"),
+            # The panels are gone at this width, but the keys still work and
+            # still need saying.
+            Text.from_markup(self._HINT),
         )
         return Panel(t, border_style="grey35", padding=(0, 1))
