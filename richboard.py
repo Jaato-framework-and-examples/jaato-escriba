@@ -21,6 +21,7 @@ that cannot be read are worse than counts that can.
 """
 from __future__ import annotations
 
+import textwrap
 from typing import List, Optional, Tuple
 
 from rich.console import Console, Group
@@ -126,14 +127,49 @@ class RichBoard(StateBoard):
     #: `HH:MM:SS ` plus the eight-column speaker field.
     _PREFIX = 9 + 8
 
-    def _line(self, e: Entry, width: int) -> Text:
-        """One entry, truncated to fit EXACTLY one row.
+    def _transcript(self, rows: int, width: int) -> Group:
+        """The tail of the conversation, wrapped, newest last.
 
-        The suffixes are measured before the body is cut, not appended
-        after: an id added to an already-full line pushes it past the panel
-        and rich wraps the remainder to column 0, which reads as a second
-        entry with no timestamp.  The budget is the row, and everything on
-        it competes for the same width.
+        Entries are rendered from the END backwards until the budget is
+        spent, because an entry can be several rows now and the tail has
+        to be counted in ROWS, not in entries: taking the last N entries
+        and hoping they fit is how a long reply pushes the panel past the
+        console and rich starts redrawing the whole region.
+        """
+        out: List[Text] = []
+        used = 0
+        for e in reversed(self.state.entries):
+            block = self._lines(e, width)
+            room = rows - used
+            if len(block) > room:
+                # It does not fit whole.  Spend what is left on its END
+                # rather than dropping it: a reply longer than the panel
+                # used to disappear entirely, leaving its own annotation
+                # underneath and five blank rows where the answer had
+                # been.  The tail is the right half to keep — the rows
+                # above it are the ones the panel is scrolling away.
+                if room >= 2:
+                    mark = Text(" " * self._PREFIX + "…", style="grey42")
+                    out = [mark] + block[-(room - 1):] + out
+                break
+            out = block + out
+            used += len(block)
+        return Group(*out)
+
+    def _lines(self, e: Entry, width: int) -> List[Text]:
+        """One entry as one or more rows, continuations under the TEXT.
+
+        A reply is a paragraph and truncating it to a single row threw away
+        most of what was said — the panel showed an opening clause and an
+        ellipsis. It wraps like `console.log` does: the stamp and the
+        speaker appear once, and every continuation lines up with the first
+        word rather than with the timestamp, so a wrapped answer still
+        reads as one entry.
+
+        The suffixes ride on the LAST row and are budgeted there. Measured
+        into the body of a single-row entry they would be counted twice;
+        appended after wrapping they would overflow the final row, which is
+        the bug this replaced.
         """
         who, colour = _KIND.get(e.kind, ("", "white"))
         suffix = Text()
@@ -142,20 +178,30 @@ class RichBoard(StateBoard):
         if e.audio:
             suffix.append(f"  {e.audio}", style="grey35")
 
-        t = Text(no_wrap=True, overflow="ellipsis")
-        t.append(e.at.strftime("%H:%M:%S "), style="grey35")
-        t.append(f"{who:<8}" if who else " " * 8, style=colour)
-
-        room = max(8, width - self._PREFIX - suffix.cell_len)
+        room = max(12, width - self._PREFIX)
         if e.kind == "said":
             # The person's words exist nowhere as text — the model is never
             # asked to transcribe its input — so the recording IS the line.
-            t.append(f"▸ {e.seconds:.1f}s" if e.seconds else "▸ —", style="cyan")
+            body = [f"▸ {e.seconds:.1f}s" if e.seconds else "▸ —"]
         else:
-            body = e.text if len(e.text) <= room else e.text[:room - 1] + "…"
-            t.append(body, style=colour)
-        t.append_text(suffix)
-        return t
+            body = textwrap.wrap(e.text, width=room) or [""]
+            # The tail must leave room for what rides on it.
+            if suffix.cell_len and len(body[-1]) + suffix.cell_len > room:
+                body += [""]
+
+        out: List[Text] = []
+        for i, piece in enumerate(body):
+            row = Text(no_wrap=True, overflow="ellipsis")
+            if i == 0:
+                row.append(e.at.strftime("%H:%M:%S "), style="grey35")
+                row.append(f"{who:<8}" if who else " " * 8, style=colour)
+            else:
+                row.append(" " * self._PREFIX)
+            row.append(piece, style="cyan" if e.kind == "said" else colour)
+            if i == len(body) - 1:
+                row.append_text(suffix)
+            out.append(row)
+        return out
 
     def _sidebar(self) -> Group:
         s = self.state
