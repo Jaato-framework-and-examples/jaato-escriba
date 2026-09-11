@@ -10,4 +10,4 @@ __pycache__/
 .jaato/discarded_references.json
 .jaato/forgotten/
 docs/
-.jaato/audio/
+audio/

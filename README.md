@@ -515,7 +515,7 @@ child's, so it is a superset rather than a clean split.
 
 ## What it keeps of the audio
 
-Both halves of every conversation are recorded under `.jaato/audio/<stamp>/`,
+Both halves of every conversation are recorded under `audio/<stamp>/`,
 because **nobody else is going to**. Audio is CLIENT-audience by
 construction — `jaato_session.py:8719`: *"the model produced it, so
 replaying it back into the model's own history would be both redundant
@@ -550,10 +550,17 @@ recomputable from nothing. The manifest therefore carries the client id and
 the session id that qualify it, and this repo hashes the reassembled audio
 itself so the outbound half can be verified the same way as the inbound.
 
-**`--forget` does not touch it.** Erasing memories is what that flag is
-for; an audit archive a `--forget` erases is not an audit archive. They
-live in different directories and the forget path never names this one —
-asserted by a test, not by intention.
+**It lives at the workspace root, not under `.jaato/`.** That directory is
+the framework's namespace — profiles, agents, schemas, the memory store,
+the session journals. Recordings are not framework assets: they are
+client-owned, kept precisely because model media is client-audience and
+nobody else keeps it. They sit beside `docs/`, which is the same kind of
+thing for the same reason.
+
+**`--forget` does not touch it**, and now cannot: that flag erases
+`.jaato/memory` and `.jaato/references`, and the archive is outside
+`.jaato/` entirely. An audit archive a `--forget` could reach would not be
+an audit archive. Asserted by a test, not left to intention.
 
 **What this still cannot tell you.** That the transcript matches what was
 SAID: on a turn where the model both writes and speaks, `spoken_words`

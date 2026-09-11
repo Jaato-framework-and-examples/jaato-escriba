@@ -30,8 +30,8 @@ by construction.
 
 IT IS NOT SWEPT BY `--forget`.  That erases memories and references, which
 is the point of it; an audit archive a `--forget` erases is not an audit
-archive.  The two live in different directories for that reason and the
-forget path never names this one.
+archive.  The recordings live outside `.jaato/` entirely, so the forget
+path cannot reach them even by accident.
 """
 from __future__ import annotations
 
@@ -47,8 +47,20 @@ from typing import Dict, Optional
 #: two parsers for one wire format drift, and the vendored file is stable.
 from pulse_playback import _pcm_params
 
-#: Where recordings go.  A sibling of the memory store, never inside it.
-ROOT = Path(".jaato/audio")
+#: Where recordings go.  At the WORKSPACE ROOT, not under `.jaato/`.
+#:
+#: `.jaato/` is the framework's namespace — profiles, agents, scripts,
+#: completion schemas, the memory store, the session journals.  These
+#: recordings are not framework assets: they are CLIENT-owned, kept
+#: because model media is client-audience and nobody else will keep it.
+#: They sit beside `docs/`, which is the same kind of thing from the same
+#: reasoning — output this repo produces and owns.
+#:
+#: It also puts the audit archive outside every path `--forget` touches,
+#: which is a property rather than a coincidence: that flag erases
+#: `.jaato/memory` and `.jaato/references`, and an archive it could reach
+#: would not be an archive.
+ROOT = Path("audio")
 
 
 def digest(data: bytes) -> str:
