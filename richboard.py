@@ -121,17 +121,6 @@ class RichBoard(StateBoard):
         if s.searching:  return f"[grey58]buscando: {s.searching[:28]}[/]"
         return "[grey42]escuchando[/]"
 
-    def _transcript(self, rows: int, width: int) -> Group:
-        """The tail of the conversation, one entry per line where it fits.
-
-        Tail rather than head: the present is what a person is reading, and
-        the sidebar carries the totals a scrolled-off line would have said.
-        """
-        out: List[Text] = []
-        for e in list(self.state.entries)[-rows:]:
-            out.append(self._line(e, width))
-        return Group(*out)
-
     #: `HH:MM:SS ` plus the eight-column speaker field.
     _PREFIX = 9 + 8
 
@@ -354,3 +343,33 @@ class RichBoard(StateBoard):
                      title_align="left",
                      subtitle="[grey42]esc volver a la lista[/]",
                      subtitle_align="right", border_style="cyan", width=w)
+
+    def _count(self, label: str, value: int, start: Optional[int]) -> Text:
+        """A count, and the movement since the session opened.
+
+        The delta is the half that carries information: `8` does not say
+        whether the queue is draining or filling, and a run that stored 83
+        duplicates looked exactly like a healthy one until someone counted.
+        """
+        t = Text(f"{label:<9}", style="grey58")
+        t.append(f"{value:>4}", style="white")
+        if start is not None and value != start:
+            d = value - start
+            t.append(f" {'▲' if d > 0 else '▼'}{abs(d)}",
+                     style="yellow" if d > 0 else "green")
+        return t
+
+    def _strip(self) -> Panel:
+        """The sidebar's narrow form: the same facts, one row, no borders."""
+        s = self.state
+        t = Table.grid(padding=(0, 2))
+        t.add_row(
+            Text(f"curadas {s.curated}", style="white"),
+            Text(f"crudas {s.raw}", style="white"),
+            Text(f"refs {s.catalogue}+{len(s.found)}/{len(s.selected)}", style="white"),
+            Text(f"docs {len(s.items.get('documentos') or s.documents)}", style="white"),
+            # The panels are gone at this width, but the keys still work and
+            # still need saying.
+            Text.from_markup(self._HINT),
+        )
+        return Panel(t, border_style="grey35", padding=(0, 1))
