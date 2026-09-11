@@ -17,6 +17,7 @@ backlog.  Nothing failed there, and there is still work pending.
 """
 from __future__ import annotations
 
+import json
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -65,6 +66,33 @@ def counts(workspace: Path) -> dict:
         "curated": sum(1 for line in curated.read_text().splitlines()
                        if line.strip()) if curated.is_file() else 0,
     }
+
+
+def recent(workspace: Path, n: int = 40) -> list[dict]:
+    """The newest curated memories, newest first.
+
+    For the display, not for the agent: the agent reads the store through
+    the plugin.  Returns dicts rather than objects so nothing here has to
+    import the framework's `Memory` — the panels want a description and a
+    date, and that is all this promises.
+    """
+    curated = _store_root(workspace) / "curated.jsonl"
+    if not curated.is_file():
+        return []
+    out = []
+    for line in curated.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            continue          # a half-written line is not worth a crash
+        out.append({"id": d.get("id", ""),
+                    "text": d.get("description") or d.get("content") or "",
+                    "at": (d.get("timestamp") or "")[:16].replace("T", " "),
+                    "tags": d.get("tags") or []})
+    out.sort(key=lambda m: m["at"], reverse=True)
+    return out[:n]
 
 
 def forget(workspace: Path) -> Path | None:

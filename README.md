@@ -6,6 +6,9 @@ what it was told.**
 ```bash
 python run_escriba.py                 # talk
 python run_escriba.py --tui           # talk, with a live view
+                                      #   j/k move between panels
+                                      #   enter opens the full list
+                                      #   esc closes it
 python run_escriba.py --forget        # start over, forgetting everything
 ```
 
@@ -620,6 +623,7 @@ restarts the deadline instead of giving up.
 | `console.py` | The terminal side: the thinking spinner, and the only safe way to write while it runs. |
 | `board.py` | What the conversation looks like from outside, as state. No `rich`, no terminal. |
 | `richboard.py` | The live view. The only module that imports `rich`. |
+| `keys.py` | One reader for the terminal's keys, because there can only be one. |
 | `memory.py` | What was left uncurated last time. |
 | `archive.py` | Keeps both halves of the audio, and the manifest that ties them to the turn. |
 | `enrichment.py` | Search, judge and catalogue what is outside. |

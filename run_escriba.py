@@ -45,6 +45,7 @@ import contextlib
 import os
 import asyncio
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -53,6 +54,7 @@ from jaato_sdk import AgentError, ClientType, EventType, IPCClient
 
 import archive as _archive
 import board as _board
+import keys as _keys
 import console
 import enrichment
 import memory
@@ -274,6 +276,20 @@ async def _reconcile(view, stop: asyncio.Event) -> None:
             view.memories(held["curated"], held["raw"])
             cat = WORKSPACE / enrichment.CATALOGUE
             view.catalogue(len(list(cat.glob("auto-*.json"))) if cat.is_dir() else 0)
+            # The lists behind the panels.  Read here rather than kept from
+            # events because the writers are elsewhere: the curator has its
+            # own session, the documenter is a subagent, and everything
+            # from previous days was written before this process existed.
+            view.listing("memoria", memory.recent(WORKSPACE))
+            view.listing("referencias", enrichment.catalogue_entries(WORKSPACE))
+            docs = WORKSPACE / "docs"
+            view.listing("documentos", [
+                {"text": str(f.relative_to(WORKSPACE)),
+                 "at": datetime.fromtimestamp(f.stat().st_mtime)
+                            .strftime("%Y-%m-%d %H:%M")}
+                for f in sorted(docs.rglob("*.md"),
+                                key=lambda f: -f.stat().st_mtime)[:40]
+            ] if docs.is_dir() else [])
         except OSError:
             pass          # a store being rewritten under us is not fatal
         try:
@@ -388,9 +404,26 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
               # call is a printed line — the first run of this reconciled
               # faithfully and repeated "· waking with 3 validated memories"
               # every two seconds for the length of the conversation.
+              # ONE reader for the terminal.  The view claims what it uses
+              # and hands the rest to the microphone — in WSL that is the
+              # Space that drives push-to-talk, and two loops reading one
+              # descriptor would mean whichever called `read` first ate the
+              # byte.  On wraith the mic reads no keys at all, so the
+              # fallback is simply never used.
+              typing = _keys.Keys(
+                  bindings={
+                      "j": lambda: view.move(1), "k": lambda: view.move(-1),
+                      "down": lambda: view.move(1), "up": lambda: view.move(-1),
+                      "enter": view.open,
+                      "esc": view.close, "q": view.close,
+                  },
+                  fallback=getattr(ears, "key", None),
+              ) if live else contextlib.nullcontext()
+
               stop_tick = asyncio.Event()
               ticker = (asyncio.create_task(_reconcile(view, stop_tick))
                         if live else None)
+              typing.__enter__()
 
               # An eye on what gets stored: each new memory kicks off, in the
               # background, a search outside, a judge deciding whether the
@@ -440,6 +473,7 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
               stop_tick.set()
               if ticker is not None:
                   await ticker
+              typing.__exit__(None, None, None)
 
               # Let whatever it was searching finish before closing.
               await watcher.drain()

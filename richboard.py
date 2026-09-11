@@ -24,6 +24,7 @@ from __future__ import annotations
 import textwrap
 from typing import List, Optional, Tuple
 
+from rich.align import Align
 from rich.console import Console, Group
 from rich.layout import Layout
 from rich.live import Live
@@ -31,7 +32,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from board import Conversation, Entry, StateBoard
+from board import PANELS, Conversation, Entry, StateBoard
 
 SIDEBAR_COLS = 26
 #: Under this the sidebar is dropped for a counter strip.  22 columns of
@@ -89,6 +90,13 @@ class RichBoard(StateBoard):
 
     def _render(self):
         width, height = self._size()
+        if self.state.open_panel:
+            # A modal, not an overlay: `rich` composites nothing, so the
+            # popup REPLACES the view rather than floating over it. That is
+            # also the honest behaviour — a list you opened deliberately is
+            # what you are reading, and a half-covered transcript behind it
+            # would only compete for the eye.
+            return self._popup(width, height)
         wide = width >= MIN_SIDEBAR_COLS
         # MUST fit: a renderable taller than the console cannot be redrawn
         # in place with screen=False — rich rewrites the whole region every
@@ -203,27 +211,96 @@ class RichBoard(StateBoard):
             out.append(row)
         return out
 
+    #: Items previewed inside a panel before the popup is needed.
+    _PREVIEW = 2
+
     def _sidebar(self) -> Group:
         s = self.state
         return Group(
             self._panel("memoria", [
                 self._count("curadas", s.curated, s.curated_at_start),
-                self._count("crudas", s.raw, s.raw_at_start)]),
+                self._count("crudas", s.raw, s.raw_at_start)]
+                + self._preview("memoria")),
             self._panel("referencias", [
                 # What the catalogue HOLDS versus what this conversation
                 # put to use. Two different questions, and showing the
                 # session's finds alone answered neither.
                 self._count("catálogo", s.catalogue, None),
                 self._count("nuevas", len(s.found), 0),
-                self._count("en uso", len(s.selected), 0)]),
+                self._count("en uso", len(s.selected), 0)]
+                + self._preview("referencias")),
+            # Counted from the LISTING, not from the events: documents are
+            # written by a subagent and by earlier runs, and the event
+            # stream only ever saw this session's.
             self._panel("documentos",
-                        [Text(p[-22:], style="white") for p in list(s.documents)[-4:]]
-                        or [Text("—", style="grey42")]),
+                        [self._count("escritos",
+                                     len(s.items.get("documentos") or s.documents),
+                                     None)]
+                        + self._preview("documentos")),
         )
 
+    def _preview(self, panel: str) -> List[Text]:
+        """The newest items, short enough to sit in the sidebar.
+
+        Two, because the panel answers "what just happened" and the popup
+        answers "what is in there".  A sidebar that tries to be the list
+        is neither: 22 columns cannot hold a memory description, and the
+        width it takes comes out of the transcript.
+        """
+        items = self.state.items.get(panel) or []
+        if not items:
+            return [Text("  —", style="grey42")]
+        # The panel is SIDEBAR_COLS wide minus its borders and padding, and
+        # the bullet costs four more.  Truncated to that and pinned
+        # no-wrap: left to wrap, a description spills onto a second line
+        # with no bullet and reads as a separate item — measured, "Función
+        # y patrones c" followed by a lone "c".
+        room = SIDEBAR_COLS - 4 - 4
+        out = []
+        for it in items[:self._PREVIEW]:
+            txt = " ".join((it.get("text") or "").split())
+            if len(txt) > room:
+                txt = txt[:room - 1] + "…"
+            line = Text(no_wrap=True, overflow="ellipsis")
+            line.append("  · ", style="grey42")
+            line.append(txt, style="grey58")
+            out.append(line)
+        return out
+
     def _panel(self, title: str, rows: List[Text]) -> Panel:
-        return Panel(Group(*rows), title=title, title_align="left",
-                     border_style="grey35")
+        focused = PANELS[self.state.focus] == title
+        return Panel(Group(*rows),
+                     title=f"[bold]{title}[/]" if focused else title,
+                     title_align="left",
+                     border_style="cyan" if focused else "grey35")
+
+    def _popup(self, width: int, height: int):
+        """The focused panel's whole list, centred and modal.
+
+        Sized to the console rather than to the content: a list of 43
+        references must not render taller than the screen, for the same
+        reason everything else here is budgeted — `rich.Live` cannot
+        redraw a renderable that does not fit, and tries anyway.
+        """
+        panel = self.state.open_panel or PANELS[self.state.focus]
+        items = self.state.items.get(panel) or []
+        w = max(40, min(width - 8, 96))
+        rows = max(3, height - 8)
+        body: List[Text] = []
+        for it in items[:rows]:
+            line = Text()
+            line.append(f"{(it.get('at') or ''):<17}", style="grey35")
+            line.append((it.get("text") or "")[:w - 24], style="white")
+            body.append(line)
+        if not body:
+            body = [Text("(vacío)", style="grey42")]
+        if len(items) > rows:
+            body.append(Text(f"… y {len(items) - rows} más", style="grey42"))
+        return Align.center(
+            Panel(Group(*body), title=f"[bold cyan]{panel}[/]  ({len(items)})",
+                  title_align="left", subtitle="[grey42]esc cerrar[/]",
+                  subtitle_align="right", border_style="cyan", width=w),
+            vertical="middle")
 
     def _count(self, label: str, value: int, start: Optional[int]) -> Text:
         """A count, and the movement since the session opened.

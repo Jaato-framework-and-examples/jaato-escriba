@@ -35,6 +35,11 @@ from typing import Deque, Dict, List, Optional
 
 import console
 
+#: The sidebar panels, in the order the cursor walks them.  Named here
+#: rather than in the renderer: which panels EXIST is a fact about the
+#: conversation, and only how they look belongs to `richboard`.
+PANELS = ("memoria", "referencias", "documentos")
+
 #: Turns kept in the live view.  A window on the present, not a log: the
 #: manifest under `audio/` is the durable record and it is complete.
 TRANSCRIPT = 400
@@ -70,6 +75,14 @@ class Conversation:
     found: Deque[str] = field(default_factory=lambda: deque(maxlen=60))
     selected: Deque[str] = field(default_factory=lambda: deque(maxlen=60))
     documents: Deque[str] = field(default_factory=lambda: deque(maxlen=40))
+    #: What each panel HOLDS, newest first, for the panel preview and for
+    #: the popup behind it.  Filled by the disk tick, not by events: the
+    #: curator writes from its own session and the documenter from a
+    #: subagent, so an event-fed list is missing exactly what this is for.
+    items: Dict[str, List[dict]] = field(default_factory=dict)
+    #: Which panel the cursor is on, and whether its list is open.
+    focus: int = 0
+    open_panel: Optional[str] = None
     searching: Optional[str] = None
     thinking: bool = False
     speaking: bool = False
@@ -108,6 +121,10 @@ class NullBoard:
     # facts
     def memories(self, curated: int, raw: int) -> None: ...
     def catalogue(self, total: int) -> None: ...
+    def listing(self, panel: str, items: List[dict]) -> None: ...
+    def move(self, delta: int) -> None: ...
+    def open(self) -> None: ...
+    def close(self) -> None: ...
     def searching(self, query: str) -> None: ...
     def found(self, names: List[str]) -> None: ...
     def selected(self, ids: List[str]) -> None: ...
@@ -214,6 +231,28 @@ class StateBoard(NullBoard):
 
     def catalogue(self, total: int) -> None:
         self.state.catalogue = total
+        self._refreshed()
+
+    def listing(self, panel: str, items: List[dict]) -> None:
+        self.state.items[panel] = items
+        self._refreshed()
+
+    def move(self, delta: int) -> None:
+        """Move the cursor between panels, without wrapping past the ends.
+
+        Clamped rather than modular: a cursor that leaps from the last
+        panel back to the first looks like a misread keypress, and there
+        are three of them — the distance saved is not worth the doubt.
+        """
+        self.state.focus = max(0, min(len(PANELS) - 1, self.state.focus + delta))
+        self._refreshed()
+
+    def open(self) -> None:
+        self.state.open_panel = PANELS[self.state.focus]
+        self._refreshed()
+
+    def close(self) -> None:
+        self.state.open_panel = None
         self._refreshed()
 
     def searching(self, query: str) -> None:

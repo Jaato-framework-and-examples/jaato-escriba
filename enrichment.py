@@ -324,6 +324,29 @@ class Observer:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
 
+def catalogue_entries(workspace: Path, n: int = 60) -> list[dict]:
+    """What the reference catalogue holds, newest file first.
+
+    Reference JSON carries no timestamp (there is nowhere in its schema
+    for one), so ordering falls back to the file's mtime.  Good enough for
+    a display and honest about what it is: the catalogue is a set, not a
+    log.
+    """
+    root = workspace / CATALOGUE
+    if not root.is_dir():
+        return []
+    out = []
+    for f in sorted(root.glob("auto-*.json"), key=lambda p: -p.stat().st_mtime)[:n]:
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        out.append({"id": d.get("id", f.stem),
+                    "text": d.get("name") or d.get("id", ""),
+                    "url": d.get("url", "")})
+    return out
+
+
 def forget(workspace: Path) -> int:
     """Move the reference catalogue and the discard list aside.
 
