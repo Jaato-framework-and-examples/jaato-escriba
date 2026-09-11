@@ -221,11 +221,18 @@ class Tongue:
         if ev.final:
             if getattr(ev, "chunk", ""):
                 self.spoken.append(ev.chunk)
+            # PLAYBACK FIRST, always.  Writing the archive is bookkeeping —
+            # half a megabyte joined and pushed to disk — and it used to sit
+            # between the last audio chunk and the wait for that audio to
+            # finish.  On the box that also runs the audio server and the
+            # bridge, an I/O spike there lands squarely on the real-time
+            # path.  The recording can be written at any moment; the audio
+            # cannot, so `finish` goes first and the disk waits its turn.
+            self._player.finish(ev.stream_id)
             if self._archive is not None:
                 kept = self._archive.spoke(ev.stream_id)
                 if kept is not None:
                     self.recordings.append(kept)
-            self._player.finish(ev.stream_id)
             # What the player actually DID, folded into the record so the
             # manifest can answer "was this heard" and not only "was this
             # sent".  `finish` has returned, so the outcome is final.

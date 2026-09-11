@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import asyncio
 import sys
 from pathlib import Path
@@ -270,9 +271,16 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
         view = _LINES
     live = tui
 
-    tape = _archive.Archive(WORKSPACE)
+    # `ESCRIBA_NO_ARCHIVE=1` takes the recorder out of the path entirely —
+    # no minting, no chunk accumulation, no WAV written — leaving the audio
+    # path as it was before any of this existed.  Present so "is the
+    # archive doing this?" is one run rather than a bisect: a question
+    # about audio timing that takes a checkout to ask does not get asked.
+    tape = None if os.environ.get("ESCRIBA_NO_ARCHIVE") else _archive.Archive(WORKSPACE)
     mouth = voice.Tongue(archive=tape,
                          on_problem=lambda m: view.note(f"· AUDIO: {m}"))
+    if tape is None:
+        view.note("· ESCRIBA_NO_ARCHIVE: recording nothing this run")
     conn = dict(workspace_path=str(WORKSPACE),
                 env_file=str(WORKSPACE / ".env"),
                 # The framework writes its own artefacts — backups, session
@@ -338,9 +346,10 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
               # what make `model:<agent>:<n>` locatable afterwards: the
               # counter restarts each session, so the stream id alone is
               # ambiguous across days.
-              tape.identify(scribe.session_id,
-                            getattr(scribe.client, "client_id", None))
-              view.recording_to(str(tape.dir))
+              if tape is not None:
+                  tape.identify(scribe.session_id,
+                                getattr(scribe.client, "client_id", None))
+                  view.recording_to(str(tape.dir))
 
               # An eye on what gets stored: each new memory kicks off, in the
               # background, a search outside, a judge deciding whether the
@@ -361,7 +370,7 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
               # `complete` is what waits for that and hands back the typed
               # payload.  `ask` would return on whichever terminal came
               # first and throw the payload away.
-              await _turn(scribe, GREETING, None, mouth, log=tape.turn,
+              await _turn(scribe, GREETING, None, mouth, log=(tape.turn if tape is not None else None),
                           tui=view if live else None)
 
               # The prompt goes EMPTY on a spoken turn: the question IS the
@@ -378,7 +387,7 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
                       # plus the model's first token is several seconds of
                       # otherwise-unexplained silence.
                       view.heard(said.pop("seconds", 0.0), said.get(ATTACHMENT_ID_KEY))
-                      await _turn(scribe, "", said, mouth, log=tape.turn,
+                      await _turn(scribe, "", said, mouth, log=(tape.turn if tape is not None else None),
                                   tui=view if live else None)
                   view.note("· nobody on the other side")
               except SessionGone:
