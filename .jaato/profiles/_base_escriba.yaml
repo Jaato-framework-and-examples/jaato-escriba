@@ -110,6 +110,20 @@ budget_control:
     usd: 2.00
     turns: 120
     tool_calls: 300
+    # The one that matters, and the one this profile did not have.
+    #
+    # 2026-09-11: the greeting turn stored the SAME three memories 83 times
+    # over 179 seconds — one turn, 90 tool calls, no text emitted between
+    # the first store and the 90th. Neither other ceiling can see that:
+    # `turns: 120` counts turns and this was ONE, and `tool_calls: 300` is
+    # sized for a whole conversation, so a single runaway turn never
+    # approaches it. Since jaato#955 both are observed DURING a turn rather
+    # than at its end, so a wall-clock limit now actually bites mid-loop.
+    #
+    # 90 s is deliberately below a plausible long turn: the slowest healthy
+    # turn measured here is ~8 s (audio in, model, audio out), and the
+    # opening drain that precedes the session is not part of it.
+    seconds: 90
   degrade:
     - at: 80
       action: finalize
