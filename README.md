@@ -5,6 +5,7 @@ what it was told.**
 
 ```bash
 python run_escriba.py                 # talk
+python run_escriba.py --tui           # talk, with a live view
 python run_escriba.py --forget        # start over, forgetting everything
 ```
 
@@ -611,6 +612,8 @@ restarts the deadline instead of giving up.
 | `run_escriba.py` | The driver. All the SDK is two sessions and three turns; the judge and the documenter are spawned, not driven. |
 | `voice.py` | Ears and mouth: the thread↔asyncio bridge and the audio sink. |
 | `console.py` | The terminal side: the thinking spinner, and the only safe way to write while it runs. |
+| `board.py` | What the conversation looks like from outside, as state. No `rich`, no terminal. |
+| `richboard.py` | The live view. The only module that imports `rich`. |
 | `memory.py` | What was left uncurated last time. |
 | `archive.py` | Keeps both halves of the audio, and the manifest that ties them to the turn. |
 | `enrichment.py` | Search, judge and catalogue what is outside. |
@@ -727,7 +730,7 @@ seseo. Those are measurements of model behaviour, not of the framework.
 
 ## Requirements
 
-`parec`, `paplay`, `pactl`, `pw-metadata`, a jaato daemon on
+`rich` (only for `--tui`), `parec`, `paplay`, `pactl`, `pw-metadata`, a jaato daemon on
 `/tmp/jaato.sock`, and OpenRouter credentials in
 `~/.jaato/openrouter_auth.json` (`openrouter-auth`). The microphone is
 `ptt_capture.py`'s `wraith_mic`.

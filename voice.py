@@ -96,7 +96,8 @@ class Ears:
     """
 
     def __init__(self, source: Optional[str] = None,
-                 archive: "_archive.Archive | None" = None) -> None:
+                 archive: "_archive.Archive | None" = None,
+                 on_state=None) -> None:
         _encoder()                     # fail now, not on the first utterance
         #: Optional: when present, every utterance is kept and the id we
         #: minted travels WITH the attachment, so the daemon adopts it
@@ -107,7 +108,11 @@ class Ears:
         self._archive = archive
         self._queue: asyncio.Queue = asyncio.Queue()
         self._loop = asyncio.get_running_loop()
-        self._mic = ptt_capture.create_mic(self._deliver, source=source)
+        #: Passed straight through: when the caller draws its own screen
+        #: the microphone must report its state rather than print it, or
+        #: the two writers fight over the same terminal.
+        self._mic = ptt_capture.create_mic(self._deliver, source=source,
+                                           on_state=on_state)
 
     def _deliver(self, u: "ptt_capture.Utterance") -> None:
         """Runs on the MIC's thread; only crosses the boundary."""

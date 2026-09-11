@@ -122,7 +122,7 @@ def _catalogue(workspace: Path, accepted: List[dict], tags: List[str]) -> List[s
 
 
 async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
-                 workspace: Path, log=print) -> List[str]:
+                 workspace: Path, board=None) -> List[str]:
     """Memory stored -> search -> judgement -> catalogue. Returns names.
 
     EVERY path says what happened.  It used to report only the one
@@ -135,29 +135,29 @@ async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
     """
     tags = keys_from(args)
     if not tags:
-        log("· nothing to search: that memory carried no tags")
+        board.note("· nothing to search: that memory carried no tags")
         return []
     query = " ".join(tags)
-    log(f"· searching: {query}")
+    board.searching(query)
 
     try:
         candidates = await asyncio.wait_for(
             asyncio.to_thread(_search, query), timeout=SEARCH_TIMEOUT)
     except Exception as exc:                              # noqa: BLE001
-        log(f"· search «{query}» failed: {type(exc).__name__}: {str(exc)[:120]}")
+        board.note(f"· search «{query}» failed: {type(exc).__name__}: {str(exc)[:120]}")
         return []
     if not candidates:
-        log(f"· «{query}»: the search returned nothing")
+        board.note(f"· «{query}»: the search returned nothing")
         return []
 
     seen = _already_seen(workspace)
     fresh = [c for c in candidates if c["url"] not in seen]
     if not fresh:
-        log(f"· «{query}»: all {len(candidates)} results were already judged")
+        board.note(f"· «{query}»: all {len(candidates)} results were already judged")
         return []
     candidates = fresh
 
-    verdict = await _judge(query, candidates, conn, log)
+    verdict = await _judge(query, candidates, conn, board)
     if verdict is None:
         return []
 
@@ -168,12 +168,12 @@ async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
     discarded = verdict.get("descartadas", [])
     _record_discards(workspace, [d["url"] for d in discarded])
     if not accepted:
-        log(f"· «{query}»: {len(discarded)} results judged, none worth keeping")
+        board.note(f"· «{query}»: {len(discarded)} results judged, none worth keeping")
     return _catalogue(workspace, accepted, tags)
 
 
 async def _judge(query: str, candidates: List[Dict[str, str]],
-                 conn: Dict[str, Any], log=print) -> Optional[dict]:
+                 conn: Dict[str, Any], board=None) -> Optional[dict]:
     """One turn of the judge. `complete` because this session SHOULD end."""
     from jaato_sdk import IPCClient
 
@@ -201,7 +201,7 @@ async def _judge(query: str, candidates: List[Dict[str, str]],
         # indistinguishable from "nothing relevant was found", and that is
         # the worst possible failure: the system looks fine and searches
         # for nothing.
-        log(f"· the judge failed: {type(exc).__name__}: {str(exc)[:160]}")
+        board.note(f"· the judge failed: {type(exc).__name__}: {str(exc)[:160]}")
         return None
 
 
@@ -223,8 +223,14 @@ class Observer:
     that will at best matter on the next turn.
     """
 
-    def __init__(self, conn: Dict[str, Any], workspace: Path, log=print):
-        self._conn, self._workspace, self._log = conn, workspace, log
+    def __init__(self, conn: Dict[str, Any], workspace: Path, board=None):
+        self._conn, self._workspace = conn, workspace
+        #: Every line this used to print now goes to the board, which
+        #: decides whether it becomes a printed line or a panel row.
+        #: With a live display running a stray `print` lands inside
+        #: the region `rich.Live` redraws and corrupts it, so there is
+        #: exactly one writer and this is not it.
+        self._board = board
         self._args: Dict[str, Dict[str, Any]] = {}
         self._tasks: set = set()
         self._client = None
@@ -252,7 +258,7 @@ class Observer:
             return
         path = (getattr(ev, "tool_args", None) or {}).get("path")
         if path:
-            self._log(f"· wrote {path}")
+            self._board.document(path)
 
     def _started(self, ev) -> None:
         if getattr(ev, "tool_name", None) == "store_memory":
@@ -269,15 +275,15 @@ class Observer:
     async def _work(self, args: Dict[str, Any]) -> None:
         query = " ".join(keys_from(args))
         if query and query in self._searched:
-            self._log(f"· «{query}»: already searched this session")
+            self._board.note(f"· «{query}»: already searched this session")
             return
         if query:
             self._searched.add(query)
-        names = await enrich(args, self._conn, self._workspace, self._log)
+        names = await enrich(args, self._conn, self._workspace, self._board)
         if not names:
             return
         self.found.extend(names)
-        self._log(f"· found outside: {', '.join(names)}")
+        self._board.found(names)
         await self._reload()
 
     async def _reload(self) -> None:
@@ -297,7 +303,7 @@ class Observer:
         try:
             await self._client.execute_command("references", ["reload"])
         except Exception as exc:                          # noqa: BLE001
-            self._log(f"· could not reload the catalogue: {type(exc).__name__}")
+            self._board.note(f"· could not reload the catalogue: {type(exc).__name__}")
 
     async def drain(self) -> None:
         """Let anything in flight finish before closing."""

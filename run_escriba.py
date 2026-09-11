@@ -41,6 +41,7 @@ and underneath them two modules copied unchanged from
 from __future__ import annotations
 
 import argparse
+import contextlib
 import asyncio
 import sys
 from pathlib import Path
@@ -50,6 +51,7 @@ from jaato_sdk.media_identity import ATTACHMENT_ID_KEY
 from jaato_sdk import AgentError, ClientType, EventType, IPCClient
 
 import archive as _archive
+import board as _board
 import console
 import enrichment
 import memory
@@ -80,6 +82,18 @@ DRAIN = "Juzga lo que haya en crudo."
 #:
 #: Generous on purpose.  It is the safety net for someone getting up and
 #: leaving; the DELIBERATE way to end is Ctrl-C, which consolidates too.
+#: The default display: today's lines, unchanged.  `--tui` swaps it for a
+#: `RichBoard`, and then NOTHING else may write — a stray print lands
+#: inside the region `rich.Live` redraws and corrupts it.
+_LINES = _board.LineBoard()
+
+
+@contextlib.asynccontextmanager
+async def _nothing():
+    """Stand-in for the spinner when the board draws its own state."""
+    yield
+
+
 SILENCE_S = 120.0
 
 
@@ -98,7 +112,7 @@ def _session_is_gone(exc: Exception) -> bool:
     return any(m.lower() in str(exc).lower() for m in _GONE)
 
 
-async def _turn(scribe, prompt: str, said, mouth, log=None) -> None:
+async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
     """One turn, tolerating a turn that does its work but never closes.
 
     `complete` and not `ask`, now that the scribe is completion-gated: its
@@ -120,7 +134,10 @@ async def _turn(scribe, prompt: str, said, mouth, log=None) -> None:
     """
     # The spinner stops on the FIRST audio chunk — the moment the person
     # starts hearing the answer — not when the turn settles seconds later.
-    spinner = console.Spinner("escriba is thinking…")
+    # In TUI mode the board owns the screen and draws the state itself;
+    # a spinner writing escape codes underneath `rich.Live` is the exact
+    # corruption the single-writer rule exists to prevent.
+    spinner = console.Spinner("escriba is thinking…") if tui is None else None
 
     speaking = False
 
@@ -130,10 +147,11 @@ async def _turn(scribe, prompt: str, said, mouth, log=None) -> None:
         # Replace it with a static line rather than leaving the screen
         # dead for the length of the reply.
         nonlocal speaking
-        spinner.stop()
+        if spinner is not None:
+            spinner.stop()
         if not speaking:
             speaking = True
-            console.log("· speaking…")
+            (tui or _LINES).speaking()
         mouth.speak(ev)
 
     # TWO sources for what it said, because neither covers both cases.
@@ -154,12 +172,14 @@ async def _turn(scribe, prompt: str, said, mouth, log=None) -> None:
         return mouth.last() or "".join(written).strip() or "(spoke)"
 
     try:
-        async with spinner:
+        if tui is not None:
+            tui.thinking(True)
+        async with (spinner or _nothing()):
             payload = await scribe.complete(prompt, attachments=
                                             None if said is None else [said],
                                             on_media=sink)
     except AgentError as exc:
-        console.log(f"escriba: {spoken()}")
+        (tui or _LINES).spoke(spoken())
         # A turn that did its work and never said so is survivable — see
         # above.  A session that ENDED is not: every later turn would go to
         # a session that no longer exists, and the driver would sit
@@ -169,16 +189,16 @@ async def _turn(scribe, prompt: str, said, mouth, log=None) -> None:
         # could answer.  Tell them, and let the caller wind down cleanly so
         # the consolidation still runs.
         if _session_is_gone(exc):
-            console.log(f"   ↳ the session ended: {str(exc)[:90]}")
+            (tui or _LINES).note(f"   ↳ the session ended: {str(exc)[:90]}")
             raise SessionGone(str(exc)) from exc
-        console.log(f"   ↳ (turn not closed: {str(exc)[:60]})")
+        (tui or _LINES).note(f"   ↳ (turn not closed: {str(exc)[:60]})")
         return
     finally:
         unsubscribe()
     words = spoken()
-    console.log(f"escriba: {words}")
-    if payload and payload.get("anotado"):
-        console.log(f"   ↳ {payload['anotado']}")
+    spoke_rec = mouth.recordings[-1] if getattr(mouth, "recordings", None) else None
+    (tui or _LINES).spoke(words, (payload or {}).get("anotado", ""),
+                          audio=(spoke_rec or {}).get("sha"))
     # One row per turn, written AFTER the turn closed so it records what
     # happened rather than what was attempted.  `said` carries the id we
     # minted for the utterance; `mouth.recordings` carries what we kept of
@@ -233,13 +253,23 @@ def _forget(assume_yes: bool) -> int:
     return 0
 
 
-async def main(assume_yes: bool = False) -> int:
+async def main(assume_yes: bool = False, tui: bool = False) -> int:
     # Opened before anything can speak or be heard.  Audio is
     # CLIENT-audience: it reaches this process, plays, and is gone unless
     # written down here (`jaato_session.py:8719`).  The inbound half is
     # the same bargain from the other side — the framework mints an id
     # "so the caller knows the id it sent, and can name the file it
     # archived".  Both halves are ours; this is where we keep them.
+    # One writer, chosen here.  `LineBoard` prints exactly what this driver
+    # always printed; `RichBoard` draws instead and then nothing else may
+    # write to the terminal at all.
+    if tui:
+        import richboard
+        view = richboard.RichBoard()
+    else:
+        view = _LINES
+    live = tui
+
     tape = _archive.Archive(WORKSPACE)
     mouth = voice.Tongue(archive=tape)
     conn = dict(workspace_path=str(WORKSPACE),
@@ -259,111 +289,114 @@ async def main(assume_yes: bool = False) -> int:
                 # apply the right thing.
                 client_type=ClientType.API)
 
-    # Whatever was left unjudged last time, and ONLY if something was.
-    #
-    # It runs before opening the scribe on purpose: its inventory is
-    # rendered when its session is CREATED, so this is the only thing that
-    # can get last time's memories into today's greeting.  The other way
-    # round — which is how it started — the drain finished after the
-    # inventory was already built, and served no purpose at all.
-    #
-    # Conditional, because unconditional cost 5.6 s of silence on every
-    # start to do nothing 99% of the time.  And said out loud in the
-    # terminal: it is work done before greeting, and it has no reason to
-    # be invisible.
-    pending = memory.uncurated_count(WORKSPACE)
-    if pending:
-        console.log(f"· {pending} memories left uncurated last time — "
+    with view:
+        # Whatever was left unjudged last time, and ONLY if something was.
+      #
+      # It runs before opening the scribe on purpose: its inventory is
+      # rendered when its session is CREATED, so this is the only thing that
+      # can get last time's memories into today's greeting.  The other way
+      # round — which is how it started — the drain finished after the
+      # inventory was already built, and served no purpose at all.
+      #
+      # Conditional, because unconditional cost 5.6 s of silence on every
+      # start to do nothing 99% of the time.  And said out loud in the
+      # terminal: it is work done before greeting, and it has no reason to
+      # be invisible.
+      pending = memory.uncurated_count(WORKSPACE)
+      if pending:
+          view.note(f"· {pending} memories left uncurated last time — "
                     f"judging them before we start")
-        async with IPCClient.session(profile="curator", agent="curator",
-                                     **conn) as curator:
-            await curator.ask(DRAIN)
-        console.log("· consolidated; I can start knowing it")
+          async with IPCClient.session(profile="curator", agent="curator",
+                                       **conn) as curator:
+              await curator.ask(DRAIN)
+          view.note("· consolidated; I can start knowing it")
 
-    # What the driver believes the store holds, said out loud BEFORE the
-    # session opens.  The inventory is rendered inside the daemon and
-    # nothing records what it produced, so when the scribe greeted with
-    # "empezamos de cero" over a store holding one validated memory
-    # (2026-09-11 12:39:51, curated.jsonl written 18 s earlier) there was
-    # no way to tell whether the prefetch saw nothing or the model ignored
-    # what it saw.  One line here makes that a visible contradiction
-    # instead of a silent one: if this says 1 and the greeting says "de
-    # cero", the prefetch is the half to look at.
-    held = memory.counts(WORKSPACE)
-    console.log(f"· waking with {held['curated']} validated memories "
-                f"({held['raw']} raw)")
+      # What the driver believes the store holds, said out loud BEFORE the
+      # session opens.  The inventory is rendered inside the daemon and
+      # nothing records what it produced, so when the scribe greeted with
+      # "empezamos de cero" over a store holding one validated memory
+      # (2026-09-11 12:39:51, curated.jsonl written 18 s earlier) there was
+      # no way to tell whether the prefetch saw nothing or the model ignored
+      # what it saw.  One line here makes that a visible contradiction
+      # instead of a silent one: if this says 1 and the greeting says "de
+      # cero", the prefetch is the half to look at.
+      held = memory.counts(WORKSPACE)
+      view.memories(held["curated"], held["raw"])
 
-    with voice.Ears(archive=tape) as ears:
-        # The curator is not opened for the conversation, and that is not
-        # an oversight: measured, opening it here cost 1.6 s of session
-        # plus 4.0 s of turn, 64% of the 8.8 s it used to take to say the
-        # first word.  That price is only paid when there is something to
-        # judge (above), and then it buys something, because it runs
-        # before the inventory.
-        async with IPCClient.session(profile="escriba", agent="escriba",
-                                     **conn) as scribe:
-            # The outbound half has no journal ref — model media never
-            # enters history, so nothing upstream names it.  These two are
-            # what make `model:<agent>:<n>` locatable afterwards: the
-            # counter restarts each session, so the stream id alone is
-            # ambiguous across days.
-            tape.identify(scribe.session_id,
-                          getattr(scribe.client, "client_id", None))
-            console.log(f"· recording to {tape.dir}")
+      with voice.Ears(archive=tape, on_state=view.listening) as ears:
+          # The curator is not opened for the conversation, and that is not
+          # an oversight: measured, opening it here cost 1.6 s of session
+          # plus 4.0 s of turn, 64% of the 8.8 s it used to take to say the
+          # first word.  That price is only paid when there is something to
+          # judge (above), and then it buys something, because it runs
+          # before the inventory.
+          async with IPCClient.session(profile="escriba", agent="escriba",
+                                       **conn) as scribe:
+              # The outbound half has no journal ref — model media never
+              # enters history, so nothing upstream names it.  These two are
+              # what make `model:<agent>:<n>` locatable afterwards: the
+              # counter restarts each session, so the stream id alone is
+              # ambiguous across days.
+              tape.identify(scribe.session_id,
+                            getattr(scribe.client, "client_id", None))
+              view.recording_to(str(tape.dir))
 
-            # An eye on what gets stored: each new memory kicks off, in the
-            # background, a search outside, a judge deciding whether the
-            # results are any good, and the `references` catalogue — which
-            # from then on offers them by itself when the conversation
-            # brushes the topic again.  Background tasks: the conversation
-            # does not wait for something that at best matters next turn.
-            # `console.log` and not `print`: the observer writes from a
-            # background task, and a bare print lands on top of the
-            # spinner's line and mangles both.
-            watcher = enrichment.Observer(conn, WORKSPACE,
-                                          log=console.log)
-            watcher.attach(scribe.client)
+              # An eye on what gets stored: each new memory kicks off, in the
+              # background, a search outside, a judge deciding whether the
+              # results are any good, and the `references` catalogue — which
+              # from then on offers them by itself when the conversation
+              # brushes the topic again.  Background tasks: the conversation
+              # does not wait for something that at best matters next turn.
+              # The BOARD and not a print: the observer writes from a
+              # background task, and whatever is drawing — a spinner's line
+              # or `rich.Live`'s region — is mangled by anything that writes
+              # underneath it.  One writer, and the board is it.
+              watcher = enrichment.Observer(conn, WORKSPACE,
+                                            board=view)
+              watcher.attach(scribe.client)
 
-            # `complete` and not `ask`, now that the scribe is
-            # completion-gated: its turn ends at `signal_completion`, and
-            # `complete` is what waits for that and hands back the typed
-            # payload.  `ask` would return on whichever terminal came
-            # first and throw the payload away.
-            await _turn(scribe, GREETING, None, mouth, log=tape.turn)
+              # `complete` and not `ask`, now that the scribe is
+              # completion-gated: its turn ends at `signal_completion`, and
+              # `complete` is what waits for that and hands back the typed
+              # payload.  `ask` would return on whichever terminal came
+              # first and throw the payload away.
+              await _turn(scribe, GREETING, None, mouth, log=tape.turn,
+                          tui=view if live else None)
 
-            # The prompt goes EMPTY on a spoken turn: the question IS the
-            # attachment.  Text beside it would be a second question the
-            # persona has to choose between.
-            #
-            # Ctrl-C is caught HERE and not outside: interrupting is the
-            # normal way to say goodbye, and everything learned in the
-            # conversation is lost entirely if consolidation never runs.
-            try:
-                while (said := await ears.listen(SILENCE_S)) is not None:
-                    # Acknowledge the utterance BEFORE the turn: the
-                    # person has just released the key, and the encode
-                    # plus the model's first token is several seconds of
-                    # otherwise-unexplained silence.
-                    console.log(f"· heard {said.pop('seconds', 0.0):.1f}s")
-                    await _turn(scribe, "", said, mouth, log=tape.turn)
-                console.log("· nobody on the other side")
-            except SessionGone:
-                console.log("· the conversation cannot continue — consolidating "
+              # The prompt goes EMPTY on a spoken turn: the question IS the
+              # attachment.  Text beside it would be a second question the
+              # persona has to choose between.
+              #
+              # Ctrl-C is caught HERE and not outside: interrupting is the
+              # normal way to say goodbye, and everything learned in the
+              # conversation is lost entirely if consolidation never runs.
+              try:
+                  while (said := await ears.listen(SILENCE_S)) is not None:
+                      # Acknowledge the utterance BEFORE the turn: the
+                      # person has just released the key, and the encode
+                      # plus the model's first token is several seconds of
+                      # otherwise-unexplained silence.
+                      view.heard(said.pop("seconds", 0.0), said.get(ATTACHMENT_ID_KEY))
+                      await _turn(scribe, "", said, mouth, log=tape.turn,
+                                  tui=view if live else None)
+                  view.note("· nobody on the other side")
+              except SessionGone:
+                  view.note("· the conversation cannot continue — consolidating "
                             "what we have")
-            except (KeyboardInterrupt, asyncio.CancelledError):
-                console.log("\n· goodbye")
+              except (KeyboardInterrupt, asyncio.CancelledError):
+                  view.note("· goodbye")
 
-            # Let whatever it was searching finish before closing.
-            await watcher.drain()
+              # Let whatever it was searching finish before closing.
+              await watcher.drain()
 
-        # And now, with the conversation closed and nobody waiting, the
-        # curator: consolidating what was learned is what will make it
-        # wake up knowing it next time.  Here its cost is nobody's.
-        console.log("· consolidating")
-        async with IPCClient.session(profile="curator", agent="curator",
-                                     **conn) as curator:
-            await curator.ask(DRAIN)
-    return 0
+          # And now, with the conversation closed and nobody waiting, the
+          # curator: consolidating what was learned is what will make it
+          # wake up knowing it next time.  Here its cost is nobody's.
+          view.note("· consolidating")
+          async with IPCClient.session(profile="curator", agent="curator",
+                                       **conn) as curator:
+              await curator.ask(DRAIN)
+      return 0
 
 
 if __name__ == "__main__":
@@ -373,6 +406,11 @@ if __name__ == "__main__":
                         help="move every memory and reference aside and start "
                              "from scratch (recoverable: they are moved under "
                              ".jaato/forgotten/, not deleted)")
+    parser.add_argument("--tui", action="store_true",
+                        help="draw a live view instead of printing lines: "
+                             "the conversation in one panel, what it has "
+                             "learnt in a sidebar. Nothing else may write to "
+                             "the terminal while it runs")
     parser.add_argument("--yes", action="store_true",
                         help="skip the confirmation for --forget")
     args = parser.parse_args()
@@ -381,7 +419,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
-        sys.exit(asyncio.run(main(args.yes)))
+        sys.exit(asyncio.run(main(args.yes, tui=args.tui)))
     except ptt_capture.SourceMuted as exc:
         sys.exit(f"microphone muted: {exc}")
     except KeyboardInterrupt:

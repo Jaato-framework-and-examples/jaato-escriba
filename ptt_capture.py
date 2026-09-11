@@ -532,8 +532,16 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
 
     def __init__(self, on_utterance: Callable[[Utterance], None],
                  source: Optional[str] = None,
-                 tail_ms: int = KEYBOARD_TAIL_MS) -> None:
+                 tail_ms: int = KEYBOARD_TAIL_MS,
+                 on_state: Optional[Callable[[bool], None]] = None) -> None:
         super().__init__(on_utterance, source or _default_source(), tail_ms)
+        #: Where the recording indicator goes, when the caller draws its
+        #: own screen.  `None` keeps the prints below, which is right for a
+        #: plain terminal; a caller running a live display passes a sink and
+        #: NOTHING here writes, because a print underneath a redrawing
+        #: region corrupts it.  Same bargain the rest of this repo makes:
+        #: report what happened, let the caller decide how it looks.
+        self._on_state = on_state
         #: Saved terminal settings, restored on stop.
         self._old_term: Optional[list] = None
         #: Guards the terminal settings: `stop()` restores on the caller's
@@ -634,8 +642,9 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
         fd = sys.stdin.fileno()
         self._old_term = termios.tcgetattr(fd)
         tty.setcbreak(fd)
-        print("\r\033[K· Space = grabar  /  Space = parar  (Ctrl-C para salir)",
-              flush=True)
+        if self._on_state is None:
+            print("\r\033[K· Space = grabar  /  Space = parar  (Ctrl-C para salir)",
+                  flush=True)
         try:
             while not self._stop.is_set():
                 # Monitor both stdin and the wake pipe so stop() can
@@ -655,15 +664,20 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
                 new_state = "released" if self._state == "held" else "held"
                 self._state = new_state
                 self._on_edge(new_state)
-                label = "⬤ grabando…" if new_state == "held" else "◯ listo"
-                print(f"\r\033[K· {label}", flush=True)
+                if self._on_state is not None:
+                    self._on_state(new_state == "held")
+                else:
+                    label = "⬤ grabando…" if new_state == "held" else "◯ listo"
+                    print(f"\r\033[K· {label}", flush=True)
         finally:
             self._restore_term()
             self._close_wake_pipe()
 
 
 def create_mic(on_utterance: Callable[[Utterance], None],
-               source: Optional[str] = None) -> _PushToTalkBase:
+               source: Optional[str] = None,
+               on_state: Optional[Callable[[bool], None]] = None
+               ) -> _PushToTalkBase:
     """Return the right PTT implementation for the current environment.
 
     Uses ``PushToTalkMic`` (wraith backend) when ``wraith_mic`` is
@@ -678,5 +692,7 @@ def create_mic(on_utterance: Callable[[Utterance], None],
     """
     use_wraith = _wraith_available() and (source is None or source == SOURCE)
     if use_wraith:
+        # The wraith backend prints nothing — presses come from
+        # `pw-metadata`, not the keyboard — so it needs no sink.
         return PushToTalkMic(on_utterance, source=source or SOURCE)
-    return KeyboardPushToTalkMic(on_utterance, source=source)
+    return KeyboardPushToTalkMic(on_utterance, source=source, on_state=on_state)
