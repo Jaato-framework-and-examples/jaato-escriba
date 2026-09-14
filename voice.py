@@ -97,7 +97,7 @@ class Ears:
 
     def __init__(self, source: Optional[str] = None,
                  archive: "_archive.Archive | None" = None,
-                 on_state=None) -> None:
+                 on_state=None, read_keys: bool = True) -> None:
         _encoder()                     # fail now, not on the first utterance
         #: Optional: when present, every utterance is kept and the id we
         #: minted travels WITH the attachment, so the daemon adopts it
@@ -111,8 +111,34 @@ class Ears:
         #: Passed straight through: when the caller draws its own screen
         #: the microphone must report its state rather than print it, or
         #: the two writers fight over the same terminal.
+        #: `read_keys=False` when the caller owns stdin and will call
+        #: `toggle()` itself.  Exactly one reader; see `toggle`.
         self._mic = ptt_capture.create_mic(self._deliver, source=source,
-                                           on_state=on_state)
+                                           on_state=on_state,
+                                           read_keys=read_keys)
+
+    @property
+    def keyboard_driven(self) -> bool:
+        """True when a press is a KEY, and so somebody must deliver it.
+
+        False on the wraith backend, where a press arrives as a
+        `pw-metadata` event and the terminal is not involved.  Asked rather
+        than inferred from the class, because the answer is a fact about
+        the backend and not about its name.
+        """
+        return self._mic.reads_keyboard
+
+    def toggle(self) -> None:
+        """Start or stop recording — what Space means, wherever it is read.
+
+        The caller binds this when it owns stdin.  It used to be reached
+        through `getattr(ears, "key", None)`, which resolved to `None`
+        because no such method existed: the microphone never heard a key
+        the view had already taken, and half of every keystroke went to
+        whichever reader won the race.  A named method cannot fail that
+        way — if it is missing, the binding raises instead of going quiet.
+        """
+        self._mic.toggle()
 
     def _deliver(self, u: "ptt_capture.Utterance") -> None:
         """Runs on the MIC's thread; only crosses the boundary."""

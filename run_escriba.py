@@ -410,7 +410,12 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
       held = memory.counts(WORKSPACE)
       view.memories(held["curated"], held["raw"])
 
-      with voice.Ears(archive=tape, on_state=view.listening) as ears:
+      # WHO OWNS STDIN is decided here, once.  With a live view there is a
+      # key reader already, so the microphone must not start a second one:
+      # two loops on one descriptor split every keystroke between them, and
+      # the half that reached the wrong one was silently dropped.
+      with voice.Ears(archive=tape, on_state=view.listening,
+                      read_keys=not live) as ears:
           # The curator is not opened for the conversation, and that is not
           # an oversight: measured, opening it here cost 1.6 s of session
           # plus 4.0 s of turn, 64% of the 8.8 s it used to take to say the
@@ -460,15 +465,20 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
                           return
                   view.open()
 
-              typing = _keys.Keys(
-                  bindings={
-                      "j": lambda: view.move(1), "k": lambda: view.move(-1),
-                      "down": lambda: view.move(1), "up": lambda: view.move(-1),
-                      "enter": _enter,
-                      "esc": view.close, "q": view.close,
-                  },
-                  fallback=getattr(ears, "key", None),
-              ) if live else contextlib.nullcontext()
+              bindings = {
+                  "j": lambda: view.move(1), "k": lambda: view.move(-1),
+                  "down": lambda: view.move(1), "up": lambda: view.move(-1),
+                  "enter": _enter,
+                  "esc": view.close, "q": view.close,
+              }
+              # Space, only where Space is a key.  BOUND, not forwarded: it
+              # used to reach the microphone through a `fallback` resolved
+              # with `getattr(ears, "key", None)`, and no such method
+              # existed — so it was `None`, and every Space this reader won
+              # went nowhere.  A name that must exist fails loudly.
+              if ears.keyboard_driven:
+                  bindings[" "] = ears.toggle
+              typing = _keys.Keys(bindings) if live else contextlib.nullcontext()
 
               stop_tick = asyncio.Event()
               ticker = (asyncio.create_task(_reconcile(view, stop_tick))

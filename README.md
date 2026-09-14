@@ -628,13 +628,33 @@ restarts the deadline instead of giving up.
 | `memory.py` | What was left uncurated last time. |
 | `archive.py` | Keeps both halves of the audio, and the manifest that ties them to the turn. |
 | `enrichment.py` | Search, judge and catalogue what is outside. |
-| `ptt_capture.py`, `pulse_playback.py` | Copied unchanged from `jaato-cascade-audio-interchange`. They know nothing about jaato. |
+| `ptt_capture.py`, `pulse_playback.py` | Taken from `jaato-cascade-audio-interchange` and since diverged — a state sink, a playback outcome, and `read_keys`. They still know nothing about jaato. |
 | `.jaato/agents/*.md` | The four personas: escriba, curator, juez, documentalista. |
 | `.jaato/profiles/` | Provider-agnostic `_base_*` plus the `openrouter_gpt_audio` set. |
 | `tests_render.py`, `tests_terminal.py` | Every render path at four sizes; the terminal handover on a pty. Both headless. |
 
 Everything that is not SDK lives outside the driver on purpose:
 `run_escriba.py` should read as what it means to demonstrate.
+
+**Exactly one thing reads the keyboard.** A file descriptor cannot be read
+twice — whichever loop calls `read` first takes the byte and the other
+never sees it — so under `--tui` the microphone is told not to read
+(`create_mic(read_keys=False)`) and `keys.Keys` binds Space like any other
+key, calling `Ears.toggle()`.
+
+This was got wrong first, in a way worth keeping written down. Space was
+routed to the microphone through `fallback=getattr(ears, "key", None)`,
+and no `key` method existed — so it was `None`, and every Space the view
+won was dropped. Worse, the microphone's own reader was never suppressed,
+and it discards whatever is not Space: it ate `j`, `k`, `enter` and `esc`
+too. Measured on a pty, before the fix: **15 of 30 `j` presses lost**, and
+Space an exact coin flip at human pacing.
+
+None of it showed on a wraith machine. There a press is a `pw-metadata`
+event, the microphone never touches the terminal, and the view has stdin to
+itself — so the bug lived only where `create_mic` falls back to the
+keyboard backend, which is WSL. `reads_keyboard` on each backend is what
+the driver now asks, instead of inferring it.
 
 **The view redraws on change, not on a clock.** `rich.Live` repaints on a
 timer by default, and with `screen=False` a repaint erases every row

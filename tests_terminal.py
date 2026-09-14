@@ -84,6 +84,46 @@ check("child got a real terminal", seen.get("child_saw_tty"), "True")
 check("cbreak taken back", seen.get("after_paused"), False)
 check("terminal returned on exit", canonical(), True)
 
+# ----------------------------------------------------------- one reader
+# Two loops on one descriptor do not merely compete for Space: the
+# microphone's reader discards whatever is not Space, so it ate half of
+# `j`, `k`, `enter` and `esc` as well.  Measured before the fix: 15 of 30
+# `j` presses gone, and Space a coin flip.  Invisible on a wraith machine,
+# where a press is a `pw-metadata` event and nothing reads the terminal.
+import ptt_capture                                        # noqa: E402
+import voice                                              # noqa: E402
+
+check("Ears.toggle is a real method",
+      callable(getattr(voice.Ears, "toggle", None)), True)
+check("the backend says if Space is a key",
+      ptt_capture.KeyboardPushToTalkMic.reads_keyboard, True)
+check("wraith needs no keyboard",
+      ptt_capture.PushToTalkMic.reads_keyboard, False)
+
+quiet_mic = ptt_capture.KeyboardPushToTalkMic(
+    lambda u: None, source="dummy", on_state=lambda on: None, read_keys=False)
+check("told not to read, it does not", quiet_mic._read_keys, False)
+
+fired = []
+quiet_mic._on_edge = lambda state: fired.append(state)
+moved = {"n": 0}
+nav = _keys.Keys({"j": lambda: moved.__setitem__("n", moved["n"] + 1),
+                  " ": quiet_mic.toggle})
+nav.__enter__()
+time.sleep(0.4)
+SENT = 30
+for _ in range(SENT):
+    os.write(master, b"j")
+    time.sleep(0.05)
+for _ in range(10):
+    os.write(master, b" ")
+    time.sleep(0.05)
+time.sleep(0.8)
+nav.__exit__(None, None, None)
+
+check("no navigation key is lost", moved["n"], SENT)
+check("every Space toggles", len(fired), 10)
+
 # ---------------------------------------------------------------- output
 ROW = [{"text": "docs/a.md", "path": "/tmp/a.md", "at": "2026-09-11 10:00"}]
 

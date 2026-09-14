@@ -450,6 +450,12 @@ class _PushToTalkBase:
 class PushToTalkMic(_PushToTalkBase):
     """Reads a wraith_mic PTT source and yields one :class:`Utterance` per press."""
 
+    #: A press here is a `pw-metadata` event, not a keystroke: this backend
+    #: reads its signal from that process's stdout and never touches
+    #: `sys.stdin`.  Nothing competes for the terminal, which is why the
+    #: live view's keys are fluent on a wraith machine and were not in WSL.
+    reads_keyboard = False
+
     def __init__(self, on_utterance: Callable[[Utterance], None],
                  source: str = SOURCE, tail_ms: int = TAIL_MS) -> None:
         super().__init__(on_utterance, source, tail_ms)
@@ -530,11 +536,30 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
     rather than opening a capture no key can ever close.
     """
 
+    #: Space is a KEY on this backend, so whoever owns stdin must deliver
+    #: it -- either this class reads it, or the caller does and calls
+    #: `toggle()`.  The wraith backend sets this False: there, a press is
+    #: a `pw-metadata` event and no keystroke is involved at all.
+    reads_keyboard = True
+
     def __init__(self, on_utterance: Callable[[Utterance], None],
                  source: Optional[str] = None,
                  tail_ms: int = KEYBOARD_TAIL_MS,
-                 on_state: Optional[Callable[[bool], None]] = None) -> None:
+                 on_state: Optional[Callable[[bool], None]] = None,
+                 read_keys: bool = True) -> None:
         super().__init__(on_utterance, source or _default_source(), tail_ms)
+        #: Whether THIS class reads the keyboard, or someone else does and
+        #: calls `toggle()`.
+        #:
+        #: A file descriptor cannot be read twice: whichever loop calls
+        #: `read` first takes the byte and the other never sees it.  When a
+        #: caller runs its own reader -- the live view does, for `j`/`k`
+        #: and the rest -- a second reader here does not compete only for
+        #: Space, it competes for EVERY key, and `_read_signal` discards
+        #: what is not Space.  Measured on a pty: half of `j` presses
+        #: vanished, and half of the Spaces with them.  So the caller says
+        #: which of us owns stdin, and exactly one of us reads it.
+        self._read_keys = read_keys
         #: Where the recording indicator goes, when the caller draws its
         #: own screen.  `None` keeps the prints below, which is right for a
         #: plain terminal; a caller running a live display passes a sink and
@@ -571,10 +596,14 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
                 f"{self._source} is muted; capture would record digital "
                 f"silence while looking perfectly healthy. Unmute it "
                 f"(pactl set-source-mute {self._source} 0) and retry.")
-        self._wake_r, self._wake_w = os.pipe()
         self._open_audio()
         threading.Thread(target=self._read_audio, daemon=True).start()
-        threading.Thread(target=self._read_signal, daemon=True).start()
+        if self._read_keys:
+            # The pipe exists only to wake `_read_signal`'s select, so it
+            # is opened only when that thread runs -- and `stop()` tolerates
+            # its absence.
+            self._wake_r, self._wake_w = os.pipe()
+            threading.Thread(target=self._read_signal, daemon=True).start()
         threading.Thread(target=self._drain, daemon=True).start()
 
     def stop(self) -> None:
@@ -610,6 +639,27 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
                 os.close(fd)
             except OSError:
                 pass
+
+    def toggle(self) -> None:
+        """Start recording, or stop it.  The whole of what Space means.
+
+        Public because the keyboard is not always ours to read: when the
+        caller owns stdin it recognises Space itself and calls this, and
+        `_read_signal` -- which does not run then -- calls the same thing.
+        One edge, one implementation, so the two routes cannot drift.
+
+        Safe to call from any thread: `_on_edge` is the same state machine
+        `_read_signal` always drove, and it already ignores impossible
+        transitions.
+        """
+        new_state = "released" if self._state == "held" else "held"
+        self._state = new_state
+        self._on_edge(new_state)
+        if self._on_state is not None:
+            self._on_state(new_state == "held")
+        else:
+            label = "⬤ grabando…" if new_state == "held" else "◯ listo"
+            print(f"\r\033[K· {label}", flush=True)
 
     def _read_signal(self) -> None:
         """Toggle recording on Space; let the terminal turn Ctrl-C into SIGINT.
@@ -661,14 +711,7 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
                     return
                 if ch != " ":
                     continue
-                new_state = "released" if self._state == "held" else "held"
-                self._state = new_state
-                self._on_edge(new_state)
-                if self._on_state is not None:
-                    self._on_state(new_state == "held")
-                else:
-                    label = "⬤ grabando…" if new_state == "held" else "◯ listo"
-                    print(f"\r\033[K· {label}", flush=True)
+                self.toggle()
         finally:
             self._restore_term()
             self._close_wake_pipe()
@@ -676,7 +719,8 @@ class KeyboardPushToTalkMic(_PushToTalkBase):
 
 def create_mic(on_utterance: Callable[[Utterance], None],
                source: Optional[str] = None,
-               on_state: Optional[Callable[[bool], None]] = None
+               on_state: Optional[Callable[[bool], None]] = None,
+               read_keys: bool = True
                ) -> _PushToTalkBase:
     """Return the right PTT implementation for the current environment.
 
@@ -689,10 +733,16 @@ def create_mic(on_utterance: Callable[[Utterance], None],
     ``source`` overrides the audio source name.  When it names a
     non-wraith source explicitly, the keyboard backend is used regardless
     of wraith availability.
+
+    ``read_keys`` says whether the keyboard backend may read stdin.  Pass
+    ``False`` when the caller runs its own reader and will call
+    ``toggle()``; the wraith backend ignores it, having no use for the
+    terminal either way.
     """
     use_wraith = _wraith_available() and (source is None or source == SOURCE)
     if use_wraith:
         # The wraith backend prints nothing — presses come from
         # `pw-metadata`, not the keyboard — so it needs no sink.
         return PushToTalkMic(on_utterance, source=source or SOURCE)
-    return KeyboardPushToTalkMic(on_utterance, source=source, on_state=on_state)
+    return KeyboardPushToTalkMic(on_utterance, source=source,
+                                 on_state=on_state, read_keys=read_keys)

@@ -6,11 +6,17 @@ starts and stops recording.  A file descriptor cannot be read twice —
 whichever loop calls `read` first takes the byte and the other never sees
 it — so the choice is not "who reads" but "who reads AND passes on".
 
-This is that reader.  The view registers what it wants; anything it does
-not claim goes to the fallback, which is how the microphone still gets its
-Space in WSL while the view gets `j`, `k` and the rest.  On the wraith
-backend the microphone reads no keys at all (presses arrive through
-`pw-metadata`), so the fallback is simply never used.
+This is that reader, and while it runs it is the ONLY one: the microphone
+is told not to start its own (`ptt_capture.create_mic(read_keys=False)`),
+and the key it cares about is bound here like any other.  There is no
+forwarding layer, because there was one and it was worse than nothing —
+`fallback=getattr(ears, "key", None)` resolved to `None`, so every key the
+view did not claim was dropped, while a second reader in the microphone
+ate half of the ones it did.  Measured on a pty: 15 of 30 `j` presses lost.
+
+On the wraith backend the microphone reads no keys at all — presses arrive
+through `pw-metadata` — so there was never a second reader there, which is
+why this was invisible on a wraith machine and constant under WSL.
 
 CBREAK, NOT RAW — the same lesson `ptt_capture` learned.  `raw` clears
 OPOST, and OPOST is what turns `\\n` into `\\r\\n` on the way out; under it
@@ -39,10 +45,8 @@ class Keys:
     nobody is touching.
     """
 
-    def __init__(self, bindings: Dict[str, Callable[[], None]],
-                 fallback: Optional[Callable[[str], None]] = None) -> None:
+    def __init__(self, bindings: Dict[str, Callable[[], None]]) -> None:
         self._bindings = bindings
-        self._fallback = fallback
         self._stop = threading.Event()
         self._old: Optional[list] = None
         self._wake_r: Optional[int] = None
@@ -163,12 +167,11 @@ class Keys:
         if not name:
             return
         handler = self._bindings.get(name)
-        if handler is not None:
-            try:
-                handler()
-            except Exception:
-                # A handler that raises must not take the reader with it:
-                # the terminal is in cbreak and only this loop restores it.
-                pass
-        elif self._fallback is not None:
-            self._fallback(name)
+        if handler is None:
+            return                  # a key nobody asked for
+        try:
+            handler()
+        except Exception:
+            # A handler that raises must not take the reader with it: the
+            # terminal is in cbreak and only this loop restores it.
+            pass
