@@ -785,7 +785,34 @@ seseo. Those are measurements of model behaviour, not of the framework.
 
 ## Requirements
 
-`rich` (only for `--tui`), `leaf` (only to read a document from the
+Python is pinned to `>=3.10,<3.13`: `ptt_capture.py` imports `audioop`,
+which 3.13 removed.
+
+```bash
+uv sync --extra tui            # the client, and the live view
+```
+
+`pyproject.toml` carries the floors, and they are floors WITH REASONS — a
+clone on a second machine resolved `jaato-sdk` freely, got 0.19.0, and
+every session was refused with no cause attached, because `jaato-server`
+imports a symbol that exists only from 0.21.0 and declares no floor of its
+own ([jaato#1055](https://github.com/Jaato-framework-and-examples/jaato/issues/1055)).
+
+**The daemon is a service, not an import.** This is a client; it talks to a
+daemon over `/tmp/jaato.sock` that may live in another environment. When it
+runs from THIS one, install the extras these profiles need:
+
+```bash
+uv pip install 'jaato-server[openrouter,web]>=0.14.0'
+```
+
+`openrouter` supplies `openai` — without it the model loop raises
+`ImportError` on the FIRST TURN, not at init, because providers load
+lazily. `web` supplies the `web_fetch` plugin's extractors. Everything else
+the profiles use — memory, references, subagent, permission, file_edit — is
+core and needs no extra.
+
+Also needed: `leaf` (only to read a document from the
 `documentos` panel — install the upstream binary from
 [RivoLink/leaf](https://github.com/RivoLink/leaf/releases), NOT the snap,
 which is strictly confined with no `home` plug and cannot read your files),
