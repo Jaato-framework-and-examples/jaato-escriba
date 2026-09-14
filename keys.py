@@ -20,6 +20,7 @@ ISIG so Ctrl-C is still a signal rather than a byte to handle.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import select
 import sys
@@ -68,6 +69,43 @@ class Keys:
         self._restore()
         self._close_pipe()
         return False
+
+    @contextlib.contextmanager
+    def paused(self):
+        """Give the terminal to a child program, then take it back.
+
+        The counterpart of `prompt_toolkit`'s `input.detach()` plus
+        `input.cooked_mode()`, which is how `jaato-tui` runs an editor
+        over its own display (`pt_display.py:_open_workspace_file` ->
+        `run_in_terminal`).
+
+        CALLED FROM A KEY HANDLER, AND ONLY FROM THERE.  Handlers run on
+        the reader thread — `_loop` calls `_fire` — so while one is
+        running this class is, by construction, not in `select` and not
+        reading stdin.  There is therefore no second reader to stand
+        down, and `detach` collapses to nothing: all that is left is
+        putting the line discipline back, which is what the child needs.
+
+        That matters for more than tidiness.  A full-screen program asks
+        the terminal where the cursor is (`ESC[6n`) and reads the answer
+        BACK from stdin; with this loop still selecting, the answer goes
+        to the wrong reader and the child fails — `leaf` reports "The
+        cursor position could not be read within a normal duration".
+        `prompt_toolkit` guards the same edge, one step earlier, by
+        draining its own pending CPRs before detaching.
+        """
+        cooked = self._old        # what the terminal was before cbreak
+        self._restore()
+        try:
+            yield
+        finally:
+            # Back to the ORIGINAL settings, not to whatever the child
+            # left behind: re-reading them here would bake a crashed
+            # program's terminal state into our own restore-on-exit.
+            if cooked is not None and not self._stop.is_set():
+                with self._lock:
+                    self._old = cooked
+                tty.setcbreak(sys.stdin.fileno())
 
     def _restore(self) -> None:
         """Put the terminal back.  Safe from either thread, once."""

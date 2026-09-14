@@ -47,6 +47,15 @@ for w, h in ((118, 24), (100, 18), (84, 14), (70, 10)):
             if len(rows) > h or wide:
                 print(f"  FAIL {w}x{h:<3} {label:<18} rows={len(rows)}/{h} over-wide={len(wide)}")
                 fail += 1
+            # A popup is CENTRED, which means it fills the pane: `Align`
+            # reads the height it centres within from `self.height or
+            # options.height`, and a live display supplies neither — so
+            # the vertical argument is silently ignored and the popup
+            # drifts to the top of the screen.  Short frame, dead knob.
+            elif b.state.open_panel and len(rows) != h:
+                print(f"  FAIL {w}x{h:<3} {label:<18} popup not centred: "
+                      f"{len(rows)} rows of {h}")
+                fail += 1
         except Exception as exc:
             print(f"  RAISED {w}x{h:<3} {label:<18} {type(exc).__name__}: {exc}")
             fail += 1

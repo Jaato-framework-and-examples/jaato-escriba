@@ -21,7 +21,9 @@ that cannot be read are worse than counts that can.
 """
 from __future__ import annotations
 
+import contextlib
 import textwrap
+from io import StringIO
 from typing import List, Optional, Tuple
 
 from rich.align import Align
@@ -58,17 +60,32 @@ class RichBoard(StateBoard):
     panels CLAIM is decided by a class with no terminal in it.
     """
 
-    def __init__(self, refresh_per_second: float = 8) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._refresh = refresh_per_second
         self._live: Optional[Live] = None
         self._console = Console()
+        #: The frame currently on the screen, as text.  What makes a
+        #: redraw conditional; see `_refreshed`.
+        self._shown: Optional[str] = None
 
     # ------------------------------------------------------------ lifecycle
+    def _new_live(self) -> Live:
+        """A display that has never drawn, and so draws where the cursor is.
+
+        `Live` remembers the SHAPE of its last frame and steps back over
+        that many rows before drawing the next one.  That memory is what
+        makes a redraw replace the previous frame instead of stacking
+        under it — and it is why a display that has been stopped cannot
+        simply be started again somewhere else.  Resuming builds a new
+        one; see `suspended`.
+        """
+        # `auto_refresh` off: nothing here animates, so a timer would only
+        # repaint what is already on the screen.  `_refreshed` draws.
+        return Live(self._render(), console=self._console, auto_refresh=False,
+                    screen=False, transient=False)
+
     def __enter__(self):
-        self._live = Live(self._render(), console=self._console,
-                          refresh_per_second=self._refresh,
-                          screen=False, transient=False)
+        self._live = self._new_live()
         self._live.__enter__()
         return self
 
@@ -79,9 +96,86 @@ class RichBoard(StateBoard):
             self._live = None
         return False
 
+    @contextlib.contextmanager
+    def suspended(self):
+        """Stop drawing, so a full-screen child owns the terminal.
+
+        The two halves of `prompt_toolkit`'s `in_terminal`, which is how
+        `jaato-tui` runs an editor over its own display: erase the
+        interface, then DISABLE RENDERING.  The second half is the one
+        that is easy to miss and impossible to miss for long — the disk
+        tick and the enrichment observer both keep calling in from their
+        own tasks while the child is up, and `Live.stop` has already
+        popped the render hook, so every one of those refreshes would go
+        straight to the terminal and land on top of the child's screen.
+
+        Dropping `_live` for the duration IS that switch: `_refreshed`
+        already asks whether there is a display before it draws, so the
+        callers go quiet without knowing anything has happened.
+        """
+        live, self._live = self._live, None
+        if live is None:
+            yield
+            return
+        # ERASE the frame — do not merely stop drawing it.  This is the
+        # `renderer.erase()` that `in_terminal` performs first, and going
+        # without it leaves exactly one stale row behind:
+        #
+        #   `stop` ends with `console.line()`, a newline, so the cursor
+        #   comes to rest one row BELOW the last frame.  Neither `stop`
+        #   nor `start` forgets the frame's shape, so the next draw steps
+        #   back `height - 1` rows from there — one row short.  The top
+        #   border is never erased, the new frame lands one row lower,
+        #   and the panel gets two lids.
+        #
+        # `transient` is what makes `stop` clear the region instead, and
+        # it steps back `height` rows, which is the count that accounts
+        # for that newline.  The screen is then clean for the child.
+        live.transient = True
+        live.stop()
+        try:
+            yield
+        finally:
+            # A FRESH display, because the old one still remembers a frame
+            # that is no longer on the screen and would step back over
+            # whatever the child left in its place.
+            self._shown = None      # the screen was erased; draw regardless
+            self._live = self._new_live()
+            self._live.__enter__()
+            self._refreshed()
+
     def _refreshed(self) -> None:
-        if self._live is not None:
-            self._live.update(self._render())
+        """Draw, but only if the screen would come out different.
+
+        Every setter calls this, and most calls change nothing a person
+        could see: the disk tick alone fires five of them every couple of
+        seconds — `memories`, `catalogue`, and one `listing` per panel —
+        re-reporting the same counts and the same rows.  Each one used to
+        repaint the whole pane, and a repaint with `screen=False` means
+        erasing every row and writing it again, which is the flicker.
+
+        The COMPARISON IS THE RENDERED FRAME, not a list of the fields
+        that ought to matter.  A hand-kept list of those is a guess that
+        rots: the day someone adds a field and forgets it, the display
+        quietly stops updating, and a screen that is silently stale is a
+        worse failure than a screen that redraws too often.  Rendering
+        costs about 3.5 ms; a wasted repaint costs 13 KB down the wire.
+        """
+        if self._live is None:
+            return
+        frame = self._render()
+        shown = self._as_text(frame)
+        if shown == self._shown:
+            return
+        self._shown = shown
+        self._live.update(frame, refresh=True)
+
+    def _as_text(self, frame) -> str:
+        """The frame as it would reach the terminal."""
+        buf = StringIO()
+        Console(file=buf, force_terminal=True, width=self._console.size.width,
+                height=self._console.size.height).print(frame)
+        return buf.getvalue()
 
     # -------------------------------------------------------------- drawing
     def _size(self) -> Tuple[int, int]:
@@ -281,7 +375,8 @@ class RichBoard(StateBoard):
         items = self.state.items.get(panel) or []
         w = max(44, min(width - 8, 96))
         if self.state.open_item:
-            return Align.center(self._detail(panel, w, height), vertical="middle")
+            return Align.center(self._detail(panel, w, height),
+                                vertical="middle", height=height)
 
         rows = max(3, height - 8)
         cur = self.state.item_focus
@@ -301,11 +396,20 @@ class RichBoard(StateBoard):
             body = [Text("(vacío)", style="grey42")]
         title = f"[bold cyan]{panel}[/]  ({cur + 1}/{len(items)})" if items \
             else f"[bold cyan]{panel}[/]"
+        # `enter` does something different here, so it says something
+        # different: on a document it hands the screen to the viewer
+        # rather than opening one more panel.
+        does = "leer" if panel == "documentos" else "ver"
         return Align.center(
             Panel(Group(*body), title=title, title_align="left",
-                  subtitle="[grey42]j/k mover · enter ver · esc volver[/]",
+                  subtitle=f"[grey42]j/k mover · enter {does} · esc volver[/]",
                   subtitle_align="right", border_style="cyan", width=w),
-            vertical="middle")
+            # `height` IS the vertical centring.  `Align` takes it from
+            # `self.height or options.height`, and a live display renders
+            # with no height in its options — so without this the vertical
+            # argument is accepted, ignored, and the popup sits at the top
+            # of the pane with the rest of it blank underneath.
+            vertical="middle", height=height)
 
     def _detail(self, panel: str, w: int, height: int) -> Panel:
         """One item, in full — the reason for drilling in.

@@ -8,6 +8,7 @@ python run_escriba.py                 # talk
 python run_escriba.py --tui           # talk, with a live view
                                       #   j/k move · enter goes deeper
                                       #   panel -> its list -> one item
+                                      #   on a document, enter READS it
                                       #   esc comes back one level
 python run_escriba.py --forget        # start over, forgetting everything
 ```
@@ -630,9 +631,53 @@ restarts the deadline instead of giving up.
 | `ptt_capture.py`, `pulse_playback.py` | Copied unchanged from `jaato-cascade-audio-interchange`. They know nothing about jaato. |
 | `.jaato/agents/*.md` | The four personas: escriba, curator, juez, documentalista. |
 | `.jaato/profiles/` | Provider-agnostic `_base_*` plus the `openrouter_gpt_audio` set. |
+| `tests_render.py`, `tests_terminal.py` | Every render path at four sizes; the terminal handover on a pty. Both headless. |
 
 Everything that is not SDK lives outside the driver on purpose:
 `run_escriba.py` should read as what it means to demonstrate.
+
+**The view redraws on change, not on a clock.** `rich.Live` repaints on a
+timer by default, and with `screen=False` a repaint erases every row
+before rewriting it — so a display with nothing to say still rewrote the
+whole pane eight times a second. Nothing here animates: the status line is
+static text and every visible change already arrives through a setter. So
+the timer is off, and `_refreshed` compares the RENDERED FRAME with the one
+on the screen and returns if they match. That second half matters because
+the disk tick fires five setters every couple of seconds — `memories`,
+`catalogue`, and a `listing` per panel — almost always reporting what is
+already there. Measured on a 227×53 pane: **103 KB/s → 2.7 KB/s**, and idle
+from 103 KB/s to nothing.
+
+The comparison is the frame and not a list of the fields that ought to
+matter, because such a list is a guess that rots: the day a field is added
+and forgotten, the screen quietly stops updating, and a silently stale
+display is a worse failure than one that redraws too often. Rendering to
+compare costs ~3.5 ms; the repaint it avoids costs 13 KB.
+
+**Reading a document suspends the view rather than reimplementing one.**
+`enter` on the `documentos` panel hands the whole terminal to `leaf` and
+takes it back on exit. The shape is `jaato-tui`'s, which runs an editor
+over its own display through `prompt_toolkit`'s `run_in_terminal`
+(`pt_display.py:_open_workspace_file`); that TUI is built on
+`prompt_toolkit` and this one on `rich`, but the steps `in_terminal`
+performs each have a counterpart here, and the order is its order:
+
+| `prompt_toolkit` | here |
+|---|---|
+| `renderer.erase()`, then disable rendering | `RichBoard.suspended` — a *transient* `Live.stop`, which takes the frame off the screen, and drop `_live` so the disk tick and the observer go quiet |
+| `input.detach()` + `input.cooked_mode()` | `Keys.paused` — handlers already run ON the reader thread, so only the line discipline is left to give back |
+| `renderer.reset()`, `_redraw()` | a NEW `Live`, because a stopped one still remembers a frame that is no longer on the screen |
+
+Erasing is the step that is easy to leave out, and the symptom is one
+row: `Live.stop` ends with a newline, so the cursor rests one row BELOW a
+frame whose height it still remembers, and a display resumed in that state
+steps back one row short — the old top border survives and the panel comes
+back with two lids.
+
+Both halves fail invisibly — as a corrupted screen, never as an
+exception — so `tests_terminal.py` checks them on a pty: that the child is
+handed a cooked terminal, that nothing is drawn while it holds it, and
+that the frame is erased and the display rebuilt rather than reused.
 
 ## What the SDK takes care of
 
@@ -740,7 +785,11 @@ seseo. Those are measurements of model behaviour, not of the framework.
 
 ## Requirements
 
-`rich` (only for `--tui`), `parec`, `paplay`, `pactl`, `pw-metadata`, a jaato daemon on
+`rich` (only for `--tui`), `leaf` (only to read a document from the
+`documentos` panel — install the upstream binary from
+[RivoLink/leaf](https://github.com/RivoLink/leaf/releases), NOT the snap,
+which is strictly confined with no `home` plug and cannot read your files),
+`parec`, `paplay`, `pactl`, `pw-metadata`, a jaato daemon on
 `/tmp/jaato.sock`, and OpenRouter credentials in
 `~/.jaato/openrouter_auth.json` (`openrouter-auth`). The microphone is
 `ptt_capture.py`'s `wraith_mic`.

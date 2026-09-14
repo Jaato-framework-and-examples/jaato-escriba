@@ -28,6 +28,7 @@ That is also why the methods are named for events rather than for text.
 """
 from __future__ import annotations
 
+import contextlib
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -136,6 +137,16 @@ class NullBoard:
     def document(self, path: str) -> None: ...
     def recording_to(self, path: str) -> None: ...
     # lifecycle
+    @contextlib.contextmanager
+    def suspended(self):
+        """Hand the screen to a child program, then take it back.
+
+        Nothing to do without a live display: the boards that print go on
+        printing and the ones that draw nothing have nothing to stop.
+        `RichBoard` is the only one for which this means anything.
+        """
+        yield
+
     def __enter__(self): return self
     def __exit__(self, *exc): return False
 

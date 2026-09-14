@@ -44,6 +44,8 @@ import argparse
 import contextlib
 import os
 import asyncio
+import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -105,6 +107,13 @@ async def _nothing():
 DISK_TICK_S = 2.0
 
 SILENCE_S = 120.0
+
+#: What opens a document when you press enter on one.  Named, not
+#: discovered: if it is missing the panel says so rather than quietly
+#: opening something else — a viewer you did not ask for, rendering a
+#: document you did, is worse than a sentence explaining why nothing
+#: happened.  `leaf` renders the markdown the documentalista writes.
+VIEWER = "leaf"
 
 
 class SessionGone(RuntimeError):
@@ -263,6 +272,28 @@ def _forget(assume_yes: bool) -> int:
     return 0
 
 
+def _read_document(view, typing, path: str) -> None:
+    """Hand the terminal to the viewer for one document, then take it back.
+
+    The same move `jaato-tui` makes to run an editor over its own display
+    (`pt_display.py:_open_workspace_file` -> `prompt_toolkit`'s
+    `run_in_terminal`), assembled from the two halves that own a terminal
+    here: the board stops drawing, the key reader gives back the line
+    discipline.  IN THAT ORDER, as `in_terminal` does it — a display still
+    refreshing onto a terminal that has already gone cooked writes its
+    frame into whatever the child has just drawn.
+
+    Runs on the reader thread, which is what makes it safe: see
+    `keys.Keys.paused`.
+    """
+    exe = shutil.which(VIEWER)
+    if exe is None:
+        view.note(f"· {VIEWER} no está instalado; no puedo abrir {path}")
+        return
+    with view.suspended(), typing.paused():
+        subprocess.call([exe, path])
+
+
 async def _reconcile(view, stop: asyncio.Event) -> None:
     """Re-read what is on disk until told to stop.
 
@@ -284,7 +315,10 @@ async def _reconcile(view, stop: asyncio.Event) -> None:
             view.listing("referencias", enrichment.catalogue_entries(WORKSPACE))
             docs = WORKSPACE / "docs"
             view.listing("documentos", [
-                {"text": str(f.relative_to(WORKSPACE)),
+                # The absolute path travels WITH the row rather than being
+                # rebuilt from `text` at the far end: the panel is the only
+                # thing that knows which root the listing was read from.
+                {"text": str(f.relative_to(WORKSPACE)), "path": str(f),
                  "at": datetime.fromtimestamp(f.stat().st_mtime)
                             .strftime("%Y-%m-%d %H:%M")}
                 for f in sorted(docs.rglob("*.md"),
@@ -410,11 +444,27 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
               # descriptor would mean whichever called `read` first ate the
               # byte.  On wraith the mic reads no keys at all, so the
               # fallback is simply never used.
+              def _enter() -> None:
+                  """Go deeper — except on a document, which opens.
+
+                  A document's detail view would be its path and its date,
+                  both of which the list already shows.  So for that one
+                  panel `enter` means READ IT, and the depth that would
+                  have shown nothing is simply not there.
+                  """
+                  st = view.state
+                  if st.open_panel == "documentos" and not st.open_item:
+                      chosen = view.selected_item()
+                      if chosen and chosen.get("path"):
+                          _read_document(view, typing, chosen["path"])
+                          return
+                  view.open()
+
               typing = _keys.Keys(
                   bindings={
                       "j": lambda: view.move(1), "k": lambda: view.move(-1),
                       "down": lambda: view.move(1), "up": lambda: view.move(-1),
-                      "enter": view.open,
+                      "enter": _enter,
                       "esc": view.close, "q": view.close,
                   },
                   fallback=getattr(ears, "key", None),
