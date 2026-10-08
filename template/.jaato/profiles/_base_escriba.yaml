@@ -167,8 +167,22 @@ plugin_configs:
     # directory `x/` with `raw/` and `curated.jsonl` inside, and the loose
     # file is ignored without migration (storage.py:250-270).  Naming the
     # directory avoids that silent translation.
-    storage_path: .jaato/memory/escriba
-    global_storage_path: .jaato/memory/escriba-global
+    # THE PLUGIN'S OWN DEFAULT PATH, not a name of ours.  A confined
+    # runner is granted a fixed set of `.jaato/` subpaths, and
+    # `.jaato/memories` is one of them — `.jaato/memory/escriba`, which
+    # this said before, is a path we invented, and an invented one is
+    # denied the moment `apparmor: true` takes effect.
+    storage_path: .jaato/memories
+    # AND THE GLOBAL TIER MUST STAY INSIDE THE WORKSPACE, which matters
+    # more here than it did as a single-user tool.  Its default is
+    # `~/.jaato/memories.jsonl`, and the deployed daemon drops each runner
+    # to the workspace's OWNER — one account for all of this tenant's
+    # people.  So `~` is that one account's home, and the default would
+    # give every person of this tenant ONE shared global store: person A's
+    # memories retrievable by person B.  `allowed_scopes` does not save us
+    # (it applies on write only, plugin.py:1064), which is why this is a
+    # path and not a scope.
+    global_storage_path: .jaato/memories-global
     # 'project' only.  A 'universal' memory auto-injects into EVERY jaato
     # session on this machine, the ~40 neighbouring repos included.  The
     # second brain is consulted by talking to it, not by polluting every
