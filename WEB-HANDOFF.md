@@ -40,6 +40,10 @@ These are settled; the design works inside them.
 | **No build step** | One static `index.html`. React and anything else as ESM imports from a CDN. No npm, no bundler, no node_modules. |
 | **Audio archive** | Server-side, always. Both halves of every exchange are kept for auditing (`archive.py`). This is a deliberate decision and it does not move to the browser. |
 | **Driver stays Python** | `memory.py`, `enrichment.py`, `archive.py`, the completion gates, the subagent spawn and the budget profiles are untouched. |
+| **One workspace per person** | Every session runs in `<root>/<caller>/workspace`, under one root (`/home/escriba/workspaces`), created the first time that person authenticates to the Keycloak realm and reused after. `workspace.py` does it; the shape is `jaato-mcp`'s `per: caller`. |
+| **Confinement** | `apparmor: true` per session, declared in the template's base profiles. Deployed, the root daemon also drops each runner to the workspace's owner, which separates this tenant from the others on the host. |
+| **The credential** | A `pass://` pointer on the provider's knob, resolved by the daemon. No key ever lands in a person's workspace. |
+| **This repo is nobody's workspace** | It holds the implementation and `template/`. Nothing a person's session writes — memories, references, documents, recordings — is ever in it. |
 
 Why this shape: `board.py` already separates *what the conversation looks like
 from outside* from *how it is drawn* — four implementations today (`NullBoard`,
@@ -107,6 +111,11 @@ exactly like a healthy one until someone counted.
 `path`. **References carry no timestamp** — adding one needs a field at
 catalogue time in `enrichment._catalogue()`.
 
+A document's `path` is relative to **that person's** workspace, not to this
+checkout: their `documentalista` runs inside their workspace and writes
+`<root>/<caller>/workspace/docs/`. So the panel lists what was written for
+the person looking at it, and two people never see each other's.
+
 **Status, one at a time** — `listening`, `thinking`, `speaking`, `searching`
 (carries the query). Plus `archive_dir`, where this run's audio is being kept.
 
@@ -132,9 +141,9 @@ Requirements, not designs.
    movement since the session opened.
 5. **Open any item** and read its detail — a memory's body, tags, confidence
    and use count; a reference's URL.
-6. **Read a document.** The documentalista writes markdown; it must be
-   readable in the page. (The TUI hands the terminal to `leaf`; the web has no
-   such excuse.)
+6. **Read a document.** The person's own `documentalista` writes markdown
+   into their workspace's `docs/`; it must be readable in the page. (The TUI
+   hands the terminal to `leaf`; the web has no such excuse.)
 7. **Replay any recording**, from the transcript, by its `att_…` id — both what
    the person said and what the escriba said. This is the audit surface: the id
    is a sha256 prefix of the bytes, so a recording can be shown to match what
@@ -194,9 +203,11 @@ Requirements, not designs.
 | | |
 |---|---|
 | this repo | `/home/apanoia/Sources/Jaato-framework-and-examples/jaato-escriba` |
+| one workspace per person | `workspace.py`, and `tests_workspace.py` for what must never leak between people |
+| what a new workspace is made of | `template/.jaato/` — personas, profiles, completion schemas, processors |
 | the data contract | `board.py` — `Conversation`, `Entry`, `PANELS` |
 | today's renderer, for reference only | `richboard.py` |
 | the driver | `run_escriba.py` |
-| the audio archive and its manifest | `archive.py`, and `audio/<stamp>/manifest.jsonl` |
+| the audio archive and its manifest | `archive.py`; at runtime `<root>/<caller>/workspace/audio/<stamp>/manifest.jsonl` — one archive per person |
 | what everything means and why | `README.md` (long, and worth it) |
 | the stack to mirror | `../kb-for-coding-patterns-wiki/kbwiki/ui/` |
