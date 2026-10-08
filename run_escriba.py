@@ -591,13 +591,6 @@ if __name__ == "__main__":
             ws = _workspace.provision("dev", root=DEV_ROOT)
         except _workspace.NotProvisioned as exc:
             sys.exit(f"cannot provision a workspace: {exc}")
-        legacy = Path(__file__).resolve().parent / ".jaato" / "memory"
-        if legacy.is_dir() and not (ws / ".jaato" / "memory").is_dir():
-            # Say it once, and move nothing: those are somebody's memories.
-            print(f"· this checkout still holds a store at {legacy}.")
-            print(f"  Nothing was moved. To keep using it: --workspace "
-                  f"{legacy.parent.parent}")
-            print(f"  To migrate: cp -a {legacy.parent}/* {ws}/.jaato/")
 
     if args.forget and _forget(ws, args.yes) != 0:
         sys.exit(1)

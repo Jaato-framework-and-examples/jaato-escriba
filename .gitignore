@@ -9,17 +9,11 @@
 uv.lock
 __pycache__/
 
-# NOTHING BELOW HERE SHOULD EXIST IN A CLEAN CHECKOUT.
-#
-# This repository is the implementation and the template; it is NOBODY'S
-# WORKSPACE (see workspace.py).  A session runs in
-# `<root>/<caller>/workspace`, so memories, references, documents,
-# recordings and session journals belong THERE and never here.
-#
-# These entries remain for two reasons: this checkout still holds the
-# store from before that separation, and a `--workspace .` run would put
-# more of it here.  They are a safety net against committing somebody's
-# second brain, not a description of the layout.
+# A session never runs here, so none of this should ever appear: the repo
+# is the implementation and the template, and memories, references,
+# documents, recordings and session journals belong in
+# `<root>/<caller>/workspace`.  Kept as a safety net against committing
+# somebody's second brain if anyone runs `--workspace .`.
 .jaato/
 docs/
 audio/
