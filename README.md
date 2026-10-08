@@ -615,6 +615,59 @@ forty-five the conversation was closed WHILE they were still speaking.
 delivered, which is the window between releasing and arriving — and
 restarts the deadline instead of giving up.
 
+## One root, one workspace per person
+
+**This repository is not a workspace.** It holds the implementation and
+`template/`, and a session runs in `<root>/<caller>/workspace` — created
+the first time that person authenticates, reused forever after. The shape
+is `jaato-mcp`'s `per: caller`, and so is the reason: *provisioning is the
+tenant's job, not the daemon's* — over IPC the daemon trusts the socket's
+uid and provisions nothing, so whoever authenticated the person must give
+them a directory, as its own user.
+
+```
+/home/escriba/workspaces/            <- the root, owned by this tenant
+  alice-ff8d9819/workspace/          <- copied from template/ on first auth
+    .jaato/{agents,profiles,…}         her profiles
+    .jaato/memory/                     her memories
+    docs/                              what a documentalista wrote FOR HER
+    audio/                             her recordings
+  bob-5ff860bf/workspace/
+```
+
+It had to stop being a workspace. The driver used to bind
+`WORKSPACE = Path(__file__).resolve().parent`, so a `documentalista`
+writing on somebody's behalf wrote into THIS tree's `docs/`, beside the
+design notes — and the memories, references and recordings of whoever ran
+it landed in the source checkout. `workspace.py` is the separation;
+`--workspace` is how the legacy TUI names one.
+
+**Runtime state is never copied out of the template.** A template carrying
+one person's sessions, memories or documents into the next person's
+workspace would be a data leak with a tidy explanation, so the skip list
+is a denylist of kinds (`workspace.RUNTIME`) and `tests_workspace.py`
+asserts nothing leaks.
+
+**Confinement is per session, and it was off.** `apparmor` defaults to
+`False` in the framework, so every session this project ever ran was
+unconfined. The base profiles now declare `apparmor: true`, and
+`apparmor_fragments: []` — EMPTY ON PURPOSE, which is not the same as
+absent: absent composes EVERY fragment on the search path, and that path
+includes the shared `~/.jaato/apparmor-fragments/`, so other projects'
+grants would silently widen these sessions. On the deployed host the root
+daemon also drops each runner to the workspace's owner
+(`--runner-uid-policy workspace-owner`), which is what separates this
+tenant from the others on the box; within the tenant, one directory per
+person plus AppArmor is the boundary.
+
+**The provider key never lands in a workspace.** It is a `pass://`
+pointer on the provider's own knob (`plugin_configs.openrouter.api_key`),
+resolved by the daemon at profile resolution. It cannot be
+`~/.jaato/openrouter_auth.json`: a dropped runner's `~` is the target
+account's home, so the daemon's credential file is out of reach by
+design — and a workspace `.env` would reach it, at the price of a live key
+in every person's directory.
+
 ## The files
 
 | | |
@@ -631,7 +684,9 @@ restarts the deadline instead of giving up.
 | `ptt_capture.py`, `pulse_playback.py` | Taken from `jaato-cascade-audio-interchange` and since diverged — a state sink, a playback outcome, and `read_keys`. They still know nothing about jaato. |
 | `.jaato/agents/*.md` | The four personas: escriba, curator, juez, documentalista. |
 | `.jaato/profiles/` | Provider-agnostic `_base_*` plus the `openrouter_gpt_audio` set. |
-| `tests_render.py`, `tests_terminal.py` | Every render path at four sizes; the terminal handover on a pty. Both headless. |
+| `workspace.py` | One root, one directory per person, provisioned from `template/` on first authentication. |
+| `template/` | What a new workspace is made of. Copied, never shared: the workspace is the isolation boundary. |
+| `tests_render.py`, `tests_terminal.py`, `tests_workspace.py` | Every render path at four sizes; the terminal handover on a pty; provisioning and what must never leak between people. All headless. |
 
 Everything that is not SDK lives outside the driver on purpose:
 `run_escriba.py` should read as what it means to demonstrate.

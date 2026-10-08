@@ -1,13 +1,40 @@
 # Local env holds a LIVE provider credential — never commit it.
+# (On the deployed host there is no such file: the key is a `pass://`
+# pointer in the profile, resolved by the daemon. See template/.)
 .env
 !.env.example
-.jaato/memory/
-.jaato/sessions/
-.jaato/logs/
-.jaato/.artifact_tracker.json
+
+# The project's own virtualenv (uv sync --extra tui) and its lock.
+.venv/
+uv.lock
 __pycache__/
-.jaato/references/auto-*.json
-.jaato/discarded_references.json
-.jaato/forgotten/
+
+# NOTHING BELOW HERE SHOULD EXIST IN A CLEAN CHECKOUT.
+#
+# This repository is the implementation and the template; it is NOBODY'S
+# WORKSPACE (see workspace.py).  A session runs in
+# `<root>/<caller>/workspace`, so memories, references, documents,
+# recordings and session journals belong THERE and never here.
+#
+# These entries remain for two reasons: this checkout still holds the
+# store from before that separation, and a `--workspace .` run would put
+# more of it here.  They are a safety net against committing somebody's
+# second brain, not a description of the layout.
+.jaato/
 docs/
 audio/
+
+# The template is COPIED INTO workspaces, so runtime state must never
+# accumulate in it: whatever is here is laid down in the next person's
+# workspace.  `workspace.py` skips these on copy as well — belt and
+# braces, because one leak is one person reading another's memories.
+template/.jaato/memory/
+template/.jaato/references/
+template/.jaato/sessions/
+template/.jaato/logs/
+template/.jaato/forgotten/
+template/.jaato/.artifact_tracker.json
+template/.jaato/discarded_references.json
+template/docs/
+template/audio/
+template/.env

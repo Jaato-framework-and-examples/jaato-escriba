@@ -1,0 +1,27 @@
+# juez — openrouter set: text only, one turn.
+name: juez
+description: >
+  Decides whether some search results are about the topic. One turn, one
+  verdict, and it is done.
+inherits: [_base_juez]
+plugins: []
+model: openai/gpt-4o-mini
+provider: openrouter
+plugin_configs:
+  openrouter:
+    # THE PROVIDER'S OWN KNOB, and the key never lands in a workspace: the
+    # daemon resolves `pass://` during profile resolution, so what sits
+    # here — and so in every person's provisioned copy of it — is a
+    # POINTER, not a secret.
+    #
+    # It cannot be the usual `~/.jaato/openrouter_auth.json`: a root daemon
+    # drops this session's runner to the workspace's owner
+    # (`--runner-uid-policy workspace-owner`), and a dropped runner's `~`
+    # is THAT account's home, so the daemon's own credential file is out of
+    # reach by design.  A workspace `.env` would reach it — and would put a
+    # live key in every person's directory.
+    #
+    # Create it once on the host:  pass insert jaato/openrouter/api-key
+    api_key: pass://jaato/openrouter/api-key
+    api_params:
+      temperature: 0.0   # the same verdict for the same candidates

@@ -15,13 +15,18 @@ version = "0.1.0"
 description = "One person's second brain. It asks out loud, and next time it remembers what it was told."
 readme = "README.md"
 
-# `audioop` is imported at `ptt_capture.py:51`, and it was REMOVED from the
-# standard library in 3.13 (PEP 594).  That module is vendored unchanged
+# EXACTLY 3.12, and both ends are somebody else's requirement.
+#
+# Floor: `jaato-sdk` 0.30 supports >=3.12, and that is the SDK line the
+# daemon runs (server 1.3.0).  The resolver is what said so.
+#
+# Ceiling: `audioop` is imported at `ptt_capture.py:51` and was REMOVED
+# from the standard library in 3.13 (PEP 594).  That module is vendored
 # from `jaato-cascade-audio-interchange`, so the constraint is declared
-# rather than worked around: a resolver error naming Python is a better
-# failure than an ImportError at the first press of the microphone key.
-# To lift the cap, add `audioop-lts` for 3.13+ and test the recorder.
-requires-python = ">=3.10,<3.13"
+# rather than worked around — a resolver error naming Python beats an
+# ImportError at the first press of the microphone key.  To lift it, add
+# `audioop-lts` for 3.13+ and test the recorder.
+requires-python = ">=3.12,<3.13"
 
 dependencies = [
     # 0.21.0 is a FLOOR WITH A REASON, not a snapshot of what happened to
@@ -34,10 +39,34 @@ dependencies = [
     #     this project: jaato#944 (allow_inline), #950 (plugin_configs
     #     reachability), #955, #957, #961 (the explicit `{agent}` trace
     #     form).  An older framework rejects them at session init.
-    "jaato-sdk>=0.21.0",
+    "jaato-sdk>=0.30.0rc6",
     # `memory.py:25` reads the curated store.
     "PyYAML>=6.0",
 ]
+
+# WHERE THE FRAMEWORK COMES FROM, and why not PyPI.
+#
+# The releases that matter are staged on TestPyPI as PRE-RELEASES (jaato
+# #1029), so PyPI's "latest" lags: it answers 0.21.0 for the SDK and 0.14.0
+# for the server while the daemon this talks to runs 1.3.0.  Resolving
+# against PyPI therefore installs an SDK older than the daemon and the
+# mismatch surfaces as an unrelated-looking provider ImportError
+# (jaato#1055).
+#
+# Only `jaato-sdk` is pinned to that index.  Making TestPyPI the primary
+# index would resolve `rich` and `PyYAML` there too, where they are
+# mirrors at best — so the third-party dependencies stay on PyPI.
+[tool.uv]
+prerelease = "allow"          # the rc line IS the release line here
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+explicit = true               # used only for what names it below
+
+[tool.uv.sources]
+jaato-sdk = { index = "testpypi" }
+jaato-server = { index = "testpypi" }
 
 [project.optional-dependencies]
 # Only `--tui` draws, and `richboard` is imported inside that branch
@@ -56,4 +85,4 @@ tui = ["rich>=13.0"]
 #     `web_fetch` plugin the scribe and the juez both declare.
 # Everything else the profiles use — memory, references, subagent,
 # permission, file_edit — is core `jaato-server` and needs no extra.
-daemon = ["jaato-server[openrouter,web]>=0.14.0"]
+daemon = ["jaato-server[openrouter,web]>=1.3.0rc9"]

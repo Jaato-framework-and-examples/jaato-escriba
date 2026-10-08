@@ -79,3 +79,22 @@ plugin_configs:
         # journal happened to hold their full content, which is luck and
         # not design.
         tools: [retrieve_memories, update_memory, list_memory_tags]
+
+# ---------------------------------------------------------------- isolation
+# Kernel-enforced confinement, per session.  OFF BY DEFAULT in the
+# framework (`apparmor` defaults to False), so every session this project
+# ever ran was unconfined until now.
+#
+# This matters more here than in a single-user tool: each person gets their
+# own workspace under one root, and a `documentalista` writing on their
+# behalf must not be able to read the person in the next directory along.
+# The workspace is the isolation boundary (`explain paths`); this is what
+# makes the kernel agree.
+apparmor: true
+# EMPTY ON PURPOSE, which is not the same as absent.  Absent (`None`)
+# composes EVERY fragment on the search path — and that path includes the
+# shared `~/.jaato/apparmor-fragments/`, which on this host holds
+# `jaato-kb-enablement-2.rules` and `premium-reactor.rules`: other
+# projects' grants, which would silently widen these sessions.  `[]` takes
+# the framework's base policy and adds nothing.
+apparmor_fragments: []

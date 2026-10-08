@@ -62,8 +62,14 @@ import enrichment
 import memory
 import ptt_capture
 import voice
+import workspace as _workspace
 
-WORKSPACE = Path(__file__).resolve().parent
+#: Where a DEVELOPER's own workspace goes when no `--workspace` is given.
+#: Deliberately OUTSIDE this checkout: the repository holds the
+#: implementation and the template, and is nobody's workspace — a
+#: `documentalista` writing into `docs/` must land in the person's own
+#: directory, not next to our design notes.  See `workspace.py`.
+DEV_ROOT = Path.home() / ".local" / "share" / "escriba"
 
 #: Opens the session.  A stage direction, not a question: the words of the
 #: greeting belong to the persona (`agents/escriba.md`), and this only
@@ -233,7 +239,7 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
             mouth.recordings.clear()
 
 
-def _forget(assume_yes: bool) -> int:
+def _forget(ws: Path, assume_yes: bool) -> int:
     """Move memories and references aside, on purpose and out loud.
 
     Nothing is unlinked: both halves move under `.jaato/forgotten/<stamp>/`
@@ -245,10 +251,10 @@ def _forget(assume_yes: bool) -> int:
     "erase the nineteen things you told me over three weeks" are the same
     command and very different decisions.
     """
-    held = memory.counts(WORKSPACE)
+    held = memory.counts(ws)
     total = held["raw"] + held["curated"]
-    refs = len(list((WORKSPACE / enrichment.CATALOGUE).glob("auto-*.json"))) \
-        if (WORKSPACE / enrichment.CATALOGUE).is_dir() else 0
+    refs = len(list((ws / enrichment.CATALOGUE).glob("auto-*.json"))) \
+        if (ws / enrichment.CATALOGUE).is_dir() else 0
     if not total and not refs:
         print("· nothing to forget: the store is already empty")
         return 0
@@ -264,8 +270,8 @@ def _forget(assume_yes: bool) -> int:
             print("\n· left alone")
             return 1
 
-    where = memory.forget(WORKSPACE)
-    moved = enrichment.forget(WORKSPACE)
+    where = memory.forget(ws)
+    moved = enrichment.forget(ws)
     print(f"· forgotten. Moved, not deleted: {where.parent if where else '—'}")
     print(f"  ({total} memories, {moved} references — delete that directory "
           f"when you are sure)")
@@ -294,7 +300,7 @@ def _read_document(view, typing, path: str) -> None:
         subprocess.call([exe, path])
 
 
-async def _reconcile(view, stop: asyncio.Event) -> None:
+async def _reconcile(view, ws: Path, stop: asyncio.Event) -> None:
     """Re-read what is on disk until told to stop.
 
     Cheap: two directory listings and a line count, every couple of
@@ -303,22 +309,22 @@ async def _reconcile(view, stop: asyncio.Event) -> None:
     """
     while not stop.is_set():
         try:
-            held = memory.counts(WORKSPACE)
+            held = memory.counts(ws)
             view.memories(held["curated"], held["raw"])
-            cat = WORKSPACE / enrichment.CATALOGUE
+            cat = ws / enrichment.CATALOGUE
             view.catalogue(len(list(cat.glob("auto-*.json"))) if cat.is_dir() else 0)
             # The lists behind the panels.  Read here rather than kept from
             # events because the writers are elsewhere: the curator has its
             # own session, the documenter is a subagent, and everything
             # from previous days was written before this process existed.
-            view.listing("memoria", memory.recent(WORKSPACE))
-            view.listing("referencias", enrichment.catalogue_entries(WORKSPACE))
-            docs = WORKSPACE / "docs"
+            view.listing("memoria", memory.recent(ws))
+            view.listing("referencias", enrichment.catalogue_entries(ws))
+            docs = ws / "docs"
             view.listing("documentos", [
                 # The absolute path travels WITH the row rather than being
                 # rebuilt from `text` at the far end: the panel is the only
                 # thing that knows which root the listing was read from.
-                {"text": str(f.relative_to(WORKSPACE)), "path": str(f),
+                {"text": str(f.relative_to(ws)), "path": str(f),
                  "at": datetime.fromtimestamp(f.stat().st_mtime)
                             .strftime("%Y-%m-%d %H:%M")}
                 for f in sorted(docs.rglob("*.md"),
@@ -332,7 +338,8 @@ async def _reconcile(view, stop: asyncio.Event) -> None:
             continue
 
 
-async def main(assume_yes: bool = False, tui: bool = False) -> int:
+async def main(ws: Path, assume_yes: bool = False,
+               tui: bool = False) -> int:
     # Opened before anything can speak or be heard.  Audio is
     # CLIENT-audience: it reaches this process, plays, and is gone unless
     # written down here (`jaato_session.py:8719`).  The inbound half is
@@ -354,13 +361,13 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
     # path as it was before any of this existed.  Present so "is the
     # archive doing this?" is one run rather than a bisect: a question
     # about audio timing that takes a checkout to ask does not get asked.
-    tape = None if os.environ.get("ESCRIBA_NO_ARCHIVE") else _archive.Archive(WORKSPACE)
+    tape = None if os.environ.get("ESCRIBA_NO_ARCHIVE") else _archive.Archive(ws)
     mouth = voice.Tongue(archive=tape,
                          on_problem=lambda m: view.note(f"· AUDIO: {m}"))
     if tape is None:
         view.note("· ESCRIBA_NO_ARCHIVE: recording nothing this run")
-    conn = dict(workspace_path=str(WORKSPACE),
-                env_file=str(WORKSPACE / ".env"),
+    conn = dict(workspace_path=str(ws),
+                env_file=str(ws / ".env"),
                 # The framework writes its own artefacts — backups, session
                 # journals — under config_root, never into the tenant's
                 # workspace.  Without it `file_edit` refuses to initialise
@@ -368,7 +375,7 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
                 # `writeNewFile` in its tool surface with no executor behind
                 # it: every call returns nothing and the model retries for
                 # as long as someone lets it.
-                config_root=str(WORKSPACE / ".jaato"),
+                config_root=str(ws / ".jaato"),
                 # API: a headless driver.  The server strips
                 # `signal_completion` from root sessions of a
                 # TERMINAL/WEB/CHAT client, and we do not use it here —
@@ -389,7 +396,7 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
       # start to do nothing 99% of the time.  And said out loud in the
       # terminal: it is work done before greeting, and it has no reason to
       # be invisible.
-      pending = memory.uncurated_count(WORKSPACE)
+      pending = memory.uncurated_count(ws)
       if pending:
           view.note(f"· {pending} memories left uncurated last time — "
                     f"judging them before we start")
@@ -407,7 +414,7 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
       # what it saw.  One line here makes that a visible contradiction
       # instead of a silent one: if this says 1 and the greeting says "de
       # cero", the prefetch is the half to look at.
-      held = memory.counts(WORKSPACE)
+      held = memory.counts(ws)
       view.memories(held["curated"], held["raw"])
 
       # WHO OWNS STDIN is decided here, once.  With a live view there is a
@@ -481,7 +488,7 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
               typing = _keys.Keys(bindings) if live else contextlib.nullcontext()
 
               stop_tick = asyncio.Event()
-              ticker = (asyncio.create_task(_reconcile(view, stop_tick))
+              ticker = (asyncio.create_task(_reconcile(view, ws, stop_tick))
                         if live else None)
               typing.__enter__()
 
@@ -495,7 +502,7 @@ async def main(assume_yes: bool = False, tui: bool = False) -> int:
               # background task, and whatever is drawing — a spinner's line
               # or `rich.Live`'s region — is mangled by anything that writes
               # underneath it.  One writer, and the board is it.
-              watcher = enrichment.Observer(conn, WORKSPACE,
+              watcher = enrichment.Observer(conn, ws,
                                             board=view)
               watcher.attach(scribe.client)
 
@@ -562,13 +569,41 @@ if __name__ == "__main__":
                              "the terminal while it runs")
     parser.add_argument("--yes", action="store_true",
                         help="skip the confirmation for --forget")
+    parser.add_argument("--workspace", metavar="DIR",
+                        help="the workspace to work in. Omitted, a personal "
+                             "one is provisioned from template/ under "
+                             f"{DEV_ROOT}. This checkout is NOT a workspace: "
+                             "it holds the implementation and the template, "
+                             "so a document written on somebody's behalf "
+                             "lands in their directory and not beside our "
+                             "design notes")
     args = parser.parse_args()
 
-    if args.forget and _forget(args.yes) != 0:
+    # The workspace is RESOLVED, never assumed.  A driver that defaulted to
+    # its own directory is how this project came to keep one person's
+    # memories, documents and recordings inside its own source tree.
+    if args.workspace:
+        ws = Path(args.workspace).expanduser().resolve()
+        if not (ws / ".jaato").is_dir():
+            sys.exit(f"{ws} is not a workspace: no .jaato/ in it")
+    else:
+        try:
+            ws = _workspace.provision("dev", root=DEV_ROOT)
+        except _workspace.NotProvisioned as exc:
+            sys.exit(f"cannot provision a workspace: {exc}")
+        legacy = Path(__file__).resolve().parent / ".jaato" / "memory"
+        if legacy.is_dir() and not (ws / ".jaato" / "memory").is_dir():
+            # Say it once, and move nothing: those are somebody's memories.
+            print(f"· this checkout still holds a store at {legacy}.")
+            print(f"  Nothing was moved. To keep using it: --workspace "
+                  f"{legacy.parent.parent}")
+            print(f"  To migrate: cp -a {legacy.parent}/* {ws}/.jaato/")
+
+    if args.forget and _forget(ws, args.yes) != 0:
         sys.exit(1)
 
     try:
-        sys.exit(asyncio.run(main(args.yes, tui=args.tui)))
+        sys.exit(asyncio.run(main(ws, args.yes, tui=args.tui)))
     except ptt_capture.SourceMuted as exc:
         sys.exit(f"microphone muted: {exc}")
     except KeyboardInterrupt:
