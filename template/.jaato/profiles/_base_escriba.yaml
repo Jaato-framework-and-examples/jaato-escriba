@@ -167,11 +167,20 @@ plugin_configs:
     # directory `x/` with `raw/` and `curated.jsonl` inside, and the loose
     # file is ignored without migration (storage.py:250-270).  Naming the
     # directory avoids that silent translation.
-    # THE PLUGIN'S OWN DEFAULT PATH, not a name of ours.  A confined
-    # runner is granted a fixed set of `.jaato/` subpaths, and
-    # `.jaato/memories` is one of them — `.jaato/memory/escriba`, which
-    # this said before, is a path we invented, and an invented one is
-    # denied the moment `apparmor: true` takes effect.
+    # THE PLUGIN'S OWN DEFAULT PATH, so this tracks the plugin instead of
+    # a name of ours.  It was `.jaato/memory/escriba`.
+    #
+    # NOT for the reason first recorded here: that said a confined runner
+    # is granted a fixed list of `.jaato/` subpaths and an invented one is
+    # denied.  That was wrong, and checking the rendered AppArmor template
+    # (jaato-server 1.3.0rc9) is what showed it: the base body grants
+    # `{workspace}/** rwkl` and then write-denies a FIXED LIST —
+    # agents, profiles, scripts, completion_schemas, spawn_schemas,
+    # instructions, references, templates, plans, reactors.json,
+    # permissions.json, apparmor-fragments.  Anything NOT on that list is
+    # writable, invented or not.  `.jaato/memory/escriba` would have
+    # worked.  Using the default is still better — it is one less name of
+    # ours to keep in step — but the denial story was fiction.
     storage_path: .jaato/memories
     # AND THE GLOBAL TIER MUST STAY INSIDE THE WORKSPACE, which matters
     # more here than it did as a single-user tool.  Its default is
@@ -179,9 +188,19 @@ plugin_configs:
     # to the workspace's OWNER — one account for all of this tenant's
     # people.  So `~` is that one account's home, and the default would
     # give every person of this tenant ONE shared global store: person A's
-    # memories retrievable by person B.  `allowed_scopes` does not save us
-    # (it applies on write only, plugin.py:1064), which is why this is a
-    # path and not a scope.
+    # memories retrievable by person B.
+    #
+    # `allowed_scopes` below is the PRIMARY gate and the framework now
+    # documents it as such — "Write-side gate: which memory scopes the
+    # model may store … Set e.g. [\"project\"] to keep a deployment off
+    # the HOME/global tier entirely".  Its default is permissive
+    # (`['project', 'universal']`), which is exactly how a deployment
+    # ends up with one shared HOME store per tenant without choosing to.
+    #
+    # This path is the BACKSTOP, and the two are deliberately independent:
+    # the gate decides what the model may write, this decides where such a
+    # write would land if the gate were ever relaxed.  Neither relies on
+    # the other.
     global_storage_path: .jaato/memories-global
     # 'project' only.  A 'universal' memory auto-injects into EVERY jaato
     # session on this machine, the ~40 neighbouring repos included.  The
