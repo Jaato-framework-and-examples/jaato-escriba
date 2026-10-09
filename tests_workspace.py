@@ -4,6 +4,7 @@ The properties that matter if this is wrong: somebody reads somebody
 else's second brain, or somebody's memories are replaced by a seed file.
 Neither raises an exception on its own, so they are asserted here.
 """
+import json
 import shutil
 import sys
 import tempfile
@@ -63,6 +64,29 @@ try:
     w.provision("alice@example.com", root=root)
     check("an existing .env is left alone",
           (alice / ".env").read_text().strip(), "JAATO_PROFILE_SET=mine")
+
+    # WHO A DIRECTORY BELONGS TO, where an operator can read it and the
+    # session cannot rewrite it.  On the deployed host the principal is
+    # Keycloak's `sub`, so `ls` shows a UUID and nothing about a person;
+    # the readable name must therefore exist somewhere, and NOT in the
+    # path, which anyone who can list the root can read.
+    named = w.provision("f81d4fae-7dec-11d0", root=root,
+                        identity={"username": "dani", "email": "d@example.com"})
+    ident = json.loads((named.parent / w.IDENTITY).read_text())
+    check("the identity is recorded", ident["username"], "dani")
+    check("with the principal it was provisioned for",
+          ident["principal"], "f81d4fae-7dec-11d0")
+    check("beside the workspace, not inside it",
+          (named / w.IDENTITY).exists(), False)
+    # Everything under the workspace is writable by the confined session,
+    # so a record the session could author is not a record.
+    check("outside what the session may write",
+          named in (named.parent / w.IDENTITY).parents, False)
+
+    # Written once: a rename does not change who it was created for.
+    w.provision("f81d4fae-7dec-11d0", root=root, identity={"username": "otro"})
+    again = json.loads((named.parent / w.IDENTITY).read_text())
+    check("and never rewritten", again["username"], "dani")
 
     check("provisioned with personas",
           (alice / ".jaato" / "agents" / "escriba.md").is_file(), True)

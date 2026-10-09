@@ -24,10 +24,12 @@ is excluded by prefix, and anything the template author added is copied.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 #: The implementation's own directory — outside every workspace.
 HERE = Path(__file__).resolve().parent
@@ -51,6 +53,17 @@ RUNTIME = (
 
 #: Everything a workspace needs before a session can open in it.
 REQUIRED = (".jaato/agents", ".jaato/profiles")
+
+#: Who a directory belongs to, in a form a person can read.
+#:
+#: OUTSIDE THE WORKSPACE, in the person's directory rather than in it.
+#: Every path under `{workspace}/` is writable by the confined session —
+#: the deny list covers named framework assets, not the whole tree — so
+#: an identity file kept there could be rewritten by the agent, and an
+#: operator reading it to find out whose workspace this is would be
+#: reading something the workspace itself could have authored.  Here it
+#: is written once by the provisioner and never granted to anyone else.
+IDENTITY = "person.json"
 
 #: The file that selects the tier-2 overlay.  It is NOT in the template
 #: and must not be: it used to hold the provider credential, which is why
@@ -154,8 +167,32 @@ def _copy_template(template: Path, dest: Path) -> None:
             shutil.copy2(src, target)
 
 
+def _write_identity(home: Path, principal: str, identity: Optional[dict]) -> None:
+    """Record who this directory is for, once.
+
+    The directory is named from the principal, which on the deployed host
+    is Keycloak's `sub` — stable across a rename, and unreadable: `ls`
+    shows `a3f1…-9c2b1d04` and nothing about a person.  The readable
+    name belongs somewhere an operator can find it WITHOUT it becoming
+    the path, because a path is listed by anyone who can stat the root
+    and an email in it is a disclosure.
+
+    Written on first provision and never again: the file records who the
+    directory was created for, and a later rename does not change that.
+    """
+    target = home / IDENTITY
+    if target.exists():
+        return
+    row = {"principal": principal,
+           "provisioned_at": datetime.now().isoformat(timespec="seconds")}
+    row.update({k: v for k, v in (identity or {}).items() if v})
+    target.write_text(json.dumps(row, indent=2, ensure_ascii=False) + "\n",
+                      encoding="utf-8")
+
+
 def provision(principal: str, root: Path = DEFAULT_ROOT,
-              template: Path = TEMPLATE) -> Path:
+              template: Path = TEMPLATE,
+              identity: Optional[dict] = None) -> Path:
     """Return this person's workspace, creating it the first time.
 
     Idempotent: an existing workspace is returned untouched, because it
@@ -192,6 +229,7 @@ def provision(principal: str, root: Path = DEFAULT_ROOT,
     if root not in ws.parents:
         raise NotProvisioned(f"workspace {ws} would fall outside {root}")
     if ws.exists():
+        _write_identity(ws.parent, principal, identity)
         # Idempotent, with ONE repair: a workspace missing `.env` cannot
         # open a session at all, and writing the file it never had takes
         # nothing away from the person.  Everything else is theirs.
@@ -208,6 +246,7 @@ def provision(principal: str, root: Path = DEFAULT_ROOT,
         # One rename, so a workspace is either absent or complete. A
         # half-copied one would look provisioned and be missing a profile.
         staging.rename(ws)
+        _write_identity(ws.parent, principal, identity)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise

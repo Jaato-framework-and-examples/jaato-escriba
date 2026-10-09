@@ -248,9 +248,10 @@ class Relay:
 class Person:
     """One authenticated person: a workspace, a session, a hub."""
 
-    def __init__(self, principal: str, root: Path, limit: Optional[int] = None) -> None:
+    def __init__(self, principal: str, root: Path, limit: Optional[int] = None,
+                 identity: Optional[dict] = None) -> None:
         self.principal = principal
-        self.ws = _workspace.provision(principal, root=root)
+        self.ws = _workspace.provision(principal, root=root, identity=identity)
         self.hub = Hub()
         self.board = WebBoard(self.hub)
         self.archive = _archive.Archive(

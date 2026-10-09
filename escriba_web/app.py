@@ -82,7 +82,15 @@ async def person_of(request: Request) -> Person:
     who = principal_of(request)
     person = PEOPLE.get(who)
     if person is None:
-        person = Person(who, root=Path(str(CONFIG["root"])), limit=CONFIG.get("limit"))
+        # The readable name the proxy also sends, recorded once beside the
+        # workspace so an operator can map a directory to a person.  It is
+        # never the directory's name: `sub` is what survives a rename, and
+        # an email in a path is a disclosure to anyone who can list the
+        # root.
+        identity = {"username": request.headers.get("x-forwarded-preferred-username"),
+                    "email": request.headers.get("x-forwarded-email")}
+        person = Person(who, root=Path(str(CONFIG["root"])), limit=CONFIG.get("limit"),
+                        identity=identity)
         PEOPLE[who] = person
         person.hub.publish("state", person.snapshot())
         asyncio.create_task(_open(person))
