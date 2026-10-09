@@ -83,6 +83,14 @@ try:
     check("outside what the session may write",
           named in (named.parent / w.IDENTITY).parents, False)
 
+    # Said rather than inherited from a umask.  The root above already
+    # keeps other accounts out; this stops depending on that staying true.
+    import stat as _stat
+    check("the person's directory is private",
+          oct(_stat.S_IMODE((named.parent).stat().st_mode)), "0o700")
+    check("and so is the identity record",
+          oct(_stat.S_IMODE((named.parent / w.IDENTITY).stat().st_mode)), "0o600")
+
     # Written once: a rename does not change who it was created for.
     w.provision("f81d4fae-7dec-11d0", root=root, identity={"username": "otro"})
     again = json.loads((named.parent / w.IDENTITY).read_text())

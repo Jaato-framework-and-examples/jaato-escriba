@@ -183,11 +183,20 @@ def _write_identity(home: Path, principal: str, identity: Optional[dict]) -> Non
     target = home / IDENTITY
     if target.exists():
         return
+    # 0700 / 0600, said rather than inherited.  The root above is 0750
+    # and already keeps other accounts out, so this is defence in depth
+    # with one specific value: it stops being true the day somebody
+    # widens the root, and a person's email should not become readable
+    # because of a change two directories up.  It is NOT what separates
+    # one person from another — every session runs as the same account,
+    # and AppArmor is what keeps each inside its own workspace.
+    home.chmod(0o700)
     row = {"principal": principal,
            "provisioned_at": datetime.now().isoformat(timespec="seconds")}
     row.update({k: v for k, v in (identity or {}).items() if v})
     target.write_text(json.dumps(row, indent=2, ensure_ascii=False) + "\n",
                       encoding="utf-8")
+    target.chmod(0o600)
 
 
 def provision(principal: str, root: Path = DEFAULT_ROOT,
