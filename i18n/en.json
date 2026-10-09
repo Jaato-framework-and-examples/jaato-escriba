@@ -99,5 +99,7 @@
   "note.turn_timeout": "· the turn did not answer in {secs} s; opening a new session",
   "note.no_answer": "the escriba did not answer; try again",
   "note.searching": "· «{query}»: already searched in this session",
-  "note.no_text": "(no text)"
+  "note.no_text": "(no text)",
+  "agent.speech": "British English. You speak as people speak in Britain.",
+  "agent.greeting": "[The session opens. The user is listening.]"
 }

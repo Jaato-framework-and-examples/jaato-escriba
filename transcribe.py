@@ -83,7 +83,7 @@ class Transcriber:
                                        compute_type="int8")
         return self._model
 
-    def transcribe(self, recording: Path) -> str:
+    def transcribe(self, recording: Path, language: Optional[str] = None) -> str:
         """Decode with ffmpeg, then transcribe the samples.
 
         NOT by handing the path to the model.  `faster-whisper` decodes
@@ -112,11 +112,16 @@ class Transcriber:
         samples = np.frombuffer(raw.stdout, dtype=np.float32)
         if not samples.size:
             return ""
+        # PER CALL, not per process.  One Transcriber is shared by every
+        # person on this host — it is hundreds of megabytes — but the
+        # language is theirs, and it is DECLARED rather than detected for
+        # the reason in the class: detection on a six-second utterance
+        # fails by returning confident text in the wrong language.
         segments, _info = self._load().transcribe(
-            samples, language=self.language, vad_filter=True)
+            samples, language=language or self.language, vad_filter=True)
         return " ".join(s.text.strip() for s in segments).strip()
 
-    def write(self, recording: Path) -> Optional[str]:
+    def write(self, recording: Path, language: Optional[str] = None) -> Optional[str]:
         """Transcribe and store beside the recording, once.
 
         An existing transcript is kept: re-transcribing the same bytes
@@ -126,7 +131,7 @@ class Transcriber:
         target = text_path(recording)
         if target.exists():
             return target.read_text(encoding="utf-8").strip() or None
-        text = self.transcribe(recording)
+        text = self.transcribe(recording, language=language)
         if not text:
             return None
         target.write_text(text + "\n", encoding="utf-8")

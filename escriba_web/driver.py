@@ -46,7 +46,7 @@ import voice                                                     # noqa: E402
 import yaml                                                      # noqa: E402
 import transcribe as _transcribe                                 # noqa: E402
 import workspace as _workspace                                   # noqa: E402
-from run_escriba import DRAIN, GREETING, SessionGone, _reconcile, _turn  # noqa: E402
+from run_escriba import DRAIN, SessionGone, _reconcile, _turn   # noqa: E402
 
 from .hub import Hub                                             # noqa: E402
 
@@ -368,8 +368,8 @@ class Person:
             await self._open_session()
         self._ticker = asyncio.create_task(_reconcile(self.board, self.ws, self._stop))
         self.hub.publish("state", self.snapshot())
-        await _turn(self._scribe, GREETING, None, self._relay(), log=self.archive.turn,
-                    tui=self.board)
+        await _turn(self._scribe, self.say("agent.greeting"), None, self._relay(),
+                    log=self.archive.turn, tui=self.board)
         self._settle()
         asyncio.create_task(self._measure())
 
@@ -399,6 +399,13 @@ class Person:
         self._loop = asyncio.get_running_loop()
         self._stack = IPCRecoveryClient.session(
             profile="escriba", agent="escriba",
+            # The speech rule travels as an agent param, so one persona
+            # serves every language.  The persona itself stays in
+            # Spanish deliberately: it is instruction to the model, never
+            # read by the person, and a translated copy per locale would
+            # be the drift this whole change exists to avoid.  Params
+            # cross the wire as strings, which this is.
+            agent_params={"speech": self.say("agent.speech")},
             auto_start=False,
             # The generator's own numbers (`jaato-scaffold new client
             # --recoverable`): the SDK's default connect timeout is 5 s
@@ -710,7 +717,10 @@ class Person:
 
         async def run() -> None:
             try:
-                text = await asyncio.to_thread(self.scribe.write, recording)
+                # This person's language, not the host's: the model is
+                # shared, the language is not.
+                text = await asyncio.to_thread(self.scribe.write, recording,
+                                               self.locale)
             except Exception as exc:                          # noqa: BLE001
                 self.board.note(f"· no pude transcribir {att}: "
                                 f"{type(exc).__name__}: {str(exc)[:90]}")

@@ -99,5 +99,7 @@
   "note.turn_timeout": "· el turno no respondió en {secs} s; abro sesión nueva",
   "note.no_answer": "el escriba no respondió; inténtalo de nuevo",
   "note.searching": "· «{query}»: ya buscado en esta sesión",
-  "note.no_text": "(sin texto)"
+  "note.no_text": "(sin texto)",
+  "agent.speech": "Castellano peninsular. Distingues c/z, y hablas como se habla en España.",
+  "agent.greeting": "[La sesión se abre. El usuario está a la escucha.]"
 }
