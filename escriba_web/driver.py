@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from jaato_sdk import ClientType, IPCClient                      # noqa: E402
+from jaato_sdk import ClientType, IPCClient, IPCRecoveryClient    # noqa: E402
 from jaato_sdk.media_identity import ATTACHMENT_ID_KEY           # noqa: E402
 
 import archive as _archive                                       # noqa: E402
@@ -218,6 +218,18 @@ class NotReady(RuntimeError):
     """A turn was asked for before the session existed."""
 
 
+#: How long one turn may take before it is declared lost.
+#:
+#: NOT A PERFORMANCE LIMIT.  The slowest healthy turn on this path is
+#: about eight seconds; this is three minutes.  It exists because a turn
+#: can HANG rather than fail: on 2026-10-09 the daemon was restarted
+#: under a running backend, and the client sat waiting on a socket
+#: nobody was answering — no exception, no event, `/talk` never
+#: returning, and a page reading "pensando…" until somebody restarted
+#: the service.  A turn that cannot end on its own must end anyway.
+TURN_TIMEOUT = 180.0
+
+
 class Relay:
     """`voice.Tongue` with the speaker taken out.
 
@@ -273,6 +285,8 @@ class Person:
         self._ticker: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
         self._turn_lock = asyncio.Lock()
+        self._opening = asyncio.Lock()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     # -- lifecycle -------------------------------------------------------
     @property
@@ -320,17 +334,101 @@ class Person:
         await self._consolidate()
         held = memory.counts(self.ws)
         self.board.memories(held["curated"], held["raw"])
-        self._stack = IPCClient.session(profile="escriba", agent="escriba", **self.conn)
-        self._scribe = await self._stack.__aenter__()
-        self.archive.identify(self._scribe.session_id,
-                              getattr(self._scribe.client, "client_id", None))
-        self._watcher = enrichment.Observer(self.conn, self.ws, board=self.board)
-        self._watcher.attach(self._scribe.client)
+        async with self._opening:
+            await self._open_session()
         self._ticker = asyncio.create_task(_reconcile(self.board, self.ws, self._stop))
         self.hub.publish("state", self.snapshot())
         await _turn(self._scribe, GREETING, None, self._relay(), log=self.archive.turn,
                     tui=self.board)
         self._settle()
+
+    async def _open_session(self) -> None:
+        """One session on a connection that can come back.
+
+        THE RECOVERING CLIENT, because the daemon is restarted on every
+        framework upgrade and this process is meant to outlive that.
+        Plain `IPCClient` has no reconnect: on 2026-10-09 it held a dead
+        socket and a dead session id across a restart, and two turns were
+        recorded, archived, and delivered to nobody.
+
+        REATTACHMENT IS NOT CONFIGURED, because it cannot be: the
+        facade's `session()` does not accept a `RecoveryConfig`
+        (`open_session() got an unexpected keyword argument 'config'`),
+        so `reattach_session` keeps its default.  The recovery is
+        therefore not trusted to produce a usable session by itself —
+        across a daemon restart the old id may be gone — and two things
+        cover it: a fresh session is opened when the connection returns,
+        and a turn that hangs anyway is bounded by `TURN_TIMEOUT` and
+        reopens the session on its way out.
+
+        `auto_start=False`: on the deployed host the daemon is a
+        root-managed service, and a tenant's web backend must never
+        spawn a second one under its own account.
+        """
+        self._loop = asyncio.get_running_loop()
+        self._stack = IPCRecoveryClient.session(
+            profile="escriba", agent="escriba",
+            auto_start=False,
+            # The generator's own numbers (`jaato-scaffold new client
+            # --recoverable`): the SDK's default connect timeout is 5 s
+            # against a cold autostart of 30-60 s, and the session
+            # confirmation needs room on a shared daemon.
+            connect_timeout=120.0, session_timeout=60.0,
+            on_status_change=self._connection, **self.conn)
+        self._scribe = await self._stack.__aenter__()
+        self.archive.identify(self._scribe.session_id,
+                              getattr(self._scribe.client, "client_id", None))
+        self._watcher = enrichment.Observer(self.conn, self.ws, board=self.board)
+        self._watcher.attach(self._scribe.client)
+
+    def _connection(self, status) -> None:
+        """The transport's state changed, reported from the SDK's thread.
+
+        Hopped onto this loop before anything is touched: everything it
+        affects — the board, the hub, the session — belongs to the loop.
+        """
+        state = getattr(getattr(status, "state", None), "name", None) or str(status)
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(self._connection_changed, state)
+
+    def _connection_changed(self, state: str) -> None:
+        if state in ("RECONNECTING", "DISCONNECTED", "CLOSED"):
+            if self._scribe is not None:
+                self._scribe = None
+                self.board.note("· se ha perdido la conexión con el daemon; "
+                                "reconectando")
+        elif state == "CONNECTED" and self._scribe is None and self._stack is not None:
+            # Back, with a session the daemon no longer knows.  The new
+            # one opens WITHOUT a greeting: nobody asked for one, the
+            # page already holds the conversation, and speaking
+            # unprompted because a service restarted is noise.
+            asyncio.create_task(self._resume())
+
+    async def _resume(self) -> None:
+        async with self._opening:
+            if self._scribe is not None:
+                return
+            try:
+                await self._close_session()
+                await self._open_session()
+            except Exception as exc:                          # noqa: BLE001
+                self.board.note(f"· no pude reabrir la sesión: "
+                                f"{type(exc).__name__}: {str(exc)[:90]}")
+                return
+        self.board.note("· sesión nueva tras el reinicio del daemon")
+        self.hub.publish("state", self.snapshot())
+
+    async def _close_session(self) -> None:
+        """Let go of a session, whether or not the far end still exists."""
+        stack, self._stack, self._scribe = self._stack, None, None
+        if stack is None:
+            return
+        try:
+            await stack.__aexit__(None, None, None)
+        except Exception:                                     # noqa: BLE001
+            pass      # it is already gone; that is why we are here
 
     def declared(self, agent: str) -> dict:
         """What a profile file binds, for an agent with no session yet.
@@ -370,6 +468,20 @@ class Person:
             if any(r["agent"] == agent for r in rows):
                 continue
             rows.append({"agent": agent, "rows": engine_rows(self.declared(agent))})
+        # The transcriber is part of what answers too, even though it is
+        # not an agent and names no profile: it is what turns the
+        # person's own voice into the words on their row, and a reader
+        # comparing a transcript against what they remember saying needs
+        # to know which model read it — `tiny` and `small` are not the
+        # same witness.  Its absence is reported rather than omitted: a
+        # row that simply is not there says nothing about whether
+        # transcription is off or broken.
+        scribe = self.scribe
+        rows.append({"agent": "transcripción", "rows": [
+            {"tier": None,
+             "model": scribe.model_name if scribe else "desactivada",
+             "provider": "faster-whisper · local" if scribe else None,
+             "audible": False, "initial": True}]})
         return rows
 
     def _settle(self) -> None:
@@ -401,9 +513,7 @@ class Person:
             await self._ticker
         if getattr(self, "_watcher", None) is not None:
             await self._watcher.drain()
-        if self._stack is not None:
-            await self._stack.__aexit__(None, None, None)
-            self._stack = self._scribe = None
+        await self._close_session()
         # With the conversation closed and nobody waiting, the curator.
         await self._consolidate()
 
@@ -450,9 +560,21 @@ class Person:
             self._transcribing(self.board.state.entries[-1],
                                said[ATTACHMENT_ID_KEY])
             try:
-                await _turn(self._scribe, "", said, self._relay(),
-                            log=self.archive.turn, tui=self.board)
+                await asyncio.wait_for(
+                    _turn(self._scribe, "", said, self._relay(),
+                          log=self.archive.turn, tui=self.board),
+                    timeout=TURN_TIMEOUT)
                 self._settle()
+            except asyncio.TimeoutError:
+                # Nothing came back and nothing failed.  The recording is
+                # archived either way; what must not happen is the page
+                # waiting on it forever, so the session is dropped and
+                # reopened and the person is told to try again.
+                self.board.note(f"· el turno no respondió en "
+                                f"{int(TURN_TIMEOUT)} s; abro sesión nueva")
+                self._scribe = None
+                asyncio.create_task(self._resume())
+                raise NotReady("el escriba no respondió; inténtalo de nuevo")
             except SessionGone as exc:
                 # NAME THE REASON WE HAVE, not the one that sounds likely.
                 # `SessionGone` covers an RPC closing, a session

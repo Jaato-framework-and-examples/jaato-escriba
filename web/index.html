@@ -1405,6 +1405,8 @@ function mockState() {
         { tier: "escribano", model: "openai/gpt-4o-mini", provider: "openrouter", audible: false, initial: false }] },
       { agent: "documentalista", rows: [
         { tier: null, model: "openai/gpt-4o-mini", provider: "openrouter", audible: false, initial: true }] },
+      { agent: "transcripción", rows: [
+        { tier: null, model: "base", provider: "faster-whisper · local", audible: false, initial: true }] },
     ],
     entries: [
       E(d(3, 19, 2), "said", { seconds: 21, audio: "att_1b90e44c" }),
