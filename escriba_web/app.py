@@ -23,6 +23,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
@@ -37,7 +38,7 @@ import housekeeping as _housekeeping                               # noqa: E402
 import transcribe as _transcribe                                   # noqa: E402
 import workspace as _workspace                                     # noqa: E402
 
-from .driver import Person                                         # noqa: E402
+from .driver import NotReady, Person                               # noqa: E402
 from .hub import frame                                             # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -55,6 +56,14 @@ ATT = re.compile(r"^att_[0-9a-f]{16}$")
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 PEOPLE: Dict[str, Person] = {}
 CONFIG: Dict[str, object] = {}
+
+#: When a person's session last failed to open, and how long their
+#: reconnects are answered with a refusal instead of another attempt.
+#: Long enough that a browser reconnecting every few seconds cannot
+#: start a greeting turn per reconnect; short enough that a daemon
+#: coming back is noticed without anybody reloading.
+FAILED: Dict[str, float] = {}
+RETRY_AFTER = 30.0
 
 #: Set the moment a signal arrives, and watched by every stream.
 #:
@@ -98,6 +107,11 @@ async def person_of(request: Request) -> Person:
     who = principal_of(request)
     person = PEOPLE.get(who)
     if person is None:
+        since = FAILED.get(who)
+        if since is not None and time.monotonic() - since < RETRY_AFTER:
+            raise HTTPException(503, "the escriba could not open a session; "
+                                     "retrying shortly")
+        FAILED.pop(who, None)
         # The readable name the proxy also sends, recorded once beside the
         # workspace so an operator can map a directory to a person.  It is
         # never the directory's name: `sub` is what survives a rename, and
@@ -123,6 +137,14 @@ async def _open(person: Person) -> None:
     try:
         await person.open()
     except Exception as exc:                                  # noqa: BLE001
+        # DROPPED, BUT NOT RETRIED ON SIGHT.  Forgetting the person means
+        # the next request builds another one — and `EventSource`
+        # reconnects every few seconds, so a daemon that is down turns
+        # into a new session, a new greeting turn and a new archive
+        # directory several times a minute, each one paid for.  The
+        # failure is remembered for a moment so the reconnects land on
+        # it instead of on the provider.
+        FAILED[person.principal] = time.monotonic()
         PEOPLE.pop(person.principal, None)
         person.hub.publish("alert", {"kind": "connection",
                                      "detail": f"{type(exc).__name__}: {exc}"[:200]})
@@ -140,16 +162,25 @@ async def events(request: Request) -> StreamingResponse:
 
     async def stream():
         waiting = asyncio.ensure_future(CLOSING.wait())
+        # ONE getter, carried across iterations and never cancelled while
+        # it might be holding something.  Creating a fresh `queue.get()`
+        #每 loop and cancelling it on the keepalive timeout has a window:
+        # an item delivered between the timeout firing and the cancel is
+        # already out of the queue, and cancelling a finished future
+        # drops it.  What would go missing is one event, and the one that
+        # matters most is `status` — lose the `listening` that ends a
+        # turn and the page says "pensando…" forever while the server
+        # believes it answered.
+        nxt = asyncio.ensure_future(queue.get())
         try:
             while not CLOSING.is_set():
-                nxt = asyncio.ensure_future(queue.get())
                 done, _ = await asyncio.wait({nxt, waiting},
                                              timeout=20,
                                              return_when=asyncio.FIRST_COMPLETED)
                 if nxt in done:
                     yield nxt.result()
+                    nxt = asyncio.ensure_future(queue.get())
                 else:
-                    nxt.cancel()
                     if CLOSING.is_set():
                         break
                     # A comment keeps the connection warm through a proxy
@@ -159,6 +190,7 @@ async def events(request: Request) -> StreamingResponse:
                     break
         finally:
             waiting.cancel()
+            nxt.cancel()
             person.hub.drop(queue)
             # Told, not dropped.  `EventSource` reconnects by itself and
             # is answered with a fresh snapshot, so the page recovers
@@ -189,16 +221,26 @@ async def talk(request: Request, audio: UploadFile) -> StreamingResponse:
         # and a recording archived, and dropping it mid-audio would lose
         # all of that to save a second of restart.  What the shutdown
         # changes is that nothing NEW is accepted.
-        if CLOSING.is_set():
-            yield frame("alert", {"kind": "session",
-                                  "detail": "el escriba se está reiniciando; "
-                                            "inténtalo de nuevo en un momento"})
-            return
+        # EVERY PATH ENDS WITH A STATUS, including the ones that fail.
+        # The page sets "pensando…" when it starts the upload, and only a
+        # status from the server takes it off again.  A turn that ended
+        # with an alert and no status left the pill thinking forever — a
+        # person looking at an escriba that had already given up, with no
+        # way to tell that from one still working.  The alert says what
+        # went wrong; the status says it is over.
         try:
+            if CLOSING.is_set():
+                yield frame("alert", {"kind": "session",
+                                      "detail": "el escriba se está reiniciando; "
+                                                "inténtalo de nuevo en un momento"})
+                return
             await person.talk(blob)
-            yield frame("status", person.board.status())
+        except NotReady as exc:
+            yield frame("alert", {"kind": "waking", "detail": str(exc)})
         except Exception as exc:                      # noqa: BLE001
             yield frame("alert", {"kind": "connection", "detail": str(exc)[:200]})
+        finally:
+            yield frame("status", person.board.status())
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 

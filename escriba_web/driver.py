@@ -214,6 +214,10 @@ def wiki_references() -> Dict[str, Any]:
     return dict(WIKI_UNWIRED)
 
 
+class NotReady(RuntimeError):
+    """A turn was asked for before the session existed."""
+
+
 class Relay:
     """`voice.Tongue` with the speaker taken out.
 
@@ -420,7 +424,15 @@ class Person:
         """
         async with self._turn_lock:
             if self._scribe is None:
-                raise RuntimeError("the session is not open")
+                # NOT A FAULT, AND IT SHOULD NOT READ LIKE ONE.  Opening
+                # takes a consolidation pass, a session and a greeting —
+                # tens of seconds on a cold daemon — and the page is up
+                # and usable throughout, so a press during that window is
+                # the most ordinary thing a person can do.  It was
+                # reported as a connection failure, which sends somebody
+                # to look at the network.
+                raise NotReady("el escriba todavía está despertando; "
+                               "inténtalo de nuevo en unos segundos")
             data = await asyncio.to_thread(voice._to_mp3, blob)
             seconds = len(data) / 4000.0      # 32 kbit/s mono, by construction
             said = {"mime_type": voice.UTTERANCE_MIME, "data": data,

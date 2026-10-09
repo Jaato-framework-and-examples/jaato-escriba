@@ -513,6 +513,7 @@ const ALERTS = {
     "El navegador sólo entrega el micrófono en un origen seguro: https, o " +
     "localhost en esta misma máquina. Esta página se ha abierto por http " +
     "desde otro equipo, así que no hay permiso que conceder."],
+  waking: (d) => ["Un momento", d.detail || "el escriba todavía está despertando."],
   restarting: (d) => ["Reconectando", `${d.reason}. La página se reconecta sola.`],
   connection: (d) => d.had
     ? ["Sin conexión", "Se ha perdido la conexión con el escriba. Reintentando…"]
@@ -1236,7 +1237,14 @@ async function send() {
     // server knows it.
     await readStream(res, onEvent);
   } catch (err) {
-    raise("connection");
+    // The upload itself failed, so no turn is running and nothing on the
+    // server will correct the optimistic "pensando…" this function set.
+    // Saying the connection failed while the pill claims the escriba is
+    // thinking describes two different situations at once.
+    S.status = { status: "listening", query: null };
+    renderPills();
+    pttFace();
+    raise("connection", { had: S.everConnected });
   }
 }
 

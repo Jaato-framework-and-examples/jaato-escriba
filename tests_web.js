@@ -256,6 +256,21 @@ refs = showRefs();
 check("an unwired wiki says so", refs.includes("no hay ninguna fuente MCP"), true);
 T.S.tab = "memoria"; T.renderPanel();
 
+// ------------------------------------------------ a turn that ends badly
+// The page sets "pensando…" itself when the upload starts, and only a
+// status from the server takes it off.  A turn that ended with an alert
+// and no status left the pill thinking forever — an escriba that had
+// already given up, indistinguishable from one still working.
+T.onEvent("status", { status: "thinking", query: null });
+check("the pill is thinking", T.S.status.status, "thinking");
+T.onEvent("alert", { kind: "waking", detail: "todavía está despertando" });
+T.onEvent("status", { status: "listening", query: null });
+check("a failed turn still ends the status", T.S.status.status, "listening");
+check("and the reason is shown",
+      byId.get("alert-slot").textContent.includes("despertando"), true);
+check("as waking, not as a fault",
+      byId.get("alert-slot").textContent.includes("conexión"), false);
+
 // ------------------------------------------ the person's own words
 // The transcript arrives AFTER the row is drawn — the recording is
 // transcribed beside the turn — so it takes the same patch-by-id path a
