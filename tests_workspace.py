@@ -120,6 +120,25 @@ try:
 finally:
     shutil.rmtree(root, ignore_errors=True)
 
+# ONE STORE, NAMED THE SAME WAY BY EVERY AGENT THAT TOUCHES IT.  These
+# paths are a contract between the agent that writes memories and the
+# ones that read them, and nothing in the framework checks it: a profile
+# pointing at a store nobody writes is valid, loads cleanly, and answers
+# "no memories" forever.  It happened — the escriba was moved to the
+# plugin's default path and the curator was left on the old one, so the
+# scribe wrote to `.jaato/memories`, the curator read
+# `.jaato/memory/escriba`, and a person's whole conversation was
+# consolidated into nothing.
+import yaml as _yaml
+stores = {}
+for prof in sorted((w.TEMPLATE / ".jaato" / "profiles").glob("*.yaml")):
+    cfg = (_yaml.safe_load(prof.read_text()) or {}).get("plugin_configs") or {}
+    mem = cfg.get("memory") or {}
+    if "storage_path" in mem:
+        stores[prof.stem] = (mem["storage_path"], mem.get("global_storage_path"))
+check("more than one agent uses the store", len(stores) > 1, True)
+check(f"they all name the same one {stores}", len(set(stores.values())), 1)
+
 # A template that cannot say which set to use is refused BEFORE anything
 # is copied: a half-provisioned workspace that looks complete and cannot
 # open a session is worse than a refusal naming the reason.

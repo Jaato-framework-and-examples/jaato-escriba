@@ -95,8 +95,19 @@ plugin_configs:
   memory:
     # Same store as the scribe — it is documenting THAT brain — and the
     # same reason for redirecting the global tier: see _base_escriba.
-    storage_path: .jaato/memory/escriba
-    global_storage_path: .jaato/memory/escriba-global
+    # ONE STORE, AND EVERY AGENT MUST NAME THE SAME ONE.  These paths are
+    # a contract between the agent that writes and the agents that read,
+    # and on 2026-10-09 half of it moved: the escriba went to the
+    # plugin's own default and this file stayed on the old name, so the
+    # scribe wrote to `.jaato/memories` and the curator read
+    # `.jaato/memory/escriba` and found nothing.  Measured afterwards on
+    # a real workspace: 2 raw, 0 curated, the curator answering "no se
+    # encontraron memorias en crudo" with two of them on disk — and from
+    # the person's side, an escriba that remembered nothing they had
+    # said.  `tests_workspace.py` now refuses a template whose agents
+    # disagree about where the store is.
+    storage_path: .jaato/memories
+    global_storage_path: .jaato/memories-global
     # Read-only in practice: `store_memory` is not in its tool list. The
     # gate is here too so a future edit cannot quietly grant it.
     allowed_scopes: ["project"]

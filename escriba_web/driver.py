@@ -41,7 +41,7 @@ import memory                                                    # noqa: E402
 import voice                                                     # noqa: E402
 import yaml                                                      # noqa: E402
 import workspace as _workspace                                   # noqa: E402
-from run_escriba import GREETING, SessionGone, _reconcile, _turn  # noqa: E402
+from run_escriba import DRAIN, GREETING, SessionGone, _reconcile, _turn  # noqa: E402
 
 from .hub import Hub                                             # noqa: E402
 
@@ -239,14 +239,44 @@ class Person:
         return dict(workspace_path=str(self.ws), env_file=str(self.ws / ".env"),
                     config_root=str(self.ws / ".jaato"), client_type=ClientType.API)
 
+    async def _consolidate(self) -> None:
+        """Turn what was said into what will be remembered.
+
+        WITHOUT THIS THE CONVERSATION IS NOT KEPT.  The scribe stores a
+        memory raw; the curator is what judges it and writes
+        `curated.jsonl`, and the next session's inventory is rendered
+        from the store when the session is CREATED.  The terminal
+        driver's last act is this, and the web driver's was nothing —
+        measured on a real workspace after a real conversation: 2 raw, 0
+        curated, so the escriba woke up knowing none of it.
+
+        Run at BOTH ends, which is the terminal driver's arrangement and
+        is not redundant: at close it costs nobody anything, and at open
+        it catches the shutdown that never happened — a killed process, a
+        crash, a machine that went to sleep.  Conditional on there being
+        something, because unconditional it is seconds of silence to do
+        nothing.
+        """
+        pending = memory.uncurated_count(self.ws)
+        if not pending:
+            return
+        self.board.note(f"· {pending} memorias en crudo — consolidando")
+        async with IPCClient.session(profile="curator", agent="curator",
+                                     **self.conn) as curator:
+            await curator.ask(DRAIN)
+        held = memory.counts(self.ws)
+        self.board.memories(held["curated"], held["raw"])
+        self.board.note("· consolidado")
+
     async def open(self) -> None:
         """Open the session and start the clock on this conversation.
 
-        The uncurated drain that the terminal driver runs before greeting
-        is deliberately NOT here: it blocks for seconds and the browser is
-        already on screen waiting. It belongs to `close`, where the same
-        work costs nobody anything.
+        The drain runs BEFORE the scribe opens, exactly as the terminal
+        driver does it and for its reason: the inventory is rendered when
+        the session is created, so this is the only moment that can get
+        last time's memories into today's greeting.
         """
+        await self._consolidate()
         held = memory.counts(self.ws)
         self.board.memories(held["curated"], held["raw"])
         self._stack = IPCClient.session(profile="escriba", agent="escriba", **self.conn)
@@ -312,6 +342,8 @@ class Person:
         if self._stack is not None:
             await self._stack.__aexit__(None, None, None)
             self._stack = self._scribe = None
+        # With the conversation closed and nobody waiting, the curator.
+        await self._consolidate()
 
     # -- a turn ----------------------------------------------------------
     async def talk(self, blob: bytes) -> None:
