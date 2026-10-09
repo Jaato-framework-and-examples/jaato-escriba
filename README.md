@@ -686,6 +686,7 @@ in every person's directory.
 | `.jaato/profiles/` | Provider-agnostic `_base_*` plus the `openrouter_gpt_audio` set. |
 | `workspace.py` | One root, one directory per person, provisioned from `template/` on first authentication. |
 | `housekeeping.py` | Prunes each person's recordings to the disk ceiling without reaching inside the retention floor the profile declared. `python -m housekeeping --root … --budget-file …`. |
+| `web/index.html` | The web front end: one static page, no build step. Plain DOM like the peer's, with React loaded for one job — markdown a subagent wrote, rendered without raw HTML. `?mock=1` renders the design's fixtures and talks to no backend. |
 | `template/` | What a new workspace is made of. Copied, never shared: the workspace is the isolation boundary. |
 | `tests_render.py`, `tests_terminal.py`, `tests_workspace.py`, `tests_housekeeping.py` | Every render path at four sizes; the terminal handover on a pty; provisioning and what must never leak between people; the two retention clocks and what the ceiling may never delete. All headless. |
 

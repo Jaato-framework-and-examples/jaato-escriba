@@ -1,0 +1,1215 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>escriba</title>
+<!--
+  ONE FILE, NO BUILD STEP, and the reasons are the peer's rather than ours:
+  `kbwiki` serves a single static page whose backend is the only SDK client,
+  and this mirrors it so two deployments on one box are maintained the same
+  way.  Two consequences worth saying out loud:
+
+  PLAIN DOM, NOT A REACT APP.  The design spec assumed React throughout;
+  kbwiki does not do that, and it is the stack this was told to mirror.  It
+  renders DOM directly and loads React for ONE thing — `react-markdown`,
+  which emits no raw HTML, so markdown a model wrote cannot become active
+  markup.  That is the document reader below, and nothing else needs it.
+
+  THE TOKENS ARE kbwiki's, NOT THE MOCK'S.  The mock's values were marked as
+  estimates and several were materially off (`--bad` #C2342B against the real
+  #B42318, `--wait` #9A5B00 against #8A5200).  These are copied from
+  `kbwiki/ui/static/index.html`, keeping its names, so a reader moving between
+  the two apps sees one palette.  `--on-strong` is ours: kbwiki has no filled
+  accent button to put text on.
+
+  `?mock=1` renders the design's own fixtures and talks to no backend.  It is
+  how the page is reviewed against the mock before a session exists, and it is
+  an explicit flag rather than a fallback: without it the page uses the real
+  endpoints and says so when they are not there.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  /* spacing, from the mock */
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-6:24px; --space-8:32px;
+  /* colour, from kbwiki/ui/static/index.html — its names, its values */
+  --bg:#F3F4F6; --panel:#FFFFFF; --line:#E3E5EA; --line-strong:#D5D9E0; --ink:#151922; --ink-2:#3A4150;
+  --muted:#5B6372; --accent:#2F4FC9; --accent-ink:#1F3797; --accent-soft:#E8ECFB; --accent-tint:#F6F8FE;
+  --wait:#8A5200; --wait-soft:#FBF1DF; --ok:#1E7348; --ok-soft:#E3F2EA; --bad:#B42318; --bad-soft:#FCE8E6;
+  --chip:#EEF1F7;
+  --on-strong:#FFFFFF;
+  --font:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --drawer-shadow:-4px 0 16px rgba(0,0,0,.12);
+  color-scheme:light;
+}
+/* dark: the system's preference unless the reader chose light, or the reader's own choice */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#11151C; --panel:#181E27; --line:#2A3240; --line-strong:#364052; --ink:#E6E9EF; --ink-2:#C3C9D4;
+    --muted:#98A2B5; --accent:#7B9CFF; --accent-ink:#B9C8FF; --accent-soft:#222C4A; --accent-tint:#1C2336;
+    --wait:#F0B45A; --wait-soft:#3A2A12; --ok:#5BC48E; --ok-soft:#16301F; --bad:#FF8A80; --bad-soft:#3A1A18;
+    --chip:#222A36; --on-strong:#11151C; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#11151C; --panel:#181E27; --line:#2A3240; --line-strong:#364052; --ink:#E6E9EF; --ink-2:#C3C9D4;
+  --muted:#98A2B5; --accent:#7B9CFF; --accent-ink:#B9C8FF; --accent-soft:#222C4A; --accent-tint:#1C2336;
+  --wait:#F0B45A; --wait-soft:#3A2A12; --ok:#5BC48E; --ok-soft:#16301F; --bad:#FF8A80; --bad-soft:#3A1A18;
+  --chip:#222A36; --on-strong:#11151C; color-scheme:dark;
+}
+:root[data-theme="light"]{color-scheme:light}
+
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--font)}
+a{color:var(--accent)} a:hover{color:var(--accent-ink)}
+button{font-family:inherit}
+button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.page{height:100vh;display:grid;grid-template-rows:auto auto minmax(0,1fr)}
+
+/* ---------------------------------------------------------------- header */
+header{background:var(--panel);display:flex;flex-wrap:wrap;align-items:stretch;border-bottom:1px solid var(--line)}
+.brand{flex:0 0 auto;padding:var(--space-3) var(--space-4);display:flex;flex-direction:column;justify-content:center;
+       border-right:1px solid var(--line)}
+.brand .name{font-weight:600;font-size:18px;display:flex;align-items:center;gap:var(--space-2)}
+.brand .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.brand .sub{font-size:12px;color:var(--muted)}
+.pills{flex:1 1 520px;display:grid;grid-template-columns:repeat(4,minmax(max-content,1fr));gap:var(--space-2);
+       padding:10px var(--space-3);align-items:center}
+.pill{padding:6px var(--space-3);border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--muted);
+      display:flex;flex-direction:column;justify-content:center;gap:1px;min-width:0;min-height:48px}
+.pill .label{display:flex;align-items:center;gap:var(--space-2);font-weight:600;font-size:clamp(13px,1.3vw,16px)}
+.pill .label span.t{white-space:nowrap}
+.pill .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--line-strong)}
+.pill .sub{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.85;min-height:16px}
+.pill.on-accent{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}
+.pill.on-accent .dot{background:var(--accent)}
+.pill.on-wait{background:var(--wait-soft);border-color:var(--wait);color:var(--wait)}
+.pill.on-wait .dot{background:var(--wait)}
+.pill.on-ok{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+.pill.on-ok .dot{background:var(--ok)}
+.pill.on-bad{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+.pill.on-bad .dot{background:var(--bad)}
+.hright{display:flex;align-items:center;padding:0 var(--space-4);gap:var(--space-2);margin-left:auto}
+.hright .k{font-size:12px;color:var(--muted)}
+.hright .v{font-size:12px;padding:2px 10px;border-radius:999px;background:var(--chip);color:var(--ink-2)}
+.hbtn{height:32px;padding:0 var(--space-3);border-radius:8px;border:1px solid var(--line);background:var(--panel);
+      color:var(--ink-2);font-size:12px;cursor:pointer;white-space:nowrap}
+.hbtn:hover{border-color:var(--line-strong)}
+.hbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}
+
+/* ----------------------------------------------------------------- alert */
+.alert{display:flex;align-items:center;gap:var(--space-4);padding:var(--space-3) var(--space-6);
+       background:var(--bad-soft);color:var(--bad);border-bottom:1px solid var(--bad)}
+.alert .title{font-weight:600;font-size:16px}
+.alert .body{font-size:14px;flex:1;min-width:0;color:var(--ink)}
+.alert button{background:var(--panel);border:1px solid var(--bad);color:var(--bad);padding:6px var(--space-3);
+              border-radius:8px;font-weight:500;cursor:pointer}
+
+main{display:grid;grid-template-columns:clamp(120px,16vw,220px) minmax(0,1fr) clamp(240px,28vw,400px);min-height:0}
+
+/* ------------------------------------------------------------------ days */
+nav{border-right:1px solid var(--line);overflow:auto;display:flex;flex-direction:column}
+nav .head{padding:var(--space-4) var(--space-4) var(--space-2);font-size:12px;font-weight:700;text-transform:uppercase;
+          letter-spacing:.06em;color:var(--muted)}
+nav button{display:block;text-align:left;padding:var(--space-3) var(--space-4);border:0;border-top:1px solid var(--line);
+           background:transparent;color:var(--ink);cursor:pointer;width:100%}
+nav button:hover{background:var(--chip)}
+nav button.on{background:var(--accent-soft);color:var(--accent-ink)}
+nav button.archived{color:var(--muted);cursor:default}
+nav button.archived:hover{background:transparent}
+nav button .l{display:flex;flex-direction:column;gap:2px;min-width:0}
+nav button .label{font-weight:600;font-size:15px}
+nav button .meta{font-size:12px;opacity:.8}
+nav .note{margin-top:auto;padding:var(--space-4);font-size:12px;line-height:1.45;color:var(--muted);
+          border-top:1px solid var(--line)}
+nav .note code{font-family:var(--mono)}
+
+/* ------------------------------------------------------------ transcript */
+.mid{display:grid;grid-template-rows:minmax(0,1fr) auto;min-height:0;min-width:0;position:relative}
+.scroll{overflow:auto;padding:0 clamp(16px,2.5vw,32px) var(--space-8)}
+.dayhead{position:sticky;top:0;z-index:1;background:var(--bg);display:flex;align-items:baseline;gap:var(--space-3);
+         padding:var(--space-6) 0 var(--space-2);border-bottom:1px solid var(--line)}
+.dayhead .label{font-weight:600;font-size:20px}
+.dayhead .date{font-size:13px;color:var(--muted)}
+.row{display:grid;grid-template-columns:52px minmax(0,1fr);gap:var(--space-4);padding:var(--space-4) 0;
+     border-bottom:1px solid var(--line)}
+.row .at{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;padding-top:3px}
+.row .body{min-width:0}
+.said{display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap}
+.said .who{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.bar{display:flex;align-items:center;gap:var(--space-3);height:34px;padding:0 var(--space-3);
+     border:1px solid var(--line-strong);border-radius:999px;background:var(--panel);color:var(--ink);cursor:pointer;
+     max-width:100%;position:relative;overflow:hidden}
+.bar:hover{background:var(--chip)}
+.bar .prog{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--accent-soft)}
+.bar .glyph,.bar .dur{position:relative}
+.bar .dur{font-weight:700;font-size:14px;font-variant-numeric:tabular-nums}
+.spoke{display:flex;flex-direction:column;gap:var(--space-2);padding-left:var(--space-4);
+       border-left:3px solid var(--accent)}
+.spoke.sounding{border-left-color:var(--ok)}
+.spoke p{margin:0;font-size:18px;line-height:1.5;text-wrap:pretty;max-width:68ch}
+.spoke .meta{display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap;font-size:13px}
+.listen{display:flex;align-items:center;gap:var(--space-2);padding:3px 10px;border:1px solid var(--line-strong);
+        border-radius:999px;background:var(--panel);color:var(--ink-2);font-weight:500;font-size:13px;cursor:pointer}
+.listen:hover{background:var(--chip)}
+.listen.sounding{background:var(--ok-soft);color:var(--ok)}
+.tag{font-size:12px;padding:2px 10px;border-radius:999px}
+.tag.wait{background:var(--wait-soft);color:var(--wait)}
+.tag.bad{background:var(--bad-soft);color:var(--bad);font-weight:500}
+.tag.accent{background:var(--accent-soft);color:var(--accent-ink);font-weight:500}
+.tag.neutral{background:var(--chip);color:var(--ink-2)}
+.anotado{display:flex;gap:var(--space-3);align-items:baseline;flex-wrap:wrap}
+.anotado .text{font-size:15px;line-height:1.45}
+.note-row{display:flex;gap:var(--space-3);align-items:baseline;flex-wrap:wrap;font-family:var(--mono);font-size:13px;
+          color:var(--muted)}
+.note-row .x{background:var(--wait-soft);color:var(--wait);padding:1px 8px;border-radius:999px;font-weight:500}
+.audit{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.jump{position:absolute;left:50%;transform:translateX(-50%);bottom:96px;z-index:2;border:1px solid var(--accent);
+      background:var(--accent);color:var(--on-strong);border-radius:999px;padding:6px var(--space-4);font-size:13px;
+      font-weight:500;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+
+/* --------------------------------------------------------------- push to talk */
+.tray{border-top:1px solid var(--line);padding:var(--space-3) clamp(16px,2.5vw,32px);background:var(--panel)}
+.ptt{width:100%;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:var(--space-4);
+     padding:var(--space-4) var(--space-6);border:1px solid var(--accent);border-radius:12px;background:var(--accent);
+     color:var(--on-strong);cursor:pointer;text-align:left;user-select:none;touch-action:none}
+.ptt .t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ptt .title{font-weight:600;font-size:clamp(18px,2.2vw,30px);letter-spacing:-.01em;line-height:1.1}
+.ptt .sub{font-size:14px;opacity:.9}
+.ptt .time{font-weight:600;font-size:clamp(24px,3vw,40px);font-variant-numeric:tabular-nums}
+.ptt.rec{background:var(--bad);border-color:var(--bad);color:var(--on-strong)}
+.ptt.idle-speaking{background:var(--panel);border-color:var(--line-strong);color:var(--ink)}
+.ptt:disabled{background:var(--chip);border-color:var(--line);color:var(--muted);cursor:not-allowed}
+
+/* ------------------------------------------------------------- knowledge */
+aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
+      grid-template-rows:auto auto minmax(0,1fr);min-height:0}
+.counts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-bottom:1px solid var(--line)}
+.counts .cell{padding:var(--space-3);border-right:1px solid var(--line);border-bottom:1px solid var(--line);
+              display:flex;flex-direction:column;gap:2px;min-width:0}
+.counts .label,.counts .hint{font-size:12px;color:var(--muted)}
+.counts .n{display:flex;align-items:baseline;gap:var(--space-2)}
+.counts .v{font-weight:600;font-size:clamp(22px,2.2vw,30px);font-variant-numeric:tabular-nums}
+.counts .d{font-size:13px;font-weight:600}
+.tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-bottom:1px solid var(--line)}
+.tabs button{padding:var(--space-2) var(--space-3);border:0;border-right:1px solid var(--line);background:transparent;
+             color:var(--ink-2);font-weight:600;font-size:13px;text-align:left;cursor:pointer;display:flex;
+             flex-direction:column;gap:1px;min-width:0}
+.tabs button.on{background:var(--accent-soft);color:var(--accent-ink)}
+.tabs button .n{font-weight:400;font-size:12px;opacity:.8}
+.list{overflow:auto;min-height:0}
+.list .item{width:100%;display:flex;flex-direction:column;gap:var(--space-1);text-align:left;
+            padding:var(--space-3) var(--space-4);border:0;border-bottom:1px solid var(--line);background:transparent;
+            color:var(--ink);cursor:pointer}
+.list .item:hover{background:var(--accent-tint)}
+.list .item .text{font-size:14px;line-height:1.4;font-weight:600}
+.list .item .meta{font-size:12px;color:var(--muted)}
+.detail{padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-4)}
+.detail .back{align-self:flex-start;border:0;background:transparent;color:var(--accent);font-size:13px;padding:0;
+              cursor:pointer}
+.detail .title{font-weight:600;font-size:20px;line-height:1.25}
+.detail p{margin:0;font-size:15px;line-height:1.55}
+.detail .tags{display:flex;gap:var(--space-2);flex-wrap:wrap}
+.detail .two{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line)}
+.detail .two .a{padding:var(--space-3) var(--space-3) var(--space-3) 0;border-right:1px solid var(--line)}
+.detail .two .b{padding:var(--space-3)}
+.detail .two .k{font-size:12px;color:var(--muted)}
+.detail .two .v{font-weight:600;font-size:22px}
+.detail .track{height:6px;border-radius:3px;background:var(--chip);margin-top:6px}
+.detail .track .fill{height:6px;border-radius:3px;background:var(--accent)}
+.detail .mono{font-family:var(--mono);font-size:12px;color:var(--muted);word-break:break-all}
+.primary{align-self:flex-start;height:36px;padding:0 14px;border-radius:8px;border:1px solid var(--accent);
+         background:var(--accent);color:var(--on-strong);font-weight:500;cursor:pointer}
+
+/* ----------------------------------------------------------- doc reader */
+.scrim{position:fixed;inset:0;background:color-mix(in srgb,#000 45%,transparent);display:flex;justify-content:flex-end;
+       z-index:10}
+.sheet{width:min(760px,100%);height:100%;overflow:auto;background:var(--bg);border-left:1px solid var(--line);
+       box-shadow:var(--drawer-shadow)}
+.sheet .top{position:sticky;top:0;background:var(--bg);display:flex;align-items:center;gap:var(--space-4);
+            padding:var(--space-4) var(--space-8);border-bottom:1px solid var(--line)}
+.sheet .top .path{font-family:var(--mono);font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+                  white-space:nowrap}
+.sheet .top .who{font-size:12px;color:var(--muted)}
+.md{padding:var(--space-8);max-width:68ch}
+.md>*{margin:0 0 var(--space-4)}
+.md h1{font-weight:600;font-size:36px;line-height:1.1;letter-spacing:-.01em}
+.md h2{font-weight:600;font-size:22px;padding-top:var(--space-3);border-top:1px solid var(--line);
+        margin-top:var(--space-4)}
+.md h3{font-weight:600;font-size:18px}
+.md p,.md li{font-size:17px;line-height:1.6;text-wrap:pretty}
+.md ul,.md ol{padding-left:var(--space-6)}
+.md li::marker{color:var(--accent)}
+.md code{font-family:var(--mono);font-size:14px;background:var(--chip);padding:1px 5px;border-radius:4px}
+.md pre{font-family:var(--mono);font-size:14px;background:var(--chip);padding:var(--space-4);border-radius:8px;
+        overflow:auto}
+.md pre code{background:transparent;padding:0}
+.md a{word-break:break-word}
+.md table{border-collapse:collapse;width:100%;font-size:15px}
+.md th,.md td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="brand">
+      <div class="name"><span class="dot"></span>escriba</div>
+      <div class="sub" id="session-at">sesión —</div>
+    </div>
+    <div class="pills" id="pills" aria-live="polite"></div>
+    <div class="hright" id="hright" title="">
+      <span class="k">audio en</span><span class="v" id="playback-where">navegador</span>
+      <button class="hbtn" id="audit-btn" aria-pressed="false" title="mostrar ids de audio">ids</button>
+      <button class="hbtn" id="theme-btn" title="tema">tema: sistema</button>
+    </div>
+  </header>
+
+  <div id="alert-slot"></div>
+
+  <main>
+    <nav>
+      <div class="head">Días</div>
+      <div id="days"></div>
+      <div class="note">La vista guarda las últimas 400 entradas. Los días anteriores se leen del manifiesto en
+        <code>audio/</code>.</div>
+    </nav>
+
+    <section class="mid">
+      <div class="scroll" id="scroll"></div>
+      <button class="jump" id="jump" hidden>nuevas entradas ↓</button>
+      <div class="tray">
+        <button class="ptt" id="ptt" aria-pressed="false">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="square" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><path d="M12 19v3"></path>
+          </svg>
+          <span class="t"><span class="title" id="ptt-title">Mantén pulsado para hablar</span>
+            <span class="sub" id="ptt-sub">O mantén la barra ESPACIO</span></span>
+          <span class="time" id="ptt-time"></span>
+        </button>
+      </div>
+    </section>
+
+    <aside>
+      <div class="counts" id="counts"></div>
+      <div class="tabs" id="tabs"></div>
+      <div class="list" id="panel"></div>
+    </aside>
+  </main>
+</div>
+
+<div id="reader-slot"></div>
+<audio id="player" hidden></audio>
+
+<!-- React is here for ONE job: markdown a subagent wrote, rendered without raw HTML.
+     The same import lines and versions as kbwiki, so both pages pull one copy. -->
+<script type="module">
+import React from "https://esm.sh/react@19.2.0";
+import { createRoot } from "https://esm.sh/react-dom@19.2.0/client";
+import Markdown from "https://esm.sh/react-markdown@10.1.0?deps=react@19.2.0";
+import remarkGfm from "https://esm.sh/remark-gfm@4.0.1";
+const roots = new WeakMap();
+window.renderMarkdown = (el, text) => {
+  if (!roots.has(el)) roots.set(el, createRoot(el));
+  roots.get(el).render(React.createElement(Markdown, { remarkPlugins: [remarkGfm] }, text));
+};
+</script>
+
+<script>
+"use strict";
+const MOCK = new URLSearchParams(location.search).has("mock");
+
+// ---------------------------------------------------------------- state
+// One object, read by the render functions and written by the hub. Entries
+// are kept BOTH ordered and by id: order draws the transcript, and the id
+// is what a late audio ref, a streamed token or a `repeats` bump arrives
+// against. Position cannot stand in for it — the window drops its oldest
+// entry at 400, so every index shifts under a reader looking at an older row.
+const S = {
+  order: [], byId: new Map(),
+  counts: {}, items: { memoria: [], referencias: [], documentos: [] }, days: [],
+  status: { status: "listening", query: null },
+  session_at: null, archive_dir: null, playback: "navegador",
+  tab: "memoria", sel: null, reader: false,
+  recording: false, rec: 0, playing: null, failed: null,
+  alert: null, dismissed: null, connected: true,
+  activeDay: null, progSec: 0,
+  theme: localStorage.getItem("escriba-theme") || "auto",
+  showIds: localStorage.getItem("escriba-audit") === "1",
+  micReason: null,
+};
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+};
+const mmss = (s) => Math.floor((s || 0) / 60) + ":" + String(Math.floor((s || 0) % 60)).padStart(2, "0");
+const hhmm = (iso) => {
+  const d = new Date(iso);
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+};
+// LOCAL date, not UTC. `toISOString()` would file a 00:30 turn under
+// yesterday anywhere east of Greenwich, and the days column is about the
+// person's own evening rather than the server's clock. `/days` sends the
+// same local YYYY-MM-DD, read off the manifest in the workspace's timezone.
+const dayKey = (iso) => {
+  const d = new Date(iso);
+  return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, "0"),
+          String(d.getDate()).padStart(2, "0")].join("-");
+};
+
+const WEEK = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+const MONTH = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
+               "octubre", "noviembre", "diciembre"];
+function dayName(key) {
+  const d = new Date(key + "T00:00:00");
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = Math.round((today - d) / 86400000);
+  if (days === 0) return "hoy";
+  if (days === 1) return "ayer";
+  if (days < 7) return WEEK[d.getDay()];
+  return MONTH[d.getMonth()];
+}
+const dayDate = (key) => {
+  const d = new Date(key + "T00:00:00");
+  return d.getDate() + " " + MONTH[d.getMonth()].slice(0, 3);
+};
+
+// ---------------------------------------------------------------- theme
+function applyTheme() {
+  const r = document.documentElement;
+  if (S.theme === "auto") r.removeAttribute("data-theme"); else r.setAttribute("data-theme", S.theme);
+  $("theme-btn").textContent = "tema: " + { auto: "sistema", light: "claro", dark: "oscuro" }[S.theme];
+}
+$("theme-btn").onclick = () => {
+  S.theme = { auto: "light", light: "dark", dark: "auto" }[S.theme];
+  localStorage.setItem("escriba-theme", S.theme);
+  applyTheme();
+};
+$("audit-btn").onclick = () => {
+  S.showIds = !S.showIds;
+  localStorage.setItem("escriba-audit", S.showIds ? "1" : "0");
+  $("audit-btn").setAttribute("aria-pressed", String(S.showIds));
+  renderTranscript();
+};
+
+// ---------------------------------------------------------------- pills
+// Four, always rendered, exactly one active. The active one is the hub's
+// `status` and never derived from the entries: a view that inferred
+// "speaking" from an entry having audio would light it while the file sat
+// unplayed, which is the confusion the TUI had.
+const PILLS = [
+  { k: "listening", label: "escuchando" },
+  { k: "thinking", label: "pensando…" },
+  { k: "speaking", label: "hablando" },
+  { k: "searching", label: "buscando" },
+];
+function pillTone(k) {
+  if (k === "listening") return S.recording ? "bad" : "accent";
+  return { thinking: "wait", speaking: "ok", searching: "accent" }[k];
+}
+function pillSub(k) {
+  if (k === "listening") return S.recording ? "micrófono abierto" : "tu turno";
+  if (k === "thinking") {
+    const waiting = S.order.some((id) => {
+      const e = S.byId.get(id);
+      return e.kind === "spoke" && e.text && !e.audio;
+    });
+    return waiting ? "texto listo, audio en camino" : "escriba";
+  }
+  if (k === "speaking") {
+    const e = S.playing ? S.byId.get(S.playing) : null;
+    return e && e.audio ? "sonando " + e.audio : "sonando";
+  }
+  return S.status.query ? "«" + S.status.query + "»" : "";
+}
+function renderPills() {
+  const box = $("pills");
+  box.textContent = "";
+  for (const p of PILLS) {
+    const on = p.k === S.status.status;
+    const n = el("div", "pill" + (on ? " on-" + pillTone(p.k) : ""));
+    const label = el("div", "label");
+    label.append(el("span", "dot"), el("span", "t", p.label));
+    n.append(label, el("div", "sub", on ? pillSub(p.k) : ""));
+    box.append(n);
+  }
+  $("session-at").textContent = "sesión " + (S.session_at ? hhmm(S.session_at) : "—");
+  $("hright").title = S.archive_dir ? "audio/" + S.archive_dir : "";
+  $("playback-where").textContent = S.playback;
+}
+
+// ---------------------------------------------------------------- alert
+// "Silence is the failure mode": every path that can fail quietly ends up
+// here, because an audio UI that stops working without saying so looks
+// exactly like an audio UI waiting for you to speak.
+const ALERTS = {
+  budget: (d) => ["Sesión terminada",
+    `Se alcanzó el límite de presupuesto de la sesión a las ${d.at || "—"}. Lo dicho hasta aquí está guardado.`],
+  mic: () => ["Micrófono silenciado",
+    "El navegador no recibe sonido. Revisa el permiso o el interruptor del micrófono."],
+  playback: (d) => ["Fallo de reproducción",
+    `${d.audio || "el audio"} no se pudo reproducir. El audio está en el archivo; el navegador no lo ha decodificado.`],
+  connection: () => ["Sin conexión", "Se ha perdido la conexión con el escriba. Reintentando…"],
+};
+function raise(kind, detail) {
+  S.alert = { kind, detail: detail || {}, seq: (S.alert ? S.alert.seq : 0) + 1 };
+  S.dismissed = null;
+  renderAlert();
+}
+function clearAlert(kind) {
+  if (S.alert && S.alert.kind === kind) { S.alert = null; renderAlert(); }
+}
+function renderAlert() {
+  const slot = $("alert-slot");
+  slot.textContent = "";
+  if (!S.alert || S.dismissed === S.alert.seq) return;
+  const [title, body] = ALERTS[S.alert.kind](S.alert.detail);
+  const n = el("div", "alert");
+  n.setAttribute("role", "alert");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", "20"); svg.setAttribute("height", "20");
+  svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "2.25");
+  svg.innerHTML = '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path>' +
+                  '<path d="M12 9v4"></path><path d="M12 17h.01"></path>';
+  const ok = el("button", null, "entendido");
+  ok.onclick = () => { S.dismissed = S.alert.seq; renderAlert(); };
+  n.append(svg, el("div", "title", title), el("div", "body", body), ok);
+  slot.append(n);
+}
+
+// ---------------------------------------------------------------- days
+function renderDays() {
+  const box = $("days");
+  box.textContent = "";
+  for (const d of S.days) {
+    const b = el("button", d.in_view ? "" : "archived");
+    const l = el("span", "l");
+    l.append(el("span", "label", dayName(d.date)),
+             el("span", "meta", dayDate(d.date) + " · " + (d.in_view ? d.count + " entradas" : "archivo")));
+    b.append(l);
+    if (d.in_view) {
+      b.onclick = () => {
+        const t = $("scroll").querySelector('[data-day="' + d.date + '"]');
+        if (t) $("scroll").scrollTop = t.offsetTop - $("scroll").offsetTop;
+        markDay(d.date);
+      };
+    } else {
+      b.disabled = true;
+    }
+    b.dataset.day = d.date;
+    box.append(b);
+  }
+  markDay(S.activeDay);
+}
+function markDay(key) {
+  S.activeDay = key;
+  for (const b of $("days").children) b.classList.toggle("on", b.dataset.day === key);
+}
+
+// ------------------------------------------------------------ transcript
+// Rows are built once and PATCHED in place. A full redraw would be cheap
+// at 400 entries and still wrong: it throws away the scroll position and
+// the focus ring while a reply is streaming into the row you are reading.
+const rows = new Map();
+
+function entryRow(e) {
+  const row = el("div", "row");
+  row.dataset.id = e.id;
+  row.append(el("div", "at", hhmm(e.at)));
+  const body = el("div", "body");
+  row.append(body);
+  rows.set(e.id, { row, body });
+  paint(e);
+  return row;
+}
+
+function playGlyph(playing, size) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width", size); svg.setAttribute("height", size);
+  svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "currentColor");
+  svg.innerHTML = playing ? '<rect x="5" y="5" width="14" height="14"></rect>'
+                          : '<polygon points="6 3 20 12 6 21 6 3"></polygon>';
+  return svg;
+}
+
+function paint(e) {
+  const r = rows.get(e.id);
+  if (!r) return;
+  const playing = S.playing === e.id;
+  r.body.textContent = "";
+  r.prog = r.playLabel = null;
+
+  if (e.kind === "said") {
+    const w = el("div", "said");
+    w.append(el("span", "who", "tú"));
+    const b = el("button", "bar");
+    // The width IS the duration: a column of identical pills says nothing
+    // about which utterance was the long one.
+    b.style.width = Math.min(100 + (e.seconds || 0) * 8, 420) + "px";
+    b.title = e.audio || "";
+    const prog = el("span", "prog");
+    b.append(prog, (() => { const g = el("span", "glyph"); g.append(playGlyph(playing, "14")); return g; })(),
+             el("span", "dur", mmss(e.seconds)));
+    b.onclick = () => toggle(e);
+    w.append(b);
+    if (S.showIds && e.audio) w.append(el("span", "audit", e.audio));
+    r.body.append(w);
+    r.prog = prog;
+    return;
+  }
+
+  if (e.kind === "spoke") {
+    const w = el("div", "spoke" + (playing ? " sounding" : ""));
+    w.append(el("p", null, e.text || ""));
+    const meta = el("div", "meta");
+    if (e.audio) {
+      const b = el("button", "listen" + (playing ? " sounding" : ""));
+      b.title = e.audio;
+      const label = el("span", null, playing ? "sonando " + mmss(S.progSec) + " / " + mmss(e.seconds)
+                                             : "escuchar " + mmss(e.seconds));
+      b.append(playGlyph(playing, "12"), label);
+      b.onclick = () => toggle(e);
+      meta.append(b);
+      r.playLabel = label;
+    } else if (e.text) {
+      // Text first, audio after: the provider finishes speaking well after
+      // the words exist, and waiting for it would hold back the reply.
+      meta.append(el("span", "tag wait", "audio llegando…"));
+    }
+    if (S.failed === e.id) meta.append(el("span", "tag bad", "fallo de reproducción"));
+    if (S.showIds && e.audio) meta.append(el("span", "audit", e.audio));
+    w.append(meta);
+    r.body.append(w);
+    return;
+  }
+
+  if (e.kind === "anotado") {
+    const w = el("div", "anotado");
+    w.append(el("span", "tag accent", "anotado"), el("span", "text", e.text));
+    r.body.append(w);
+    return;
+  }
+
+  const w = el("div", "note-row");
+  w.append(el("span", null, e.text));
+  if ((e.repeats || 1) > 1) w.append(el("span", "x", "×" + e.repeats));
+  r.body.append(w);
+}
+
+function renderTranscript() {
+  const sc = $("scroll");
+  const atBottom = nearBottom();
+  sc.textContent = "";
+  rows.clear();
+  dayWatch.disconnect();
+  let key = null, holder = null;
+  for (const id of S.order) {
+    const e = S.byId.get(id);
+    const k = dayKey(e.at);
+    if (k !== key) {
+      key = k;
+      holder = el("div");
+      holder.dataset.day = k;
+      const head = el("div", "dayhead");
+      head.append(el("span", "label", dayName(k)), el("span", "date", dayDate(k)));
+      holder.append(head);
+      sc.append(holder);
+      observeDay(head, k);
+    }
+    holder.append(entryRow(e));
+  }
+  if (atBottom) toBottom();
+}
+
+function appendEntry(e) {
+  const stick = nearBottom();
+  S.byId.set(e.id, e);
+  S.order.push(e.id);
+  const sc = $("scroll");
+  const k = dayKey(e.at);
+  let holder = sc.querySelector('[data-day="' + k + '"]');
+  if (!holder) {
+    holder = el("div");
+    holder.dataset.day = k;
+    const head = el("div", "dayhead");
+    head.append(el("span", "label", dayName(k)), el("span", "date", dayDate(k)));
+    holder.append(head);
+    sc.append(holder);
+    observeDay(head, k);
+  }
+  holder.append(entryRow(e));
+  if (stick) toBottom(); else $("jump").hidden = false;
+  renderPills();
+}
+
+function updateEntry(e) {
+  const prev = S.byId.get(e.id);
+  if (!prev) { appendEntry(e); return; }
+  Object.assign(prev, e);
+  paint(prev);
+  renderPills();
+}
+
+// Scroll only if the reader was already at the bottom. Dragging them back
+// down while they are reading an older answer is the one thing a live
+// transcript must not do.
+function nearBottom() {
+  const sc = $("scroll");
+  return sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
+}
+function toBottom() {
+  const sc = $("scroll");
+  sc.scrollTop = sc.scrollHeight;
+  $("jump").hidden = true;
+}
+$("jump").onclick = toBottom;
+$("scroll").addEventListener("scroll", () => { if (nearBottom()) $("jump").hidden = true; });
+
+// The first paint has no height yet, so one rAF is not enough: observe the
+// scroller and go to the bottom once it actually has something to scroll.
+let settled = false;
+new ResizeObserver(() => {
+  const sc = $("scroll");
+  if (!settled && sc.scrollHeight > sc.clientHeight) { settled = true; toBottom(); }
+}).observe($("scroll"));
+
+const dayWatch = new IntersectionObserver((hits) => {
+  for (const h of hits) if (h.isIntersecting) markDay(h.target.dataset.key);
+}, { root: $("scroll"), threshold: 0, rootMargin: "0px 0px -85% 0px" });
+function observeDay(head, key) { head.dataset.key = key; dayWatch.observe(head); }
+
+// ---------------------------------------------------------------- counts
+function delta(now, start) {
+  if (start === null || start === undefined) return null;
+  return now - start;
+}
+function renderCounts() {
+  const c = S.counts;
+  const cells = [
+    { label: "memoria curada", value: c.curated, d: delta(c.curated, c.curated_at_start),
+      hint: c.curated_at_start != null ? c.curated_at_start + " al empezar" : "", good: (d) => d >= 0 },
+    { label: "memoria sin curar", value: c.raw, d: delta(c.raw, c.raw_at_start),
+      hint: (c.raw_at_start != null ? c.raw_at_start + " al empezar · " : "") +
+            (delta(c.raw, c.raw_at_start) > 0 ? "la cola crece" : "la cola baja"),
+      // A growing uncurated queue is the one count whose rise is NOT good
+      // news: it is work waiting for the curator, not knowledge gained.
+      good: (d) => d <= 0, rising: true },
+    { label: "referencias", value: c.catalogue, d: delta(c.catalogue, c.catalogue_at_start),
+      hint: (c.found || 0) + " encontradas · " + (c.selected || 0) + " elegidas", good: (d) => d >= 0 },
+    { label: "documentos", value: (S.items.documentos || []).length,
+      d: delta((S.items.documentos || []).length, c.documents_at_start),
+      hint: c.documents_at_start != null ? c.documents_at_start + " al empezar" : "", good: (d) => d >= 0 },
+  ];
+  const box = $("counts");
+  box.textContent = "";
+  for (const cell of cells) {
+    const n = el("div", "cell");
+    n.append(el("span", "label", cell.label));
+    const line = el("span", "n");
+    line.append(el("span", "v", cell.value == null ? "—" : String(cell.value)));
+    if (cell.d !== null) {
+      // ±0 is shown rather than hidden: "nothing moved" is information,
+      // and a blank space is indistinguishable from a count that failed.
+      const txt = cell.d === 0 ? "±0" : (cell.d > 0 ? "+" + cell.d : String(cell.d));
+      const d = el("span", "d", txt + (cell.rising && cell.d > 0 ? " ↑" : ""));
+      d.style.color = cell.d === 0 ? "var(--muted)" : (cell.good(cell.d) ? "var(--ok)" : "var(--wait)");
+      line.append(d);
+    }
+    n.append(line, el("span", "hint", cell.hint));
+    box.append(n);
+  }
+}
+
+// ------------------------------------------------------------- knowledge
+const TABS = ["memoria", "referencias", "documentos"];
+function renderTabs() {
+  const box = $("tabs");
+  box.textContent = "";
+  for (const t of TABS) {
+    const b = el("button", t === S.tab ? "on" : "");
+    b.append(el("span", null, t), el("span", "n", String((S.items[t] || []).length)));
+    b.onclick = () => { S.tab = t; S.sel = null; renderTabs(); renderPanel(); };
+    box.append(b);
+  }
+}
+// The detail survives the 2-second reconciliation by being keyed on the
+// item's own identity, not its position: the list is replaced wholesale
+// every tick, and an index would open a different memory each time.
+const keyOf = (tab, it) => tab === "memoria" ? it.id : tab === "referencias" ? it.url : it.path;
+function renderPanel() {
+  const box = $("panel");
+  box.textContent = "";
+  const items = S.items[S.tab] || [];
+  if (S.sel) {
+    const it = items.find((x) => keyOf(S.tab, x) === S.sel);
+    if (it) { box.append(detailOf(it)); return; }
+    S.sel = null;        // it is gone from disk; fall back to the list
+  }
+  for (const it of items) {
+    const b = el("button", "item");
+    const meta = S.tab === "memoria" ? [it.at, (it.tags || []).join(", ")].filter(Boolean).join(" · ")
+               : S.tab === "referencias" ? host(it.url)
+               : [it.at, it.path].filter(Boolean).join(" · ");
+    b.append(el("span", "text", it.text), el("span", "meta", meta));
+    b.onclick = () => { S.sel = keyOf(S.tab, it); renderPanel(); };
+    box.append(b);
+  }
+}
+function host(url) { try { return new URL(url).host; } catch (e) { return url; } }
+
+function detailOf(it) {
+  const d = el("div", "detail");
+  const back = el("button", "back", "← " + S.tab);
+  back.onclick = () => { S.sel = null; renderPanel(); };
+  d.append(back, el("div", "title", it.text));
+  if (S.tab === "memoria") {
+    d.append(el("p", null, it.content || ""));
+    const tags = el("div", "tags");
+    for (const t of it.tags || []) tags.append(el("span", "tag neutral", t));
+    d.append(tags);
+    const two = el("div", "two");
+    const a = el("div", "a");
+    const pct = it.confidence != null ? Math.round(it.confidence * 100) + "%" : "—";
+    a.append(el("div", "k", "confianza"), el("div", "v", pct));
+    const track = el("div", "track");
+    const fill = el("div", "fill");
+    fill.style.width = it.confidence != null ? pct : "0%";
+    track.append(fill); a.append(track);
+    const b = el("div", "b");
+    b.append(el("div", "k", "usos"), el("div", "v", String(it.uses ?? "—")));
+    two.append(a, b);
+    d.append(two, el("div", "mono", [it.id, it.at].filter(Boolean).join(" · ")));
+  } else if (S.tab === "referencias") {
+    const a = el("a", null, it.url);
+    a.href = it.url; a.target = "_blank"; a.rel = "noopener noreferrer";
+    a.style.fontSize = "14px"; a.style.wordBreak = "break-all";
+    d.append(a, el("div", "mono", "Sin fecha: las referencias no guardan cuándo se catalogaron."));
+  } else {
+    d.append(el("div", "mono", it.path));
+    const open = el("button", "primary", "Leer documento");
+    open.onclick = () => openReader(it);
+    d.append(open);
+  }
+  return d;
+}
+
+// ------------------------------------------------------------ doc reader
+async function openReader(it) {
+  const slot = $("reader-slot");
+  slot.textContent = "";
+  const scrim = el("div", "scrim");
+  const sheet = el("article", "sheet");
+  const top = el("div", "top");
+  const close = el("button", "hbtn", "Cerrar");
+  close.onclick = closeReader;
+  top.append(el("span", "path", it.path), el("span", "who", "documentalista · " + (it.at || "")), close);
+  const body = el("div", "md");
+  sheet.append(top, body);
+  scrim.append(sheet);
+  scrim.onclick = closeReader;
+  sheet.onclick = (ev) => ev.stopPropagation();
+  slot.append(scrim);
+  close.focus();
+  const text = MOCK ? MOCK_DOC : await fetch("/doc?path=" + encodeURIComponent(it.path))
+    .then((r) => r.ok ? r.text() : Promise.reject(new Error(r.status)))
+    .catch(() => "No se pudo leer el documento.");
+  if (window.renderMarkdown) window.renderMarkdown(body, text);
+  else body.textContent = text;   // the module did not load; show the source
+}
+function closeReader() { $("reader-slot").textContent = ""; }
+window.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeReader(); });
+
+// -------------------------------------------------------------- playback
+// ONE element for the page, so two recordings can never sound at once.
+// `hablando` goes on at `playing` and not at the click: the state means
+// sound is coming out, not that somebody asked for it.
+//
+// ONLY THE BROWSER PLAYS.  The design kept `audio en: servidor` as a
+// deployment option, where the reply sounds on the host and `hablando`
+// would come from the hub instead of from this element.  Nothing in this
+// deployment can serve that: the daemon runs headless and the tenant
+// account has `nologin`, so there is no audio device and no user session
+// to hold one.  The header renders whatever the backend reports, and the
+// backend reports `navegador`, because shipping a selector whose other
+// value cannot work is worse than shipping one value.
+const player = $("player");
+function toggle(e) {
+  if (S.playing === e.id) { player.pause(); return; }
+  if (!e.audio) return;
+  S.failed = null;
+  S.playing = e.id;
+  S.progSec = 0;
+  if (MOCK) { mockPlay(e); return; }
+  player.src = "/audio/" + e.audio;
+  player.play().catch(() => fail(e));
+}
+function fail(e) {
+  S.playing = null;
+  S.failed = e.id;
+  paint(e);
+  raise("playback", { audio: e.audio });
+  heard(e, "error");
+}
+player.addEventListener("playing", () => {
+  S.status = { status: "speaking", query: null };
+  const e = S.byId.get(S.playing);
+  if (e) { paint(e); heard(e, "play"); }
+  renderPills();
+});
+player.addEventListener("timeupdate", () => {
+  const e = S.byId.get(S.playing);
+  if (!e) return;
+  S.progSec = player.currentTime;
+  const r = rows.get(e.id);
+  if (e.kind === "said" && r && r.prog) {
+    r.prog.style.width = (player.duration ? (player.currentTime / player.duration) * 100 : 0) + "%";
+  } else if (e.kind === "spoke" && r && r.playLabel) {
+    // Only the label, never the row: repainting would rebuild the button
+    // the reader just pressed and throw away its focus ring.
+    r.playLabel.textContent = "sonando " + mmss(player.currentTime) + " / " + mmss(e.seconds);
+  }
+});
+for (const ev of ["ended", "pause"]) player.addEventListener(ev, () => {
+  const e = S.byId.get(S.playing);
+  S.playing = null;
+  S.progSec = 0;
+  if (e) { paint(e); if (ev === "ended") heard(e, "ended"); }
+  S.status = { status: "listening", query: null };
+  renderPills();
+});
+player.addEventListener("error", () => {
+  const e = S.byId.get(S.playing);
+  if (e) fail(e);
+});
+// What the BROWSER claims happened, recorded as a claim. The server's own
+// timestamps say what it sent; this says what a client reported playing,
+// and the two are not the same kind of fact.
+function heard(e, event) {
+  if (MOCK || !e.audio) return;
+  fetch("/heard", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ audio: e.audio, event, at: new Date().toISOString() }),
+  }).catch(() => {});
+}
+
+// ----------------------------------------------------------- push to talk
+let stream = null, recorder = null, chunks = [], startedAt = 0, ticker = null;
+const ptt = $("ptt");
+
+function pttFace() {
+  const t = $("ptt-title"), s = $("ptt-sub"), time = $("ptt-time");
+  ptt.classList.toggle("rec", S.recording);
+  ptt.classList.toggle("idle-speaking", !S.recording && S.status.status === "speaking");
+  ptt.setAttribute("aria-pressed", String(S.recording));
+  if (S.micReason) {
+    ptt.disabled = true;
+    t.textContent = "Micrófono no disponible";
+    s.textContent = S.micReason;
+    time.textContent = "";
+    return;
+  }
+  ptt.disabled = false;
+  t.textContent = S.recording ? "Grabando" : "Mantén pulsado para hablar";
+  s.textContent = S.recording ? "Suelta para enviar"
+    : S.status.status === "speaking" ? "Interrumpe al escriba · o mantén ESPACIO"
+    : "O mantén la barra ESPACIO";
+  time.textContent = S.recording ? mmss(S.rec) : "";
+}
+
+async function mic() {
+  if (stream) return stream;
+  // Asked at the first press, not on load: a permission prompt that appears
+  // before anybody has tried to talk gets dismissed.
+  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  for (const track of stream.getAudioTracks()) {
+    track.onmute = () => { S.micReason = "la pista está silenciada"; raise("mic"); pttFace(); };
+    track.onunmute = () => { S.micReason = null; clearAlert("mic"); pttFace(); };
+    track.onended = () => { S.micReason = "la pista terminó"; raise("mic"); pttFace(); };
+  }
+  return stream;
+}
+
+async function startRec() {
+  if (S.recording || S.micReason) return;
+  if (!player.paused) player.pause();         // talking over the reply stops it
+  if (MOCK) { S.recording = true; S.rec = 0; tick(); return; }
+  try {
+    const s = await mic();
+    recorder = new MediaRecorder(s);
+    chunks = [];
+    recorder.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+    recorder.onstop = send;
+    recorder.start();
+  } catch (err) {
+    S.micReason = err && err.name === "NotAllowedError" ? "permiso denegado" : "no se pudo abrir";
+    raise("mic");
+    pttFace();
+    return;
+  }
+  S.recording = true;
+  S.rec = 0;
+  startedAt = performance.now();
+  tick();
+}
+function tick() {
+  S.status = { status: "listening", query: null };
+  renderPills();
+  pttFace();
+  clearInterval(ticker);
+  ticker = setInterval(() => { S.rec += 0.1; $("ptt-time").textContent = mmss(S.rec); }, 100);
+}
+function stopRec() {
+  if (!S.recording) return;
+  clearInterval(ticker);
+  S.recording = false;
+  const held = MOCK ? S.rec * 1000 : performance.now() - startedAt;
+  if (MOCK) { pttFace(); mockTurn(Math.max(1, Math.round(S.rec))); return; }
+  if (held < 300) {
+    // Too short to be speech: a stray click should not become a turn, and
+    // an empty attachment is a wasted round trip through the model.
+    try { recorder.stop(); } catch (e) {}
+    recorder = null;
+    $("ptt-sub").textContent = "demasiado corto";
+    pttFace();
+    return;
+  }
+  try { recorder.stop(); } catch (e) {}
+}
+
+async function send() {
+  const blob = new Blob(chunks, { type: recorder && recorder.mimeType || "audio/webm" });
+  recorder = null;
+  S.status = { status: "thinking", query: null };
+  renderPills();
+  pttFace();
+  const fd = new FormData();
+  fd.append("audio", blob, "utterance.webm");
+  try {
+    const res = await fetch("/talk", { method: "POST", body: fd });
+    if (!res.ok) throw new Error(res.status);
+    // The `said` entry comes back over the stream, not optimistically: the
+    // id is the digest of the bytes the daemon received, and only the
+    // server knows it.
+    await readStream(res, onEvent);
+  } catch (err) {
+    raise("connection");
+  }
+}
+
+// pointer rather than mouse, with capture: a press that drags off the
+// button still ends the recording, instead of leaving the mic open.
+ptt.addEventListener("pointerdown", (ev) => {
+  ptt.setPointerCapture(ev.pointerId);
+  startRec();
+});
+ptt.addEventListener("pointerup", stopRec);
+ptt.addEventListener("pointercancel", stopRec);
+window.addEventListener("keydown", (ev) => {
+  if (ev.code !== "Space" || ev.repeat || typing(ev.target)) return;
+  ev.preventDefault();
+  startRec();
+});
+window.addEventListener("keyup", (ev) => {
+  if (ev.code !== "Space" || typing(ev.target)) return;
+  ev.preventDefault();
+  stopRec();
+});
+const typing = (t) => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+
+// ------------------------------------------------------------------- hub
+function onEvent(kind, data) {
+  if (kind === "state") {
+    S.order = []; S.byId.clear();
+    for (const e of data.entries || []) { S.byId.set(e.id, e); S.order.push(e.id); }
+    S.counts = data.counts || {};
+    S.items = data.items || S.items;
+    S.status = data.status || S.status;
+    S.session_at = data.session_at || null;
+    S.archive_dir = data.archive_dir || null;
+    S.playback = data.playback || S.playback;
+    S.days = data.days || S.days;
+    renderPills(); renderCounts(); renderTabs(); renderPanel(); renderDays(); renderTranscript();
+  } else if (kind === "entry") {
+    updateEntry(data);
+  } else if (kind === "counts") {
+    S.counts = data; renderCounts();
+  } else if (kind === "items") {
+    S.items[data.panel] = data.rows;
+    renderTabs(); renderPanel(); renderCounts();
+  } else if (kind === "status") {
+    S.status = data; renderPills(); pttFace();
+  } else if (kind === "alert") {
+    raise(data.kind, data);
+  } else if (kind === "days") {
+    S.days = data; renderDays();
+  }
+}
+
+// One SSE response per turn, read off the POST rather than a second
+// EventSource: the deltas belong to THIS turn and nobody else's.
+async function readStream(res, sink) {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let cut;
+    while ((cut = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      let kind = "message", payload = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) kind = line.slice(6).trim();
+        else if (line.startsWith("data:")) payload += line.slice(5).trim();
+      }
+      if (payload) sink(kind, JSON.parse(payload));
+    }
+  }
+}
+
+let lost = null;
+function connect() {
+  const es = new EventSource("/events");
+  for (const kind of ["state", "entry", "counts", "items", "status", "alert", "days"]) {
+    es.addEventListener(kind, (m) => onEvent(kind, JSON.parse(m.data)));
+  }
+  es.onopen = () => { clearTimeout(lost); lost = null; S.connected = true; clearAlert("connection"); };
+  es.onerror = () => {
+    // The browser reconnects on its own; five seconds is the point at
+    // which the silence stops being a blip and starts being a failure.
+    if (lost === null) lost = setTimeout(() => raise("connection"), 5000);
+  };
+}
+
+// ------------------------------------------------------------------ mock
+const MOCK_DOC = `# Riego por goteo en un balcón sin grifo
+
+Seis macetas de 30 litros orientadas al oeste, sin toma de agua exterior, con una ausencia de diez días en agosto.
+
+## Cuánta agua hace falta
+
+Una tomatera en maceta de 30 litros consume entre 2 y 3 litros diarios en pleno verano con sol de tarde. La albahaca, alrededor de medio litro.
+
+- Tomateras: 4 × 2,5 l × 10 días = 100 l
+- Albahaca: 2 × 0,5 l × 10 días = 10 l
+
+Con acolchado de 5 cm sobre el sustrato el consumo baja en torno a un 30 %, lo que deja la necesidad cerca de 75 litros.
+
+## Montaje recomendado
+
+Dos depósitos de 40 litros sobre una balda a un metro de altura, tubo de 16 mm y goteros autocompensantes de 2 l/h. La gravedad basta a esa altura; no hace falta bomba ni programador eléctrico.`;
+
+function mockState() {
+  const d = (back, h, m) => {
+    const x = new Date(); x.setDate(x.getDate() - back); x.setHours(h, m, 0, 0);
+    return x.toISOString();
+  };
+  let n = 0;
+  const E = (at, kind, rest) => Object.assign({ id: ++n, at, kind, text: "", repeats: 1 }, rest);
+  return {
+    session_at: d(0, 9, 12), archive_dir: "20261009_091200", playback: "navegador",
+    status: { status: "listening", query: null },
+    entries: [
+      E(d(3, 19, 2), "said", { seconds: 21, audio: "att_1b90e44c" }),
+      E(d(3, 19, 3), "spoke", { text: "¿Las macetas del balcón dan al sur o al oeste? Cambia mucho cuánta agua van a necesitar en agosto.", audio: "att_c4a2071e", seconds: 6 }),
+      E(d(3, 19, 4), "anotado", { text: "El balcón da al oeste; sol directo desde las 15:00." }),
+      E(d(1, 21, 40), "said", { seconds: 34, audio: "att_9e01ab37" }),
+      E(d(1, 21, 41), "spoke", { text: "Entonces lo que te preocupa no es el riego en sí, sino irte diez días en verano sin que nadie pase por casa. ¿Tienes un grifo en el balcón o habría que tirar desde la cocina?", audio: "att_3d77f2c0", seconds: 11 }),
+      E(d(1, 21, 42), "anotado", { text: "No hay grifo en el balcón. La toma más cercana es la cocina, a unos 6 metros." }),
+      E(d(1, 21, 42), "note", { text: "buscando: «riego por goteo depósito sin grifo balcón»" }),
+      E(d(1, 21, 43), "note", { text: "juez: resultado descartado (duplicado)", repeats: 7 }),
+      E(d(0, 9, 14), "said", { seconds: 18, audio: "att_7f3c19a2" }),
+      E(d(0, 9, 14), "spoke", { text: "Buenos días. Ayer quedamos en el depósito elevado. Antes de seguir: ¿cuántas macetas son y de qué tamaño, más o menos? Con eso puedo calcular si veinte litros te bastan para diez días.", audio: "att_2a6bd310", seconds: 14 }),
+      E(d(0, 9, 15), "anotado", { text: "Seis macetas de 30 litros: cuatro tomateras, dos de albahaca." }),
+      E(d(0, 9, 16), "note", { text: "documentalista: escribió riego-por-goteo-balcon.md" }),
+      E(d(0, 9, 16), "spoke", { text: "Con seis macetas de ese tamaño, al oeste y en agosto, calcula entre dos y tres litros por tomatera al día. Veinte litros no llegan; necesitarías unos cincuenta, o dos depósitos. He dejado el cálculo completo en un documento.", audio: "att_91d4c6b8", seconds: 16 }),
+    ],
+    counts: { curated: 142, curated_at_start: 137, raw: 8, raw_at_start: 3, catalogue: 61,
+              catalogue_at_start: 57, documents_at_start: 1, found: 23, selected: 9 },
+    items: {
+      memoria: [
+        { id: "mem_0421", text: "Seis macetas de 30 l: cuatro tomateras, dos de albahaca", at: "9 oct 09:15", tags: ["huerto", "inventario"], content: "Inventario actual del balcón: 4 tomateras y 2 macetas de albahaca, todas de unos 30 litros.", confidence: 0.81, uses: 1 },
+        { id: "mem_0417", text: "No hay grifo en el balcón; la toma más cercana es la cocina", at: "8 oct 21:42", tags: ["huerto", "riego", "casa"], content: "Sin toma de agua exterior. La cocina está a unos 6 metros del balcón.", confidence: 0.88, uses: 2 },
+        { id: "mem_0412", text: "El balcón da al oeste, sol directo desde las 15:00", at: "6 oct 19:04", tags: ["huerto", "balcón"], content: "Orientación oeste. En agosto la evaporación es alta por la tarde; regar al amanecer.", confidence: 0.92, uses: 4 },
+      ],
+      referencias: [
+        { text: "Riego por gravedad con depósito elevado para terrazas", url: "https://www.infojardin.com/foro/riego-gravedad-deposito" },
+        { text: "Cálculo de necesidades hídricas del tomate en maceta", url: "https://www.agroes.es/cultivos-agricultura/tomate-riego" },
+      ],
+      documentos: [
+        { text: "Riego por goteo en un balcón sin grifo", path: "docs/riego-por-goteo-balcon.md", at: "9 oct 09:16" },
+        { text: "Calendario de siembra para orientación oeste", path: "docs/calendario-siembra-oeste.md", at: "3 oct 18:22" },
+      ],
+    },
+    days: (() => {
+      const out = [];
+      for (const back of [0, 1, 3]) {
+        const x = new Date(); x.setDate(x.getDate() - back);
+        out.push({ date: x.toISOString().slice(0, 10), count: back === 0 ? 5 : 4, in_view: true });
+      }
+      for (const back of [6, 7]) {
+        const x = new Date(); x.setDate(x.getDate() - back);
+        out.push({ date: x.toISOString().slice(0, 10), count: 0, in_view: false });
+      }
+      return out.sort((a, b) => b.date.localeCompare(a.date));
+    })(),
+  };
+}
+let mockTimer = null;
+function mockPlay(e) {
+  clearInterval(mockTimer);
+  S.status = { status: "speaking", query: null };
+  S.progSec = 0;
+  paint(e); renderPills();
+  mockTimer = setInterval(() => {
+    S.progSec += 0.2;
+    const r = rows.get(e.id);
+    if (e.kind === "said" && r && r.prog) r.prog.style.width = (S.progSec / e.seconds) * 100 + "%";
+    else paint(e);
+    if (S.progSec >= (e.seconds || 5)) {
+      clearInterval(mockTimer);
+      S.playing = null; S.progSec = 0;
+      paint(e);
+      S.status = { status: "listening", query: null };
+      renderPills();
+    }
+  }, 200);
+}
+function mockTurn(seconds) {
+  const now = () => new Date().toISOString();
+  const said = { id: Date.now(), at: now(), kind: "said", seconds, audio: "att_" + Math.random().toString(16).slice(2, 10), repeats: 1 };
+  appendEntry(said);
+  S.status = { status: "thinking", query: null };
+  renderPills();
+  setTimeout(() => {
+    const spoke = { id: Date.now() + 1, at: now(), kind: "spoke", text: "Entendido. Si pones los depósitos a un metro, ¿la balda aguanta ochenta kilos? Es lo único que no sé de tu balcón.", audio: null, seconds: 9, repeats: 1 };
+    appendEntry(spoke);
+    setTimeout(() => {
+      spoke.audio = "att_" + Math.random().toString(16).slice(2, 10);
+      updateEntry(spoke);
+      S.playing = spoke.id;
+      mockPlay(spoke);
+    }, 2600);
+  }, 1800);
+}
+
+// ----------------------------------------------------------------- start
+applyTheme();
+$("audit-btn").setAttribute("aria-pressed", String(S.showIds));
+if (MOCK) onEvent("state", mockState()); else connect();
+pttFace();
+</script>
+</body>
+</html>
