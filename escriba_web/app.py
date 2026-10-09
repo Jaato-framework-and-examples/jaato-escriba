@@ -34,6 +34,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response, Streami
 
 import archive as _archive                                         # noqa: E402
 import housekeeping as _housekeeping                               # noqa: E402
+import transcribe as _transcribe                                   # noqa: E402
 import workspace as _workspace                                     # noqa: E402
 
 from .driver import Person                                         # noqa: E402
@@ -54,6 +55,21 @@ ATT = re.compile(r"^att_[0-9a-f]{16}$")
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 PEOPLE: Dict[str, Person] = {}
 CONFIG: Dict[str, object] = {}
+
+#: Set the moment a signal arrives, and watched by every stream.
+#:
+#: WHY NOT THE LIFESPAN SHUTDOWN HOOK, which is the obvious place: it
+#: runs AFTER uvicorn has drained the connections, and an SSE response is
+#: a generator that never ends on its own, so the hook is waiting for the
+#: very streams that are waiting for it.  Measured on the deployed host:
+#: "Waiting for connections to close" at 10:58:03, exit at 10:58:38, and
+#: a sibling service on the same box reached systemd's 90 s timeout and
+#: was SIGKILLed — which skips the shutdown hook entirely, so the
+#: consolidation that makes the escriba remember never runs.
+#:
+#: The signal is caught where it ARRIVES instead.  Ordinary requests
+#: still finish normally; only the endless ones are asked to end.
+CLOSING = asyncio.Event()
 
 
 def principal_of(request: Request) -> str:
@@ -90,7 +106,7 @@ async def person_of(request: Request) -> Person:
         identity = {"username": request.headers.get("x-forwarded-preferred-username"),
                     "email": request.headers.get("x-forwarded-email")}
         person = Person(who, root=Path(str(CONFIG["root"])), limit=CONFIG.get("limit"),
-                        identity=identity)
+                        identity=identity, scribe=CONFIG.get("scribe"))
         PEOPLE[who] = person
         person.hub.publish("state", person.snapshot())
         asyncio.create_task(_open(person))
@@ -123,18 +139,34 @@ async def events(request: Request) -> StreamingResponse:
     queue = person.hub.subscribe()
 
     async def stream():
+        waiting = asyncio.ensure_future(CLOSING.wait())
         try:
-            while True:
-                try:
-                    yield await asyncio.wait_for(queue.get(), timeout=20)
-                except asyncio.TimeoutError:
+            while not CLOSING.is_set():
+                nxt = asyncio.ensure_future(queue.get())
+                done, _ = await asyncio.wait({nxt, waiting},
+                                             timeout=20,
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if nxt in done:
+                    yield nxt.result()
+                else:
+                    nxt.cancel()
+                    if CLOSING.is_set():
+                        break
                     # A comment keeps the connection warm through a proxy
                     # that closes idle streams; `EventSource` ignores it.
                     yield b": keepalive\n\n"
                 if await request.is_disconnected():
                     break
         finally:
+            waiting.cancel()
             person.hub.drop(queue)
+            # Told, not dropped.  `EventSource` reconnects by itself and
+            # is answered with a fresh snapshot, so the page recovers
+            # without a reload — but a stream that simply stops looks
+            # identical to a network fault, and the page would spend five
+            # seconds saying so.
+            if CLOSING.is_set():
+                yield frame("closing", {"reason": "el escriba se está reiniciando"})
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
@@ -151,6 +183,17 @@ async def talk(request: Request, audio: UploadFile) -> StreamingResponse:
         # the person may have two tabs open and both must see the reply.
         # This response carries only the outcome, so the upload knows
         # whether it was accepted.
+        #
+        # A TURN IN FLIGHT IS LET FINISH.  It is seconds of model time
+        # that has already been paid for, it ends with a memory stored
+        # and a recording archived, and dropping it mid-audio would lose
+        # all of that to save a second of restart.  What the shutdown
+        # changes is that nothing NEW is accepted.
+        if CLOSING.is_set():
+            yield frame("alert", {"kind": "session",
+                                  "detail": "el escriba se está reiniciando; "
+                                            "inténtalo de nuevo en un momento"})
+            return
         try:
             await person.talk(blob)
             yield frame("status", person.board.status())
@@ -242,6 +285,11 @@ def main(argv=None) -> int:
     p.add_argument("--dev-principal", metavar="NAME",
                    help="run with no proxy in front and treat every request as "
                         "this person. For a developer's own machine")
+    p.add_argument("--transcribe", metavar="MODEL",
+                   help="transcribe each utterance locally with this whisper "
+                        "model: tiny (~75 MB), base (~145 MB), small (~480 MB), "
+                        "downloaded on first use. Omitted, nothing is "
+                        "transcribed and no model is loaded")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8080)
     args = p.parse_args(argv)
@@ -249,11 +297,28 @@ def main(argv=None) -> int:
     CONFIG["root"] = args.root
     CONFIG["dev_principal"] = args.dev_principal
     CONFIG["limit"] = None
+    CONFIG["scribe"] = (_transcribe.Transcriber(args.transcribe)
+                        if args.transcribe else None)
     if args.budget_file:
         try:
             CONFIG["limit"] = _housekeeping.ceiling(Path(args.budget_file))
         except _housekeeping.BudgetUnreadable as exc:
             print(f"escriba_web: {exc}", file=sys.stderr)
             return 2
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    # The signal is caught HERE, by wrapping uvicorn's own handler: it
+    # fires when the signal arrives, which is what the streams need, and
+    # the lifespan hook does not.
+    class Server(uvicorn.Server):
+        def handle_exit(self, sig, frame) -> None:      # noqa: D102
+            CLOSING.set()
+            super().handle_exit(sig, frame)
+
+    # A SAFETY NET, not the mechanism.  Anything the event above fails to
+    # reach can delay a restart by five seconds and no longer; the
+    # lifespan shutdown still runs, which is what consolidates the
+    # conversation.  Lowering systemd's TimeoutStopSec would not do this
+    # — SIGKILL skips the shutdown entirely.
+    config = uvicorn.Config(app, host=args.host, port=args.port,
+                            log_level="info", timeout_graceful_shutdown=5)
+    Server(config).run()
     return 0

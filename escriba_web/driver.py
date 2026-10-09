@@ -42,6 +42,7 @@ import enrichment                                                # noqa: E402
 import memory                                                    # noqa: E402
 import voice                                                     # noqa: E402
 import yaml                                                      # noqa: E402
+import transcribe as _transcribe                                 # noqa: E402
 import workspace as _workspace                                   # noqa: E402
 from run_escriba import DRAIN, GREETING, SessionGone, _reconcile, _turn  # noqa: E402
 
@@ -249,7 +250,11 @@ class Person:
     """One authenticated person: a workspace, a session, a hub."""
 
     def __init__(self, principal: str, root: Path, limit: Optional[int] = None,
-                 identity: Optional[dict] = None) -> None:
+                 identity: Optional[dict] = None,
+                 scribe: Optional["_transcribe.Transcriber"] = None) -> None:
+        #: Shared across everyone on this process: one loaded model, not
+        #: one per person.  It is hundreds of megabytes.
+        self.scribe = scribe
         self.principal = principal
         self.ws = _workspace.provision(principal, root=root, identity=identity)
         self.hub = Hub()
@@ -426,6 +431,12 @@ class Person:
             # attachment is not something to send to the daemon.
             self.board.heard(said.pop("seconds"), said.get(ATTACHMENT_ID_KEY))
             said["seconds"] = seconds
+            # Started BEFORE the turn and never waited for: the model is
+            # about to take several seconds and the transcriber takes a
+            # few of its own, so they overlap and the person waits for
+            # neither.  The row updates when it lands, by id.
+            self._transcribing(self.board.state.entries[-1],
+                               said[ATTACHMENT_ID_KEY])
             try:
                 await _turn(self._scribe, "", said, self._relay(),
                             log=self.archive.turn, tui=self.board)
@@ -446,6 +457,32 @@ class Person:
                     "kind": "budget" if budget else "session",
                     "at": datetime.now().strftime("%H:%M"), "detail": text[:200]})
                 raise
+
+    def _transcribing(self, entry, att: str) -> None:
+        """Put the person's own words on their row, when they are ready.
+
+        A FAILURE HERE IS NOT A FAILED TURN.  The conversation does not
+        depend on the transcript: the recording is archived, the model
+        heard it, and the answer is already on its way.  So this reports
+        and gives up rather than propagating — the row simply keeps the
+        play control it already had.
+        """
+        if self.scribe is None:
+            return
+        recording = self.archive.dir / f"in_{att}.mp3"
+
+        async def run() -> None:
+            try:
+                text = await asyncio.to_thread(self.scribe.write, recording)
+            except Exception as exc:                          # noqa: BLE001
+                self.board.note(f"· no pude transcribir {att}: "
+                                f"{type(exc).__name__}: {str(exc)[:90]}")
+                return
+            if text:
+                entry.text = text
+                self.board._refreshed()
+
+        asyncio.create_task(run())
 
     # -- what a new browser is handed ------------------------------------
     def snapshot(self) -> dict:
@@ -486,21 +523,23 @@ class Person:
             with manifest.open(encoding="utf-8") as f:
                 for line in f:
                     if line.strip():
-                        rows.extend(self._turn_entries(json.loads(line)))
+                        rows.extend(self._turn_entries(json.loads(line), d))
         rows.sort(key=lambda r: r["at"])
         for n, row in enumerate(rows, start=1):
             row["id"] = -n
         return rows
 
     @staticmethod
-    def _turn_entries(row: dict) -> List[dict]:
+    def _turn_entries(row: dict, archive_dir: Path) -> List[dict]:
         """One manifest row, as the entries it describes."""
         if row.get("stage"):
             return []            # policy, budget, a playback claim: not talk
         at = row.get("at") or ""
         out = []
         if row.get("heard"):
-            out.append({"at": at, "kind": "said", "text": "",
+            out.append({"at": at, "kind": "said",
+                        "text": _transcribe.spoken(
+                            archive_dir / f"in_{row['heard']}.mp3") or "",
                         "seconds": row.get("heard_seconds"),
                         "audio": row["heard"], "repeats": 1, "silent": False})
         spoke = row.get("spoke") or {}

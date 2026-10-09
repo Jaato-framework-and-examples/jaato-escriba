@@ -147,6 +147,8 @@ nav .note code{font-family:var(--mono)}
 .bar .prog{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--accent-soft)}
 .bar .glyph,.bar .dur{position:relative}
 .bar .dur{font-weight:700;font-size:14px;font-variant-numeric:tabular-nums}
+.heard{margin:var(--space-2) 0 0;font-size:15px;line-height:1.45;color:var(--ink-2);max-width:68ch;
+       text-wrap:pretty}
 .spoke{display:flex;flex-direction:column;gap:var(--space-2);padding-left:var(--space-4);
        border-left:3px solid var(--accent)}
 .spoke.sounding{border-left-color:var(--ok)}
@@ -352,7 +354,7 @@ const S = {
   session_at: null, archive_dir: null, playback: "navegador",
   tab: "memoria", sel: null, reader: false,
   recording: false, rec: 0, playing: null, failed: null,
-  alert: null, dismissed: null, everConnected: false,
+  alert: null, dismissed: null, everConnected: false, restarting: null,
   //: True once the hub has sent a snapshot.  Before that every count is
   //: UNKNOWN rather than zero: a panel reading "0 documentos" on a page
   //: that has spoken to nothing is a statement about the person's
@@ -511,6 +513,7 @@ const ALERTS = {
     "El navegador sólo entrega el micrófono en un origen seguro: https, o " +
     "localhost en esta misma máquina. Esta página se ha abierto por http " +
     "desde otro equipo, así que no hay permiso que conceder."],
+  restarting: (d) => ["Reconectando", `${d.reason}. La página se reconecta sola.`],
   connection: (d) => d.had
     ? ["Sin conexión", "Se ha perdido la conexión con el escriba. Reintentando…"]
     : ["Sin conexión", "No se ha podido conectar con el escriba. Reintentando…"],
@@ -655,6 +658,18 @@ function paint(e) {
     w.append(b);
     if (S.showIds && e.audio) w.append(el("span", "audit", e.audio));
     r.body.append(w);
+    // THE PERSON'S OWN WORDS, when a transcriber has produced them.  It
+    // arrives after the row is drawn — the recording is transcribed
+    // beside the turn, not before it — so this is the same patch-by-id
+    // path a late audio ref takes.  Styled apart from the escriba's
+    // reply on purpose: the asymmetry of the two voices is the point,
+    // and this is a machine's reading of a recording rather than text
+    // anybody wrote.
+    if (e.text) {
+      const said = el("p", "heard", e.text);
+      said.title = "transcripción local de la grabación";
+      r.body.append(said);
+    }
     r.prog = prog;
     return;
   }
@@ -1272,6 +1287,14 @@ function onEvent(kind, data) {
     updateEntry(data);
   } else if (kind === "counts") {
     S.counts = data; renderCounts();
+  } else if (kind === "closing") {
+    // A RESTART IS NOT A LOST CONNECTION.  `EventSource` reconnects by
+    // itself and is answered with a fresh snapshot, so nothing is needed
+    // to recover — but a stream that simply ended looks exactly like a
+    // network fault, and the page would spend five seconds accusing one.
+    // Said in the server's own words instead.
+    S.restarting = data.reason || "el escriba se está reiniciando";
+    raise("restarting", { reason: S.restarting });
   } else if (kind === "wiki") {
     S.wiki = data; renderTabs(); renderPanel(); renderCounts();
   } else if (kind === "items") {
@@ -1313,14 +1336,24 @@ async function readStream(res, sink) {
 let lost = null;
 function connect() {
   const es = new EventSource("/events");
-  for (const kind of ["state", "entry", "counts", "items", "status", "alert", "days", "wiki"]) {
+  for (const kind of ["state", "entry", "counts", "items", "status", "alert",
+                      "days", "wiki", "closing"]) {
     es.addEventListener(kind, (m) => onEvent(kind, JSON.parse(m.data)));
   }
-  es.onopen = () => { clearTimeout(lost); lost = null; S.everConnected = true; clearAlert("connection"); };
+  es.onopen = () => {
+    clearTimeout(lost); lost = null; S.everConnected = true;
+    clearAlert("connection"); clearAlert("restarting");
+    S.restarting = null;
+  };
   es.onerror = () => {
     // The browser reconnects on its own; five seconds is the point at
     // which the silence stops being a blip and starts being a failure.
-    if (lost === null) lost = setTimeout(() => raise("connection", { had: S.everConnected }), 5000);
+    // Nothing is said about a restart we were told about: the page is
+    // already showing why, and "se ha perdido la conexión" on top of it
+    // would be a second, wrong explanation.
+    if (lost === null && !S.restarting) {
+      lost = setTimeout(() => raise("connection", { had: S.everConnected }), 5000);
+    }
   };
 }
 
@@ -1374,7 +1407,8 @@ function mockState() {
       E(d(1, 21, 42), "anotado", { text: "No hay grifo en el balcón. La toma más cercana es la cocina, a unos 6 metros." }),
       E(d(1, 21, 42), "note", { text: "buscando: «riego por goteo depósito sin grifo balcón»" }),
       E(d(1, 21, 43), "note", { text: "juez: resultado descartado (duplicado)", repeats: 7 }),
-      E(d(0, 9, 14), "said", { seconds: 18, audio: "att_7f3c19a2" }),
+      E(d(0, 9, 14), "said", { seconds: 18, audio: "att_7f3c19a2",
+        text: "Son seis macetas de treinta litros, cuatro tomateras y dos de albahaca." }),
       E(d(0, 9, 14), "spoke", { text: "Buenos días. Ayer quedamos en el depósito elevado. Antes de seguir: ¿cuántas macetas son y de qué tamaño, más o menos? Con eso puedo calcular si veinte litros te bastan para diez días.", audio: "att_2a6bd310", seconds: 14 }),
       E(d(0, 9, 15), "anotado", { text: "Seis macetas de 30 litros: cuatro tomateras, dos de albahaca." }),
       E(d(0, 9, 16), "note", { text: "documentalista: escribió riego-por-goteo-balcon.md" }),

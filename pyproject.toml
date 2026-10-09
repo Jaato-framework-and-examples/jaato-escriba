@@ -86,6 +86,17 @@ tui = ["rich>=13.0"]
 # fails at request parsing with a message about the wrong thing.
 web = ["fastapi>=0.115", "uvicorn>=0.30", "python-multipart>=0.0.9"]
 
+# Transcribing the PERSON's half, locally, from the mp3 already archived.
+#
+# OPTIONAL AND OFF BY DEFAULT, because it is the heaviest thing this
+# project can install: ~17 packages (ctranslate2, av, onnxruntime) plus a
+# model downloaded on first use — `tiny` ~75 MB, `base` ~145 MB, `small`
+# ~480 MB.  On a host with 2 GB free, competing with 200 MB of
+# recordings per person, the model is a choice somebody makes and not a
+# default anybody inherits: `--transcribe <model>` names it or nothing
+# runs.
+stt = ["faster-whisper>=1.2"]
+
 # THE DAEMON IS A SERVICE, NOT AN IMPORT.  This project is a client: it
 # imports `jaato_sdk` and talks to a daemon over `/tmp/jaato.sock`, which
 # may well live in another environment entirely.  Install this extra only

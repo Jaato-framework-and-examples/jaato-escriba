@@ -256,6 +256,20 @@ refs = showRefs();
 check("an unwired wiki says so", refs.includes("no hay ninguna fuente MCP"), true);
 T.S.tab = "memoria"; T.renderPanel();
 
+// ------------------------------------------ the person's own words
+// The transcript arrives AFTER the row is drawn — the recording is
+// transcribed beside the turn — so it takes the same patch-by-id path a
+// late audio ref does.
+T.onEvent("entry", { id: 500020, kind: "said", at: new Date().toISOString(),
+                     text: "", seconds: 6, audio: "att_eeeeeeeeeeeeeeee", repeats: 1 });
+check("a said row starts with no words",
+      byId.get("scroll").textContent.includes("quiero hablar sobre gatos"), false);
+T.onEvent("entry", { id: 500020, kind: "said", at: new Date().toISOString(),
+                     text: "quiero hablar sobre gatos", seconds: 6,
+                     audio: "att_eeeeeeeeeeeeeeee", repeats: 1 });
+check("the transcript lands on the row",
+      byId.get("scroll").textContent.includes("quiero hablar sobre gatos"), true);
+
 // ------------------------------------------------- an unknown duration
 // Entries archived before the record carried durations have none, and
 // "0:00" beside a counter already at 0:08 is a length nobody measured.

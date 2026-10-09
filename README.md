@@ -686,6 +686,7 @@ in every person's directory.
 | `.jaato/profiles/` | Provider-agnostic `_base_*` plus the `openrouter_gpt_audio` set. |
 | `workspace.py` | One root, one directory per person, provisioned from `template/` on first authentication. |
 | `housekeeping.py` | Prunes each person's recordings to the disk ceiling without reaching inside the retention floor the profile declared. `python -m housekeeping --root … --budget-file …`. |
+| `transcribe.py` | What the person said, in text, from the mp3 already archived. Optional (`--extra stt`), off unless a model is named, and the transcript is stored beside the recording so the same retention clock governs both. |
 | `escriba_web/` | The backend the page talks to: `hub.py` (one fan-out per person), `driver.py` (one workspace, session and archive per person; the turn itself is `run_escriba`'s, imported), `app.py` (routing). `python -m escriba_web --root … --dev-principal …`. |
 | `web/index.html` | The web front end: one static page, no build step. Plain DOM like the peer's, with React loaded for one job — markdown a subagent wrote, rendered without raw HTML. `?mock=1` renders the design's fixtures and talks to no backend. |
 | `template/` | What a new workspace is made of. Copied, never shared: the workspace is the isolation boundary. |
