@@ -274,14 +274,22 @@ trace:
 # It is a floor, not a preference, which is why it is the one number here
 # that needed nobody's opinion.
 #
-# `conversation_retention_days` IS DELIBERATELY ABSENT, and the absence
-# is load-bearing rather than an omission: how long a person's own
-# recorded voice is kept is the provider's policy, not a default this
-# file may invent.  `housekeeping` reads these two clocks out of the
-# session's sealed snapshot and treats an undeclared clock the way the
-# framework does — "delete removes everything, exactly as before" — so
-# until it is declared the recordings carry no floor and the disk ceiling
-# alone governs them.  Declare it and the sweep will refuse to delete
-# inside it, reporting the conflict instead.
+# `conversation_retention_days: 60` is the provider's own policy — how
+# long a person's recorded voice is kept — and it is SHORTER than the
+# audit clock on purpose: the record of what the system did outlives the
+# personal data it did it to, which is what satisfies Art. 19(1) and a
+# GDPR erasure request at once.
+#
+# It is also a FLOOR THAT BITES.  `housekeeping` reads both clocks out of
+# the session's sealed snapshot, and inside this one it will not delete
+# for the disk ceiling: it reports the shortfall and exits non-zero
+# instead.  At 200 MB a person holds roughly one to two hours of
+# conversation (model speech is 48 KB/s against the person's 4 KB/s), so
+# a daily user reaches the ceiling well before 60 days and the sweep
+# starts saying so rather than quietly dropping the oldest week.  That is
+# the designed outcome: the two numbers answer to different authorities,
+# and a disagreement between them is a person's decision, not a
+# housekeeping pass's.
 record_keeping:
   retention_days: 180
+  conversation_retention_days: 60
