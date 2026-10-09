@@ -47,6 +47,23 @@ try:
     check("a workspace is <root>/<caller>/workspace", alice.name, "workspace")
     check("provisioned with profiles",
           (alice / ".jaato" / "profiles").is_dir(), True)
+    # WITHOUT THIS THE SESSION NEVER OPENS.  The daemon resolves
+    # `profile="escriba"` inside the selected set; with no
+    # JAATO_PROFILE_SET it looks only at the top level, finds
+    # `_base_escriba` and not `escriba`, and refuses with
+    # ProfileNotFoundError.  Every developer workspace had a hand-written
+    # `.env` from before any of this, so the gap was invisible until a
+    # person was provisioned by the real path.
+    env = (alice / ".env").read_text()
+    check("the profile set is selected", "JAATO_PROFILE_SET=openrouter_gpt_audio" in env, True)
+    check("and no credential rides along", "sk-" in env or "api" in env.lower().replace("pass://", ""), False)
+
+    # An existing `.env` belongs to whoever wrote it.
+    (alice / ".env").write_text("JAATO_PROFILE_SET=mine\n")
+    w.provision("alice@example.com", root=root)
+    check("an existing .env is left alone",
+          (alice / ".env").read_text().strip(), "JAATO_PROFILE_SET=mine")
+
     check("provisioned with personas",
           (alice / ".jaato" / "agents" / "escriba.md").is_file(), True)
 
@@ -102,6 +119,22 @@ try:
         pass
 finally:
     shutil.rmtree(root, ignore_errors=True)
+
+# A template that cannot say which set to use is refused BEFORE anything
+# is copied: a half-provisioned workspace that looks complete and cannot
+# open a session is worse than a refusal naming the reason.
+import shutil as _sh
+two = Path(tempfile.mkdtemp(prefix="escriba-tpl-"))
+_sh.copytree(w.TEMPLATE, two / "t", dirs_exist_ok=False)
+(two / "t" / ".jaato" / "profiles" / "another_set").mkdir()
+land = Path(tempfile.mkdtemp(prefix="escriba-root-"))
+try:
+    w.provision("bob@example.com", root=land, template=two / "t")
+    check("two profile sets are refused", "provisioned", "refused")
+except w.NotProvisioned as exc:
+    check("the refusal names both sets", "another_set" in str(exc), True)
+check("and nothing was left behind", list(land.iterdir()), [])
+_sh.rmtree(two); _sh.rmtree(land)
 
 print("workspaces OK" if not fail else f"{fail} failure(s)")
 sys.exit(1 if fail else 0)

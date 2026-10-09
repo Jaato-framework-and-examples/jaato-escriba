@@ -74,6 +74,12 @@ jaato-server = { index = "testpypi" }
 # driver runs without `rich`, and saying so here keeps that true.
 tui = ["rich>=13.0"]
 
+# The web front end's backend: the only SDK client, serving one static
+# page.  `python-multipart` is not optional decoration — FastAPI needs it
+# to accept the recording the browser uploads, and without it the upload
+# fails at request parsing with a message about the wrong thing.
+web = ["fastapi>=0.115", "uvicorn>=0.30", "python-multipart>=0.0.9"]
+
 # THE DAEMON IS A SERVICE, NOT AN IMPORT.  This project is a client: it
 # imports `jaato_sdk` and talks to a daemon over `/tmp/jaato.sock`, which
 # may well live in another environment entirely.  Install this extra only

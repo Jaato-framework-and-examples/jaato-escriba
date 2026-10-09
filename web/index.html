@@ -337,7 +337,7 @@ const S = {
   session_at: null, archive_dir: null, playback: "navegador",
   tab: "memoria", sel: null, reader: false,
   recording: false, rec: 0, playing: null, failed: null,
-  alert: null, dismissed: null, connected: true,
+  alert: null, dismissed: null, everConnected: false,
   //: True once the hub has sent a snapshot.  Before that every count is
   //: UNKNOWN rather than zero: a panel reading "0 documentos" on a page
   //: that has spoken to nothing is a statement about the person's
@@ -463,7 +463,13 @@ const ALERTS = {
     "El navegador no recibe sonido. Revisa el permiso o el interruptor del micrófono."],
   playback: (d) => ["Fallo de reproducción",
     `${d.audio || "el audio"} no se pudo reproducir. El audio está en el archivo; el navegador no lo ha decodificado.`],
-  connection: () => ["Sin conexión", "Se ha perdido la conexión con el escriba. Reintentando…"],
+  // Two different facts, and the copy used to state the wrong one: a page
+  // that never reached the backend had not LOST anything.  Somebody
+  // reading "se ha perdido la conexión" on a first load goes looking for
+  // a network fault that is not there.
+  connection: (d) => d.had
+    ? ["Sin conexión", "Se ha perdido la conexión con el escriba. Reintentando…"]
+    : ["Sin conexión", "No se ha podido conectar con el escriba. Reintentando…"],
 };
 function raise(kind, detail) {
   S.alert = { kind, detail: detail || {}, seq: (S.alert ? S.alert.seq : 0) + 1 };
@@ -1094,11 +1100,11 @@ function connect() {
   for (const kind of ["state", "entry", "counts", "items", "status", "alert", "days"]) {
     es.addEventListener(kind, (m) => onEvent(kind, JSON.parse(m.data)));
   }
-  es.onopen = () => { clearTimeout(lost); lost = null; S.connected = true; clearAlert("connection"); };
+  es.onopen = () => { clearTimeout(lost); lost = null; S.everConnected = true; clearAlert("connection"); };
   es.onerror = () => {
     // The browser reconnects on its own; five seconds is the point at
     // which the silence stops being a blip and starts being a failure.
-    if (lost === null) lost = setTimeout(() => raise("connection"), 5000);
+    if (lost === null) lost = setTimeout(() => raise("connection", { had: S.everConnected }), 5000);
   };
 }
 

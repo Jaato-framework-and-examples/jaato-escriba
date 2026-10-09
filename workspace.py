@@ -52,6 +52,13 @@ RUNTIME = (
 #: Everything a workspace needs before a session can open in it.
 REQUIRED = (".jaato/agents", ".jaato/profiles")
 
+#: The file that selects the tier-2 overlay.  It is NOT in the template
+#: and must not be: it used to hold the provider credential, which is why
+#: it is gitignored, and the credential now lives in the daemon's vault as
+#: a `pass://` pointer on the provider knob.  What stays is the one line
+#: that makes the set's profiles findable.
+ENV = ".env"
+
 
 class NotProvisioned(RuntimeError):
     """The template cannot make a workspace, and silence would be worse."""
@@ -71,6 +78,55 @@ def caller_dir(principal: str) -> str:
     stem = re.sub(r"[^a-zA-Z0-9._-]+", "-", principal.strip()).strip("-.")[:40]
     digest = hashlib.sha256(principal.encode("utf-8")).hexdigest()[:8]
     return f"{stem or 'user'}-{digest}"
+
+
+def profile_set(template: Path) -> str:
+    """Which tier-2 overlay a workspace made from this template uses.
+
+    DISCOVERED, never named here.  `.jaato/profiles/` holds the
+    provider-agnostic `_base_*` files plus one directory per set, and the
+    set is what binds a provider and a model.  Exactly one is a choice
+    already made; several would be a choice nobody can make on a person's
+    behalf, and none means the template cannot open a session at all.
+    Both are refused rather than guessed.
+    """
+    sets = sorted(d.name for d in (template / ".jaato" / "profiles").iterdir()
+                  if d.is_dir() and not d.name.startswith("."))
+    if len(sets) != 1:
+        raise NotProvisioned(
+            f"template: {template} has {len(sets)} profile sets ({', '.join(sets) or 'none'}); "
+            f"exactly one is needed, because JAATO_PROFILE_SET selects it and "
+            f"nothing here can choose for the person")
+    return sets[0]
+
+
+def _write_env(ws: Path, template: Path) -> None:
+    """Give a workspace the one variable its session cannot start without.
+
+    WHY THIS EXISTS.  The daemon resolves `profile="escriba"` inside the
+    selected set; with no `JAATO_PROFILE_SET` it looks only at the top
+    level, finds `_base_escriba` and not `escriba`, and refuses the
+    session with `ProfileNotFoundError`.  Measured, on a workspace this
+    function had just provisioned.  Every developer's workspace had a
+    hand-written `.env` from before any of this, so the gap only appears
+    for a person provisioned by the real path — which is every person on
+    the deployed host.
+
+    An EXISTING file is left exactly as it is.  Absent, it is written;
+    present, it belongs to whoever put it there.
+    """
+    target = ws / ENV
+    if target.exists():
+        return
+    target.write_text(
+        "# Selecciona el overlay de tier-2 en tiempo de ejecución.\n"
+        "# Lo escribe el aprovisionamiento: sin esta línea el daemon no\n"
+        "# encuentra el perfil 'escriba' y la sesión no abre.\n"
+        f"JAATO_PROFILE_SET={profile_set(template)}\n"
+        "\n"
+        "# La credencial del proveedor NO se pone aquí. Vive en el vault\n"
+        "# del daemon y el perfil la nombra con pass://.\n",
+        encoding="utf-8")
 
 
 def _wanted(root: Path) -> Iterable[Path]:
@@ -113,6 +169,7 @@ def provision(principal: str, root: Path = DEFAULT_ROOT,
     for need in REQUIRED:
         if not (template / need).exists():
             raise NotProvisioned(f"template: {template} has no {need}")
+    profile_set(template)      # refuse early, before anything is copied
 
     # THE ROOT IS NOT OURS TO CREATE.  `mkdir(parents=True)` below would
     # happily make it, and that is how a multi-tenant root comes into
@@ -135,6 +192,10 @@ def provision(principal: str, root: Path = DEFAULT_ROOT,
     if root not in ws.parents:
         raise NotProvisioned(f"workspace {ws} would fall outside {root}")
     if ws.exists():
+        # Idempotent, with ONE repair: a workspace missing `.env` cannot
+        # open a session at all, and writing the file it never had takes
+        # nothing away from the person.  Everything else is theirs.
+        _write_env(ws, template)
         return ws
 
     staging = ws.with_name(f".provisioning-{ws.name}")
@@ -143,6 +204,7 @@ def provision(principal: str, root: Path = DEFAULT_ROOT,
     staging.mkdir(parents=True)
     try:
         _copy_template(template, staging)
+        _write_env(staging, template)
         # One rename, so a workspace is either absent or complete. A
         # half-copied one would look provisioned and be missing a profile.
         staging.rename(ws)
