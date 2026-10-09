@@ -273,9 +273,15 @@ class Person:
         #: one per person.  It is hundreds of megabytes.
         self.scribe = scribe
         self.principal = principal
-        self.ws = _workspace.provision(principal, root=root, identity=identity)
         self.hub = Hub()
         self.board = WebBoard(self.hub)
+        # The board exists first so the refresh can be SEEN.  A person's
+        # profiles being replaced under them is a thing that happened,
+        # and the transcript is where this driver says what happened.
+        self.ws = _workspace.provision(
+            principal, root=root, identity=identity,
+            on_refresh=lambda what: self.board.note(
+                f"· assets actualizados desde la plantilla: {', '.join(what)}"))
         self.archive = _archive.Archive(
             self.ws, limit=limit,
             on_full=lambda m: self.board.note(f"· {m}"))

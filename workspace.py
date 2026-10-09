@@ -29,7 +29,7 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, List, Optional
 
 #: The implementation's own directory — outside every workspace.
 HERE = Path(__file__).resolve().parent
@@ -64,6 +64,15 @@ REQUIRED = (".jaato/agents", ".jaato/profiles")
 #: reading something the workspace itself could have authored.  Here it
 #: is written once by the provisioner and never granted to anyone else.
 IDENTITY = "person.json"
+
+#: Which template a workspace's authored assets came from.
+#:
+#: Beside the workspace rather than in it, like `person.json` and for
+#: the same reason: everything under `{workspace}/` is writable by the
+#: confined session, and a record the session can rewrite is not a
+#: record.  It also gates the refresh — without it every session open
+#: would rewrite forty files and churn their mtimes for nothing.
+STAMP = "template.json"
 
 #: The file that selects the tier-2 overlay.  It is NOT in the template
 #: and must not be: it used to hold the provider credential, which is why
@@ -199,16 +208,138 @@ def _write_identity(home: Path, principal: str, identity: Optional[dict]) -> Non
     target.chmod(0o600)
 
 
+def authored_digest(template: Path) -> str:
+    """What this template says, as one value.
+
+    Over the same paths `_wanted()` copies, which is the definition that
+    matters: the template carries AUTHORED ASSETS only — agents,
+    profiles, completion schemas, scripts — because `RUNTIME` excludes
+    everything a session writes.  So "what the template holds" and "what
+    belongs to us rather than to the person" are the same set, and
+    neither has to be listed twice.
+    """
+    h = hashlib.sha256()
+    for src in _wanted(template):
+        if not src.is_file() or src.is_symlink():
+            continue
+        h.update(src.relative_to(template).as_posix().encode("utf-8"))
+        h.update(b"\0")
+        h.update(src.read_bytes())
+        h.update(b"\0")
+    return h.hexdigest()[:16]
+
+
+def _refresh_authored(ws: Path, template: Path) -> List[str]:
+    """Replace the authored assets with the template's, wholesale.
+
+    WHY AN EXISTING WORKSPACE IS UPDATED AT ALL, when `provision` was
+    written to leave one alone.  That rule is right for what the person
+    accumulates — memories, references, documents, recordings — and
+    wrong for what we author.  A profile fix, a persona correction, a
+    new completion schema: shipped after somebody's first sign-in, none
+    of it ever reached them, and nothing else would ever update those
+    files, because `.jaato/profiles/` is write-denied to the session
+    that lives there.  Found the day a telemetry opt-out shipped and the
+    one person already on the host kept exporting.
+
+    WHOLESALE, not file by file: a profile RENAMED in the template would
+    otherwise leave the old one behind, still resolvable by name, and a
+    workspace would run a recipe this repo no longer has.  Each
+    top-level entry the template carries is removed and copied fresh.
+
+    Nothing outside those entries is touched, which is what makes this
+    safe: `RUNTIME` keeps the person's own state out of the template, so
+    the set replaced here cannot contain any of it.
+    """
+    replaced = []
+    for rel in _authored_units(template):
+        dst = ws / rel
+        if dst.is_dir() and not dst.is_symlink():
+            shutil.rmtree(dst)
+        elif dst.exists() or dst.is_symlink():
+            dst.unlink()
+        replaced.append(rel.as_posix())
+    _copy_template(template, ws)
+    return replaced
+
+
+def _authored_units(template: Path, rel: Optional[Path] = None) -> Iterable[Path]:
+    """The deepest paths this template owns OUTRIGHT.
+
+    NOT the template's top-level entries.  The template's only top-level
+    entry is `.jaato/`, and a workspace's `.jaato/` also holds the
+    person's memories, their session records and their logs — so
+    replacing at that level deletes everything they have, which is the
+    exact disaster the old leave-it-alone rule existed to prevent.  It
+    was written that way first and a test caught it before it shipped.
+
+    A directory is descended into when `RUNTIME` places any of the
+    person's own state inside it, and replaced outright when it does
+    not.  So `.jaato/` is descended (it contains `sessions`, `memory`,
+    `logs`) and `.jaato/profiles/` is replaced whole — which is what
+    lets a RENAMED profile disappear instead of lingering, resolvable by
+    a name this repo no longer has.  Derived from the one declaration
+    that already distinguishes the two kinds, rather than a second list
+    to keep in step with it.
+    """
+    base = template if rel is None else template / rel
+    for child in sorted(base.iterdir()):
+        here = Path(child.name) if rel is None else rel / child.name
+        where = here.as_posix()
+        if child.is_dir() and not child.is_symlink() and any(
+                skip == where or skip.startswith(where + "/") for skip in RUNTIME):
+            yield from _authored_units(template, here)
+        else:
+            yield here
+
+
+def _reconcile_template(home: Path, ws: Path, template: Path,
+                        on_refresh=None, fresh: bool = False) -> None:
+    """Bring a workspace's authored assets up to this template, once.
+
+    `fresh` says the workspace was JUST laid down from this template, so
+    the copy has already happened and only the stamp is owed.  It is a
+    parameter rather than "is there a stamp?" because those answer
+    different questions and the difference is the whole point: a
+    workspace provisioned before stamping existed has no stamp AND no
+    refresh, and inferring "new" from the missing file skipped exactly
+    the workspaces this was written for — including the one person
+    already on the deployed host.  Caught by running it against a real
+    workspace instead of a fixture.
+    """
+    stamp = home / STAMP
+    want = authored_digest(template)
+    try:
+        have = json.loads(stamp.read_text(encoding="utf-8")).get("digest")
+    except (OSError, json.JSONDecodeError):
+        have = None
+    if have == want:
+        return
+    replaced = [] if fresh else _refresh_authored(ws, template)
+    stamp.write_text(json.dumps(
+        {"digest": want, "at": datetime.now().isoformat(timespec="seconds"),
+         "replaced": replaced}, indent=2) + "\n", encoding="utf-8")
+    stamp.chmod(0o600)
+    if replaced and on_refresh is not None:
+        on_refresh(replaced)
+
+
 def provision(principal: str, root: Path = DEFAULT_ROOT,
               template: Path = TEMPLATE,
-              identity: Optional[dict] = None) -> Path:
+              identity: Optional[dict] = None,
+              on_refresh=None) -> Path:
     """Return this person's workspace, creating it the first time.
 
-    Idempotent: an existing workspace is returned untouched, because it
-    holds everything they have ever told the escriba.  A changed template
-    reaches an existing person only when their workspace is deleted —
-    the same bargain `jaato-mcp` makes, and the only one that cannot
-    overwrite somebody's memories with a seed file.
+    Idempotent for the PERSON's half: memories, references, documents and
+    recordings are never touched, because they hold everything they have
+    ever told the escriba.
+
+    The AUTHORED half is reconciled instead of left alone, which is a
+    deliberate departure from `jaato-mcp`'s bargain and from what this
+    function used to do.  Profiles, personas, schemas and scripts are
+    ours, not theirs — they are even write-denied to the session that
+    lives there — so leaving them frozen at first sign-in meant every
+    later fix reached nobody.  See `_refresh_authored`.
     """
     if not template.is_dir():
         raise NotProvisioned(f"template: {template} is not a directory")
@@ -239,6 +370,7 @@ def provision(principal: str, root: Path = DEFAULT_ROOT,
         raise NotProvisioned(f"workspace {ws} would fall outside {root}")
     if ws.exists():
         _write_identity(ws.parent, principal, identity)
+        _reconcile_template(ws.parent, ws, template, on_refresh)
         # Idempotent, with ONE repair: a workspace missing `.env` cannot
         # open a session at all, and writing the file it never had takes
         # nothing away from the person.  Everything else is theirs.
@@ -256,6 +388,7 @@ def provision(principal: str, root: Path = DEFAULT_ROOT,
         # half-copied one would look provisioned and be missing a profile.
         staging.rename(ws)
         _write_identity(ws.parent, principal, identity)
+        _reconcile_template(ws.parent, ws, template, on_refresh, fresh=True)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise

@@ -171,6 +171,86 @@ for prof in sorted((w.TEMPLATE / ".jaato" / "profiles").glob("*.yaml")):
 check("more than one agent uses the store", len(stores) > 1, True)
 check(f"they all name the same one {stores}", len(set(stores.values())), 1)
 
+# AUTHORED ASSETS FOLLOW THE TEMPLATE; THE PERSON'S DATA NEVER DOES.
+#
+# `provision` used to return an existing workspace untouched, so every
+# profile fix, persona correction and new schema shipped after somebody's
+# first sign-in reached nobody — and nothing else would ever update
+# those files, because `.jaato/profiles/` is write-denied to the session
+# that lives there.  Found the day a telemetry opt-out shipped and the
+# one person already on the host kept exporting.
+#
+# The first version of the fix replaced the template's TOP-LEVEL entry,
+# which is `.jaato/` — and a workspace's `.jaato/` also holds their
+# memories, their sessions and their logs.  It deleted all of it.  These
+# checks are why that never shipped.
+import time as _time
+land = Path(tempfile.mkdtemp(prefix="escriba-refresh-"))
+tpl = Path(tempfile.mkdtemp(prefix="escriba-tpl2-")) / "t"
+_sh2 = __import__("shutil")
+_sh2.copytree(w.TEMPLATE, tpl)
+ws = w.provision("carol@example.com", root=land, template=tpl)
+prof = ws / ".jaato" / "profiles" / "_base_escriba.yaml"
+
+mine = {".jaato/memories/curated.jsonl": '{"mine": true}',
+        ".jaato/references/auto-x.json": "{}",
+        ".jaato/sessions/s.json": "{}",
+        ".jaato/logs/main/session.log": "x",
+        "docs/suyo.md": "# mío",
+        "audio/20260101_000000/manifest.jsonl": "{}"}
+for rel, body in mine.items():
+    f = ws / rel
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(body)
+
+(tpl / ".jaato" / "profiles" / "_base_escriba.yaml").write_text(
+    prof.read_text() + "\n# UN ARREGLO POSTERIOR\n")
+(tpl / ".jaato" / "profiles" / "_base_viejo.yaml").write_text("name: viejo\n")
+told = []
+w.provision("carol@example.com", root=land, template=tpl, on_refresh=told.append)
+
+check("a later fix reaches an existing person",
+      "UN ARREGLO POSTERIOR" in prof.read_text(), True)
+check("and a profile added later arrives",
+      (ws / ".jaato" / "profiles" / "_base_viejo.yaml").is_file(), True)
+check("the refresh is reported, not silent", bool(told), True)
+for rel in mine:
+    check(f"kept: {rel}", (ws / rel).is_file(), True)
+
+# A profile RENAMED away must not linger, resolvable by a name this repo
+# no longer has.
+(tpl / ".jaato" / "profiles" / "_base_viejo.yaml").unlink()
+w.provision("carol@example.com", root=land, template=tpl)
+check("a profile removed from the template goes too",
+      (ws / ".jaato" / "profiles" / "_base_viejo.yaml").exists(), False)
+
+# An unchanged template is a no-op: every session open must not rewrite
+# forty files and churn their mtimes.
+was = prof.stat().st_mtime_ns
+_time.sleep(0.02)
+quiet = []
+w.provision("carol@example.com", root=land, template=tpl, on_refresh=quiet.append)
+check("an unchanged template rewrites nothing", prof.stat().st_mtime_ns, was)
+check("and reports nothing", quiet, [])
+_sh2.rmtree(land)
+
+# A WORKSPACE THAT PREDATES STAMPING IS REFRESHED, NOT ASSUMED CURRENT.
+# The first version inferred "brand new" from a missing stamp, so every
+# workspace provisioned before this existed — the one person already on
+# the deployed host included — was stamped as current and never
+# refreshed.  Exactly the workspaces the whole change was written for.
+old = Path(tempfile.mkdtemp(prefix="escriba-old-"))
+oldws = w.provision("dave@example.com", root=old, template=tpl)
+(oldws.parent / w.STAMP).unlink()                 # as it was before stamps
+(tpl / ".jaato" / "profiles" / "_base_juez.yaml").write_text("name: _base_juez\n")
+seen = []
+w.provision("dave@example.com", root=old, template=tpl, on_refresh=seen.append)
+check("a workspace with no stamp is refreshed", bool(seen), True)
+check("and gets the template's current content",
+      (oldws / ".jaato" / "profiles" / "_base_juez.yaml").read_text().strip(),
+      "name: _base_juez")
+_sh2.rmtree(old); _sh2.rmtree(tpl.parent)
+
 # A template that cannot say which set to use is refused BEFORE anything
 # is copied: a half-provisioned workspace that looks complete and cannot
 # open a session is worse than a refusal naming the reason.
