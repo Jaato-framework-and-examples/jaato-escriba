@@ -338,6 +338,11 @@ const S = {
   tab: "memoria", sel: null, reader: false,
   recording: false, rec: 0, playing: null, failed: null,
   alert: null, dismissed: null, connected: true,
+  //: True once the hub has sent a snapshot.  Before that every count is
+  //: UNKNOWN rather than zero: a panel reading "0 documentos" on a page
+  //: that has spoken to nothing is a statement about the person's
+  //: workspace, and it is one we have no grounds for.
+  loaded: false,
   activeDay: null, progSec: 0,
   theme: localStorage.getItem("escriba-theme") || "auto",
   showIds: localStorage.getItem("escriba-audit") === "1",
@@ -695,18 +700,20 @@ function delta(now, start) {
 }
 function renderCounts() {
   const c = S.counts;
+  const u = S.loaded ? null : undefined;        // unknown, not zero
   const cells = [
     { label: "memoria curada", value: c.curated, d: delta(c.curated, c.curated_at_start),
       hint: c.curated_at_start != null ? c.curated_at_start + " al empezar" : "", good: (d) => d >= 0 },
     { label: "memoria sin curar", value: c.raw, d: delta(c.raw, c.raw_at_start),
-      hint: (c.raw_at_start != null ? c.raw_at_start + " al empezar · " : "") +
+      hint: c.raw_at_start == null ? "" : c.raw_at_start + " al empezar · " +
             (delta(c.raw, c.raw_at_start) > 0 ? "la cola crece" : "la cola baja"),
       // A growing uncurated queue is the one count whose rise is NOT good
       // news: it is work waiting for the curator, not knowledge gained.
       good: (d) => d <= 0, rising: true },
     { label: "referencias", value: c.catalogue, d: delta(c.catalogue, c.catalogue_at_start),
-      hint: (c.found || 0) + " encontradas · " + (c.selected || 0) + " elegidas", good: (d) => d >= 0 },
-    { label: "documentos", value: (S.items.documentos || []).length,
+      hint: S.loaded ? (c.found || 0) + " encontradas · " + (c.selected || 0) + " elegidas" : "",
+      good: (d) => d >= 0 },
+    { label: "documentos", value: S.loaded ? (S.items.documentos || []).length : u,
       d: delta((S.items.documentos || []).length, c.documents_at_start),
       hint: c.documents_at_start != null ? c.documents_at_start + " al empezar" : "", good: (d) => d >= 0 },
   ];
@@ -737,7 +744,8 @@ function renderTabs() {
   box.textContent = "";
   for (const t of TABS) {
     const b = el("button", t === S.tab ? "on" : "");
-    b.append(el("span", null, t), el("span", "n", String((S.items[t] || []).length)));
+    b.append(el("span", null, t),
+             el("span", "n", S.loaded ? String((S.items[t] || []).length) : "—"));
     b.onclick = () => { S.tab = t; S.sel = null; renderTabs(); renderPanel(); };
     box.append(b);
   }
@@ -1029,6 +1037,7 @@ const typing = (t) => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" ||
 // ------------------------------------------------------------------- hub
 function onEvent(kind, data) {
   if (kind === "state") {
+    S.loaded = true;
     S.order = []; S.byId.clear();
     for (const e of data.entries || []) { S.byId.set(e.id, e); S.order.push(e.id); }
     S.counts = data.counts || {};
@@ -1206,10 +1215,20 @@ function mockTurn(seconds) {
 }
 
 // ----------------------------------------------------------------- start
+// DRAW BEFORE CONNECTING.  Every region used to be rendered only by the
+// hub's first `state`, so a page whose backend was not up showed an empty
+// header and an empty knowledge column — indistinguishable from a broken
+// build, when the truth was "nothing has connected yet".  The chrome is
+// drawn from the empty state first: four pills with `escuchando` waiting,
+// counts reading `—`, tabs at zero.  The alert then says what is wrong.
+function renderAll() {
+  renderPills(); renderCounts(); renderTabs(); renderPanel();
+  renderDays(); renderTranscript(); pttFace();
+}
 applyTheme();
 $("audit-btn").setAttribute("aria-pressed", String(S.showIds));
+renderAll();
 if (MOCK) onEvent("state", mockState()); else connect();
-pttFace();
 </script>
 </body>
 </html>
