@@ -104,6 +104,22 @@ async def main():
           [d for k, d in drain(q) if k == "status"],
           [{"status": "searching", "query": "riego por goteo"}])
 
+    # A REPLY ADDS TWO ENTRIES AND REFRESHES ONCE.  `anotado` is a
+    # required field of the escriba's completion schema, so every closed
+    # turn calls `spoke(words, anotado, audio=...)`, which appends the
+    # reply and its annotation before `_refreshed` runs.  Publishing only
+    # `entries[-1]` sent the annotation and dropped the reply — the row
+    # carrying the audio — and the transcript showed an answer nobody
+    # could read or listen to.  Found on a live page, not here.
+    drain(q)
+    board.spoke("Genial, me parece un tema interesante.",
+                "He registrado el interés en los gatos.",
+                audio="att_0196475cd416e2b5")
+    rows = [d for k, d in drain(q) if k == "entry"]
+    check("both entries are published", [r["kind"] for r in rows], ["spoke", "anotado"])
+    check("the reply carries its audio", rows[0]["audio"], "att_0196475cd416e2b5")
+    check("and they are different rows", rows[0]["id"] != rows[1]["id"], True)
+
     # A folded repeat is the same row: one `entry`, with a higher count,
     # so the page updates in place instead of drawing the line twice.
     drain(q)

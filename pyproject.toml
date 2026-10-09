@@ -29,6 +29,12 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 
 dependencies = [
+    # `enrichment.py:49` imports it inside `_search`, so the app starts
+    # without it and the FIRST search fails with ModuleNotFoundError —
+    # which is how it was found, in a note on a live transcript. The same
+    # hole pyproject.toml exists to close: a dependency the code imports
+    # and the manifest does not name.
+    "ddgs>=9.16.0",
     # 0.21.0 is a FLOOR WITH A REASON, not a snapshot of what happened to
     # be installed.  Two of them:
     #   - `jaato-server` imports `reported_cache_count` (added in SDK

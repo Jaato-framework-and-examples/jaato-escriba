@@ -71,6 +71,7 @@ class WebBoard(_board.StateBoard):
     def __init__(self, hub: Hub) -> None:
         super().__init__()
         self.hub = hub
+        self._high = 0                 # the highest entry id published
         self._sig: Optional[tuple] = None
         self._counts: Optional[dict] = None
         self._status: Optional[dict] = None
@@ -101,13 +102,29 @@ class WebBoard(_board.StateBoard):
                 "items": dict(s.items), "status": self.status(),
                 "archive_dir": s.archive_dir, **extra}
 
+    @staticmethod
+    def _draws(e) -> tuple:
+        """What a row shows.  Anything else changing is not news."""
+        return (e.id, e.text, e.audio, e.repeats, e.seconds)
+
     def _refreshed(self) -> None:
         s = self.state
+        # EVERY NEW ENTRY, not just the last one.  `spoke()` adds the reply
+        # AND its annotation before calling this once, and `anotado` is a
+        # REQUIRED field of the escriba's completion schema — so publishing
+        # only `entries[-1]` dropped the reply itself on every closed turn.
+        # The browser got the annotation and nothing to listen to, which is
+        # exactly how it was found.
+        for e in s.entries:
+            if e.id > self._high:
+                self._high = e.id
+                self._sig = self._draws(e)
+                self.hub.publish("entry", entry_json(e))
         last = s.entries[-1] if s.entries else None
         if last is not None:
-            # The signature covers what a row DRAWS, so a late audio ref or
-            # a folded repeat publishes and an unchanged tick does not.
-            sig = (last.id, last.text, last.audio, last.repeats, last.seconds)
+            # A row already sent can still change in place: a folded repeat
+            # bumps its count, and audio arrives after the text.
+            sig = self._draws(last)
             if sig != self._sig:
                 self._sig = sig
                 self.hub.publish("entry", entry_json(last))
@@ -236,11 +253,15 @@ class Person:
             if self._scribe is None:
                 raise RuntimeError("the session is not open")
             data = await asyncio.to_thread(voice._to_mp3, blob)
-            said = {"mime_type": voice.UTTERANCE_MIME, "data": data,
-                    "display_name": "utterance.mp3",
-                    ATTACHMENT_ID_KEY: self.archive.heard(data)}
             seconds = len(data) / 4000.0      # 32 kbit/s mono, by construction
-            self.board.heard(seconds, said.get(ATTACHMENT_ID_KEY))
+            said = {"mime_type": voice.UTTERANCE_MIME, "data": data,
+                    "display_name": "utterance.mp3", "seconds": seconds,
+                    ATTACHMENT_ID_KEY: self.archive.heard(data)}
+            # Popped the way the terminal driver pops it: `seconds` is for
+            # the view and the manifest, and an unknown key on an
+            # attachment is not something to send to the daemon.
+            self.board.heard(said.pop("seconds"), said.get(ATTACHMENT_ID_KEY))
+            said["seconds"] = seconds
             try:
                 await _turn(self._scribe, "", said, self._relay(),
                             log=self.archive.turn, tui=self.board)
