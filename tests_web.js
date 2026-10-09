@@ -145,6 +145,19 @@ check("no claim about the queue direction",
       cellText(1).includes("la cola"), false);
 check("tab counts are unknown too", (byId.get("tabs").children[0] || blank).textContent.includes("—"), true);
 
+// ----------------------------------------- a browser that has no microphone
+// The stub has no `isSecureContext`, which is exactly the page served over
+// http from another machine.  It must say so AT LOAD and disable the
+// button, rather than let somebody hold it down, speak, and be told
+// afterwards — and it must not blame a permission the browser never
+// offered.
+const alertText = () => byId.get("alert-slot").textContent;
+check("an insecure origin is reported at load", alertText().includes("Micrófono no disponible"), true);
+check("it names the origin, not the permission", alertText().includes("https"), true);
+check("it does not send them to the permission", alertText().includes("Revisa el permiso"), false);
+check("the button is disabled", byId.get("ptt").disabled, true);
+check("and says why", byId.get("ptt-sub").textContent, "requiere https o localhost");
+
 // ------------------------------------------------------- with a snapshot
 T.onEvent("state", T.mockState());
 check("the snapshot is marked loaded", T.S.loaded, true);

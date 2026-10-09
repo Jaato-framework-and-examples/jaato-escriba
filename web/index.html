@@ -467,6 +467,15 @@ const ALERTS = {
   // that never reached the backend had not LOST anything.  Somebody
   // reading "se ha perdido la conexión" on a first load goes looking for
   // a network fault that is not there.
+  // NOT a permission problem, and saying "revisa el permiso" sends the
+  // reader looking for a setting the browser is not offering: on an
+  // insecure origin Chrome does not expose `navigator.mediaDevices` at
+  // all, so the site panel shows sound output and no microphone entry.
+  // The fix is the origin, so the copy names the origin.
+  insecure: () => ["Micrófono no disponible",
+    "El navegador sólo entrega el micrófono en un origen seguro: https, o " +
+    "localhost en esta misma máquina. Esta página se ha abierto por http " +
+    "desde otro equipo, así que no hay permiso que conceder."],
   connection: (d) => d.had
     ? ["Sin conexión", "Se ha perdido la conexión con el escriba. Reintentando…"]
     : ["Sin conexión", "No se ha podido conectar con el escriba. Reintentando…"],
@@ -940,6 +949,17 @@ function pttFace() {
   time.textContent = S.recording ? mmss(S.rec) : "";
 }
 
+// Knowable at LOAD, so it is said at load.  Waiting for the first press
+// to discover that the browser will never hand over a microphone means
+// the person holds a button down, speaks, and is told afterwards.
+function micUnavailable() {
+  if (!window.isSecureContext) return "requiere https o localhost";
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return "este navegador no expone getUserMedia";
+  }
+  return null;
+}
+
 async function mic() {
   if (stream) return stream;
   // Asked at the first press, not on load: a permission prompt that appears
@@ -1233,6 +1253,8 @@ function renderAll() {
 }
 applyTheme();
 $("audit-btn").setAttribute("aria-pressed", String(S.showIds));
+S.micReason = micUnavailable();
+if (S.micReason) raise("insecure");
 renderAll();
 if (MOCK) onEvent("state", mockState()); else connect();
 </script>
