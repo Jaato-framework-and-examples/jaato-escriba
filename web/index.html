@@ -161,6 +161,7 @@ nav .note code{font-family:var(--mono)}
        border-left:3px solid var(--accent)}
 .spoke.sounding{border-left-color:var(--ok)}
 .spoke p{margin:0;font-size:18px;line-height:1.5;text-wrap:pretty;max-width:68ch}
+.spoke p.nothing{font-size:15px;color:var(--muted);font-style:italic}
 .spoke .meta{display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap;font-size:13px}
 .listen{display:flex;align-items:center;gap:var(--space-2);padding:3px 10px;border:1px solid var(--line-strong);
         border-radius:999px;background:var(--panel);color:var(--ink-2);font-weight:500;font-size:13px;cursor:pointer}
@@ -694,7 +695,16 @@ function paint(e) {
 
   if (e.kind === "spoke") {
     const w = el("div", "spoke" + (playing ? " sounding" : ""));
-    w.append(el("p", null, e.text || ""));
+    if (e.text) {
+      w.append(el("p", null, e.text));
+    } else if (e.silent) {
+      // A turn that produced neither words nor speech.  It happens — the
+      // escriba answers from its silent tier and writes nothing — and the
+      // honest thing is to say so.  The driver used to substitute the
+      // string "(spoke)" here, which a person read as something it had
+      // said.
+      w.append(el("p", "nothing", "no dijo nada en este turno"));
+    }
     const meta = el("div", "meta");
     if (e.audio) {
       const b = el("button", "listen" + (playing ? " sounding" : ""));

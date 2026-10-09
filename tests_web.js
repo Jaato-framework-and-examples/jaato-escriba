@@ -328,11 +328,21 @@ T.onEvent("entry", { id: silentId, kind: "spoke", at: new Date().toISOString(),
                      text: "La sesión se ha cerrado.", audio: null, seconds: null,
                      repeats: 1, silent: false });
 const rowText = () => byId.get("scroll").textContent;
+const rowOfId = (id) => byId.get("scroll").walk()
+  .find((n) => n.dataset && String(n.dataset.id) === String(id)) || blank;
 check("while the turn runs it waits", rowText().includes("audio llegando…"), true);
 T.onEvent("entry", { id: silentId, kind: "spoke", at: new Date().toISOString(),
                      text: "La sesión se ha cerrado.", audio: null, seconds: null,
                      repeats: 1, silent: true });
 check("once it has ended it says so", rowText().includes("sin audio"), true);
+
+// A turn with no words AND no speech.  The driver used to substitute the
+// string "(spoke)", which a person read as something the escriba said.
+T.onEvent("entry", { id: 500004, kind: "spoke", at: new Date().toISOString(),
+                     text: "", audio: null, seconds: null, repeats: 1, silent: true });
+check("an empty turn says it said nothing",
+      rowOfId(500004).textContent.includes("no dijo nada en este turno"), true);
+check("and invents no words", rowOfId(500004).textContent.includes("(spoke)"), false);
 check("and stops waiting", rowText().includes("audio llegando…"), false);
 check("a silent row is never autoplayed", played.length, soundedBefore);
 

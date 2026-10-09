@@ -214,7 +214,9 @@ class LineBoard(NullBoard):
     def spoke(self, words: str, anotado: str = "",
               audio: Optional[str] = None,
               seconds: Optional[float] = None) -> None:
-        console.log(f"escriba: {words}")
+        # A turn can produce nothing at all, and the line says which
+        # rather than printing an empty one.
+        console.log(f"escriba: {words}" if words else "escriba: (sin texto)")
         if anotado:
             console.log(f"   ↳ {anotado}")
 

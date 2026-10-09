@@ -195,7 +195,14 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
         if getattr(ev, "source", None) == "model" else None)
 
     def spoken() -> str:
-        return mouth.last() or "".join(written).strip() or "(spoke)"
+        # EMPTY, not a marker.  This used to answer "(spoke)" when a turn
+        # produced neither an audio transcript nor any text — fine in a
+        # log line, and it reached a person's transcript the moment there
+        # was a web view, where they read a developer's placeholder as
+        # something the escriba had said.  What the turn produced is
+        # nothing, so that is what travels; each view decides how to say
+        # so, which is the view's business and not this function's.
+        return mouth.last() or "".join(written).strip()
 
     try:
         if tui is not None:
@@ -235,7 +242,7 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
         log(heard=(said or {}).get(ATTACHMENT_ID_KEY),
             heard_seconds=(said or {}).get("seconds"),
             spoke=mouth.recordings[-1] if getattr(mouth, "recordings", None) else None,
-            transcript=words if words != "(spoke)" else None,
+            transcript=words or None,
             anotado=(payload or {}).get("anotado"))
         if getattr(mouth, "recordings", None):
             mouth.recordings.clear()
