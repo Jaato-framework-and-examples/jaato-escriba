@@ -76,9 +76,11 @@ class El {
   get offsetTop() { return 0; }
 }
 
-const IDS = ["pills", "session-at", "hright", "playback-where", "audit-btn", "theme-btn", "alert-slot",
-             "days", "scroll", "jump", "ptt", "ptt-title", "ptt-sub", "ptt-time", "counts", "tabs",
-             "panel", "engines", "reader-slot", "player"];
+// READ OFF THE PAGE, not listed here.  A hand-kept list falls behind the
+// moment the markup gains an element, and the failure is a null deref
+// inside a renderer rather than anything that names the real cause.
+const PAGE_HTML = fs.readFileSync(path.join(__dirname, "web", "index.html"), "utf8");
+const IDS = [...new Set([...PAGE_HTML.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]))];
 const byId = new Map(IDS.map((id) => [id, new El("div")]));
 byId.get("player").paused = true;
 
@@ -103,7 +105,18 @@ const sandbox = {
   location: { search: "" },
   navigator: {},
   performance: { now: () => 0 },
-  fetch: () => Promise.resolve({ ok: true, text: () => Promise.resolve("") }),
+  // A SYNCHRONOUS thenable, so the page's boot — which now waits for the
+  // string catalogue before drawing anything — completes before the
+  // assertions below, which are plain top-level code.  It serves the
+  // real i18n/es.json, so the page under test draws the strings the
+  // server actually ships.
+  fetch: (url) => {
+    const body = String(url).startsWith("strings/")
+      ? JSON.parse(fs.readFileSync(path.join(__dirname, "i18n", "es.json"), "utf8"))
+      : null;
+    const done = (v) => ({ then: (f) => done(f ? f(v) : v), catch: () => done(v) });
+    return done({ ok: true, json: () => body, text: () => "" });
+  },
   setTimeout, clearTimeout, setInterval, clearInterval,
   URLSearchParams,
   TextDecoder,
@@ -117,7 +130,7 @@ sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
 
 // ONE copy of the script: read out of the page rather than duplicated here.
-const html = fs.readFileSync(path.join(__dirname, "web", "index.html"), "utf8");
+const html = PAGE_HTML;
 const blocks = [...html.matchAll(/<script>\n([\s\S]*?)\n<\/script>/g)].map((m) => m[1]);
 if (!blocks.length) { console.log("  FAIL could not find the application script in web/index.html"); process.exit(1); }
 const ctx = vm.createContext(sandbox);
@@ -167,7 +180,11 @@ check("the button is disabled", byId.get("ptt").disabled, true);
 check("and says why", byId.get("ptt-sub").textContent, "requiere https o localhost");
 
 // ------------------------------------------------------- with a snapshot
-T.onEvent("state", T.mockState());
+// The real catalogue, not a copy: the page under test draws the strings
+// the server actually ships, so a key renamed in one and not the other
+// fails here.
+const ES = JSON.parse(fs.readFileSync(path.join(__dirname, "i18n", "es.json"), "utf8"));
+T.onEvent("state", Object.assign(T.mockState(), { strings: ES, locale: "es" }));
 check("the snapshot is marked loaded", T.S.loaded, true);
 check("every entry is held by id", T.S.byId.size, T.S.order.length);
 check("the transcript drew its days", byId.get("scroll").children.length, 3);
@@ -251,6 +268,41 @@ check("an empty reading is ignored, not applied",
       showConsumo().includes("1,43 $"), true);
 
 T.S.engTab = "motor"; T.renderEngines();
+
+// ------------------------------------------------------------ languages
+// The selector is drawn from the locales the SERVER lists, so adding a
+// catalogue to i18n/ adds a flag with no change to the page.
+const EN = JSON.parse(fs.readFileSync(path.join(__dirname, "i18n", "en.json"), "utf8"));
+const LOCALES = [{ code: "es", name: "español", flag: "\u{1F1EA}\u{1F1F8}" },
+                 { code: "en", name: "English", flag: "\u{1F1EC}\u{1F1E7}" }];
+T.onEvent("state", Object.assign(T.mockState(), { strings: ES, locale: "es", locales: LOCALES }));
+check("one flag per locale", byId.get("langs").children.length, 2);
+
+// The whole chrome follows the catalogue, not just the panel it was
+// last touched in: a half-switched page is the usual end state of this
+// work and the one thing worth guarding.
+T.onEvent("state", Object.assign(T.mockState(), { strings: EN, locale: "en", locales: LOCALES }));
+check("the pills switch", byId.get("pills").textContent.includes("listening"), true);
+check("the tabs switch", byId.get("tabs").textContent.includes("memory"), true);
+check("the counts switch", byId.get("counts").textContent.includes("curated memory"), true);
+// The sandbox is an insecure origin, so `pttFace` overrides the title
+// with the mic warning — which is itself a catalogue string, so it is
+// still the switch being asserted.
+check("the push-to-talk switches", byId.get("ptt-title").textContent,
+      EN["alert.insecure.title"]);
+check("the day column switches", byId.get("nav-head").textContent, "Days");
+check("the theme button switches", byId.get("theme-btn").textContent.startsWith("theme:"), true);
+check("and the engine tabs", byId.get("engines").textContent.includes("Engine"), true);
+check("no Spanish is left in the header",
+      byId.get("hright").textContent.includes("audio en"), false);
+
+// A key with no entry renders as the key: loud, and greppable. A
+// fallback to Spanish would make an unfinished English page look done.
+T.onEvent("state", Object.assign(T.mockState(), { strings: {}, locale: "en", locales: LOCALES }));
+check("a missing catalogue shows keys, not Spanish",
+      byId.get("ptt-title").textContent, "alert.insecure.title");
+
+T.onEvent("state", Object.assign(T.mockState(), { strings: ES, locale: "es", locales: LOCALES }));
 
 // ------------------------------------------------------------- autoplay
 // A reply sounds by itself, because a voice assistant that waits to be

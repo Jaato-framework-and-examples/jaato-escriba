@@ -217,6 +217,9 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
 .engines .bar.hot i{background:var(--wait)}
 .engines .bar.over i{background:var(--bad)}
 .engines .note{font-size:11px;color:var(--muted);margin-top:var(--space-1)}
+.langs{display:flex;gap:2px}
+.langs .hbtn{padding:2px 6px;font-size:14px;line-height:1.2;filter:grayscale(1);opacity:.55}
+.langs .hbtn.on{filter:none;opacity:1}
 .counts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-bottom:1px solid var(--line)}
 .counts .cell{padding:var(--space-3);border-right:1px solid var(--line);border-bottom:1px solid var(--line);
               display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -301,13 +304,14 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
   <header>
     <div class="brand">
       <div class="name"><span class="dot"></span>escriba</div>
-      <div class="sub" id="session-at">sesión —</div>
+      <div class="sub" id="session-at"></div>
     </div>
     <div class="pills" id="pills" aria-live="polite"></div>
     <div class="hright" id="hright" title="">
-      <span class="k">audio en</span><span class="v" id="playback-where">navegador</span>
-      <button class="hbtn" id="audit-btn" aria-pressed="false" title="mostrar ids de audio">ids</button>
-      <button class="hbtn" id="theme-btn" title="tema">tema: sistema</button>
+      <span class="k" id="audio-in"></span><span class="v" id="playback-where"></span>
+      <span class="langs" id="langs"></span>
+      <button class="hbtn" id="audit-btn" aria-pressed="false">ids</button>
+      <button class="hbtn" id="theme-btn"></button>
     </div>
   </header>
 
@@ -315,15 +319,15 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
 
   <main>
     <nav>
-      <div class="head">Días</div>
+      <div class="head" id="nav-head"></div>
       <div id="days"></div>
-      <div class="note">La vista guarda las últimas 400 entradas. Los días anteriores se leen del manifiesto en
+      <div class="note"><span id="nav-note"></span>
         <code>audio/</code>.</div>
     </nav>
 
     <section class="mid">
       <div class="scroll" id="scroll"></div>
-      <button class="jump" id="jump" hidden>nuevas entradas ↓</button>
+      <button class="jump" id="jump" hidden></button>
       <div class="tray">
         <button class="ptt" id="ptt" aria-pressed="false">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -331,8 +335,8 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
             <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
             <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><path d="M12 19v3"></path>
           </svg>
-          <span class="t"><span class="title" id="ptt-title">Mantén pulsado para hablar</span>
-            <span class="sub" id="ptt-sub">O mantén la barra ESPACIO</span></span>
+          <span class="t"><span class="title" id="ptt-title"></span>
+            <span class="sub" id="ptt-sub"></span></span>
           <span class="time" id="ptt-time"></span>
         </button>
       </div>
@@ -380,6 +384,11 @@ const S = {
   status: { status: "listening", query: null },
   session_at: null, archive_dir: null, playback: "navegador",
   tab: "memoria", refTab: "local", engTab: "motor", sel: null, reader: false,
+  // The active catalogue, handed over with each snapshot.  Empty until
+  // the first one arrives, which is why `tx` renders the KEY rather than
+  // guessing: a Spanish default baked in here would be a second
+  // catalogue, drifting from the one the server actually serves.
+  locale: "es", locales: [], strings: {},
   // {window, spend} — two readouts kept apart on purpose, see renderEngines.
   consumo: { window: null, spend: null },
   recording: false, rec: 0, playing: null, failed: null,
@@ -435,28 +444,30 @@ const dayKey = (iso) => {
           String(d.getDate()).padStart(2, "0")].join("-");
 };
 
-const WEEK = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
-const MONTH = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
-               "octubre", "noviembre", "diciembre"];
+// Weekday and month names come from `Intl` keyed on the chosen locale,
+// never from a translated array: the platform already knows every
+// locale's names, and a list here would be one more thing to keep in
+// step with each catalogue added.
+const named = (d, opt) => new Intl.DateTimeFormat(S.locale, opt).format(d);
 function dayName(key) {
   const d = new Date(key + "T00:00:00");
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const days = Math.round((today - d) / 86400000);
-  if (days === 0) return "hoy";
-  if (days === 1) return "ayer";
-  if (days < 7) return WEEK[d.getDay()];
-  return MONTH[d.getMonth()];
+  if (days === 0) return tx("nav.today");
+  if (days === 1) return tx("nav.yesterday");
+  return named(d, days < 7 ? { weekday: "long" } : { month: "long" });
 }
 const dayDate = (key) => {
   const d = new Date(key + "T00:00:00");
-  return d.getDate() + " " + MONTH[d.getMonth()].slice(0, 3);
+  return d.getDate() + " " + named(d, { month: "short" });
 };
 
 // ---------------------------------------------------------------- theme
 function applyTheme() {
   const r = document.documentElement;
   if (S.theme === "auto") r.removeAttribute("data-theme"); else r.setAttribute("data-theme", S.theme);
-  $("theme-btn").textContent = "tema: " + { auto: "sistema", light: "claro", dark: "oscuro" }[S.theme];
+  $("theme-btn").textContent = tx("header.theme",
+    { mode: tx({ auto: "theme.system", light: "theme.light", dark: "theme.dark" }[S.theme]) });
 }
 $("theme-btn").onclick = () => {
   S.theme = { auto: "light", light: "dark", dark: "auto" }[S.theme];
@@ -476,17 +487,17 @@ $("audit-btn").onclick = () => {
 // "speaking" from an entry having audio would light it while the file sat
 // unplayed, which is the confusion the TUI had.
 const PILLS = [
-  { k: "listening", label: "escuchando" },
-  { k: "thinking", label: "pensando…" },
-  { k: "speaking", label: "hablando" },
-  { k: "searching", label: "buscando" },
+  { k: "listening", label: "status.listening" },
+  { k: "thinking", label: "status.thinking" },
+  { k: "speaking", label: "status.speaking" },
+  { k: "searching", label: "status.searching" },
 ];
 function pillTone(k) {
   if (k === "listening") return S.recording ? "bad" : "accent";
   return { thinking: "wait", speaking: "ok", searching: "accent" }[k];
 }
 function pillSub(k) {
-  if (k === "listening") return S.recording ? "micrófono abierto" : "tu turno";
+  if (k === "listening") return S.recording ? tx("status.mic_open") : tx("status.your_turn");
   if (k === "thinking") {
     const waiting = S.order.some((id) => {
       const e = S.byId.get(id);
@@ -507,11 +518,12 @@ function renderPills() {
     const on = p.k === S.status.status;
     const n = el("div", "pill" + (on ? " on-" + pillTone(p.k) : ""));
     const label = el("div", "label");
-    label.append(el("span", "dot"), el("span", "t", p.label));
+    label.append(el("span", "dot"), el("span", "t", tx(p.label)));
     n.append(label, el("div", "sub", on ? pillSub(p.k) : ""));
     box.append(n);
   }
-  $("session-at").textContent = "sesión " + (S.session_at ? hhmm(S.session_at) : "—");
+  $("session-at").textContent = S.session_at
+    ? tx("header.session", { at: hhmm(S.session_at) }) : tx("header.session.none");
   $("hright").title = S.archive_dir ? "audio/" + S.archive_dir : "";
   $("playback-where").textContent = S.playback;
 }
@@ -521,32 +533,30 @@ function renderPills() {
 // here, because an audio UI that stops working without saying so looks
 // exactly like an audio UI waiting for you to speak.
 const ALERTS = {
-  budget: (d) => ["Sesión terminada",
+  budget: (d) => [tx("alert.session.title"),
     `Se alcanzó el límite de presupuesto de la sesión a las ${d.at || "—"}. Lo dicho hasta aquí está guardado.`],
-  mic: () => ["Micrófono silenciado",
-    "El navegador no recibe sonido. Revisa el permiso o el interruptor del micrófono."],
-  playback: (d) => ["Fallo de reproducción",
+  mic: () => [tx("alert.mic.title"),
+    tx("alert.mic.body")],
+  playback: (d) => [tx("alert.playback.title"),
     `${d.audio || "el audio"} no se pudo reproducir. El audio está en el archivo; el navegador no lo ha decodificado.`],
   // Two different facts, and the copy used to state the wrong one: a page
   // that never reached the backend had not LOST anything.  Somebody
-  // reading "se ha perdido la conexión" on a first load goes looking for
+  // reading tx("alert.lost") on a first load goes looking for
   // a network fault that is not there.
-  session: (d) => ["Sesión terminada",
+  session: (d) => [tx("alert.session.title"),
     `La sesión ha terminado: ${d.detail || "sin detalle"}. Lo dicho hasta aquí está guardado.`],
   // NOT a permission problem, and saying "revisa el permiso" sends the
   // reader looking for a setting the browser is not offering: on an
   // insecure origin Chrome does not expose `navigator.mediaDevices` at
   // all, so the site panel shows sound output and no microphone entry.
   // The fix is the origin, so the copy names the origin.
-  insecure: () => ["Micrófono no disponible",
-    "El navegador sólo entrega el micrófono en un origen seguro: https, o " +
-    "localhost en esta misma máquina. Esta página se ha abierto por http " +
-    "desde otro equipo, así que no hay permiso que conceder."],
-  waking: (d) => ["Un momento", d.detail || "el escriba todavía está despertando."],
+  insecure: () => [tx("alert.insecure.title"),
+    tx("alert.insecure.body")],
+  waking: (d) => ["Un momento", d.detail || tx("alert.waking")],
   restarting: (d) => ["Reconectando", `${d.reason}. La página se reconecta sola.`],
   connection: (d) => d.had
-    ? ["Sin conexión", "Se ha perdido la conexión con el escriba. Reintentando…"]
-    : ["Sin conexión", "No se ha podido conectar con el escriba. Reintentando…"],
+    ? [tx("alert.offline.title"), tx("alert.offline.body")]
+    : [tx("alert.offline.title"), "No se ha podido conectar con el escriba. Reintentando…"],
 };
 function raise(kind, detail) {
   S.alert = { kind, detail: detail || {}, seq: (S.alert ? S.alert.seq : 0) + 1 };
@@ -674,7 +684,7 @@ function paint(e) {
 
   if (e.kind === "said") {
     const w = el("div", "said");
-    w.append(el("span", "who", "tú"));
+    w.append(el("span", "who", tx("entry.you")));
     const b = el("button", "bar");
     // The width IS the duration: a column of identical pills says nothing
     // about which utterance was the long one.
@@ -697,7 +707,7 @@ function paint(e) {
     // anybody wrote.
     if (e.text) {
       const said = el("p", "heard", e.text);
-      said.title = "transcripción local de la grabación";
+      said.title = tx("entry.local_transcript");
       r.body.append(said);
     } else if (e.transcribing) {
       // WHERE THE WORDS WILL GO, while they are being read off the
@@ -743,14 +753,14 @@ function paint(e) {
       // there sounds nothing, ever.  Saying "audio llegando…" here is
       // waiting for something that is not coming.
       const t = el("span", "tag neutral", "sin audio");
-      t.title = "el turno terminó sin audio del modelo";
+      t.title = tx("entry.no_audio");
       meta.append(t);
     } else if (e.text) {
       // Text first, audio after: the provider finishes speaking well after
       // the words exist, and waiting for it would hold back the reply.
       meta.append(el("span", "tag wait", "audio llegando…"));
     }
-    if (S.failed === e.id) meta.append(el("span", "tag bad", "fallo de reproducción"));
+    if (S.failed === e.id) meta.append(el("span", "tag bad", tx("entry.playback_failed")));
     if (S.showIds && e.audio) meta.append(el("span", "audit", e.audio));
     w.append(meta);
     r.body.append(w);
@@ -863,20 +873,20 @@ function renderCounts() {
   const c = S.counts;
   const u = S.loaded ? null : undefined;        // unknown, not zero
   const cells = [
-    { label: "memoria curada", value: c.curated, d: delta(c.curated, c.curated_at_start),
+    { label: tx("counts.curated"), value: c.curated, d: delta(c.curated, c.curated_at_start),
       hint: c.curated_at_start != null ? c.curated_at_start + " al empezar" : "", good: (d) => d >= 0 },
-    { label: "memoria sin curar", value: c.raw, d: delta(c.raw, c.raw_at_start),
+    { label: tx("counts.uncurated"), value: c.raw, d: delta(c.raw, c.raw_at_start),
       hint: c.raw_at_start == null ? "" : c.raw_at_start + " al empezar · " +
             (delta(c.raw, c.raw_at_start) > 0 ? "la cola crece" : "la cola baja"),
       // A growing uncurated queue is the one count whose rise is NOT good
       // news: it is work waiting for the curator, not knowledge gained.
       good: (d) => d <= 0, rising: true },
-    { label: "referencias", value: c.catalogue, d: delta(c.catalogue, c.catalogue_at_start),
+    { label: tx("panel.references"), value: c.catalogue, d: delta(c.catalogue, c.catalogue_at_start),
       hint: !S.loaded ? ""
             : (c.found || 0) + " encontradas · " + (c.selected || 0) + " elegidas"
               + (S.wiki.state === "ok" ? " · " + S.wiki.rows.length + " del wiki" : ""),
       good: (d) => d >= 0 },
-    { label: "documentos", value: S.loaded ? (S.items.documentos || []).length : u,
+    { label: tx("panel.documents"), value: S.loaded ? (S.items.documentos || []).length : u,
       d: delta((S.items.documentos || []).length, c.documents_at_start),
       hint: c.documents_at_start != null ? c.documents_at_start + " al empezar" : "", good: (d) => d >= 0 },
   ];
@@ -901,6 +911,8 @@ function renderCounts() {
 }
 
 // ------------------------------------------------------------- knowledge
+const PANEL_KEY = { memoria: "memory", referencias: "references",
+                    documentos: "documents" };
 const TABS = ["memoria", "referencias", "documentos"];
 function renderTabs() {
   const box = $("tabs");
@@ -909,7 +921,8 @@ function renderTabs() {
     const b = el("button", t === S.tab ? "on" : "");
     const listed = (S.items[t] || []).length +
                    (t === "referencias" && S.wiki.state === "ok" ? S.wiki.rows.length : 0);
-    b.append(el("span", null, t), el("span", "n", S.loaded ? String(listed) : "—"));
+    b.append(el("span", null, tx("panel." + PANEL_KEY[t])),
+             el("span", "n", S.loaded ? String(listed) : "—"));
     b.onclick = () => { S.tab = t; S.sel = null; renderTabs(); renderPanel(); };
     box.append(b);
   }
@@ -947,8 +960,8 @@ function subTabs(box) {
   const w = S.wiki || { state: "sin conectar", rows: [] };
   const sub = el("div", "tabs sub");
   for (const [key, label, n] of [
-        ["local", "de esta conversación", String((S.items.referencias || []).length)],
-        ["wiki", "del wiki", w.state === "ok" ? String((w.rows || []).length) : w.state]]) {
+        ["local", tx("refs.local"), String((S.items.referencias || []).length)],
+        ["wiki", tx("refs.wiki"), w.state === "ok" ? String((w.rows || []).length) : w.state]]) {
     const b = el("button", key === S.refTab ? "on" : "");
     b.append(el("span", null, label), el("span", "n", n));
     b.onclick = () => { S.refTab = key; S.sel = null; renderPanel(); };
@@ -982,8 +995,8 @@ function references(box, rows) {
   }
   if (!rows.length) {
     box.append(el("div", "empty", S.refTab === "wiki"
-      ? "nada que puedas ver todavía"
-      : "todavía nada encontrado aquí"));
+      ? tx("panel.empty.hidden")
+      : tx("panel.empty.none")));
     return;
   }
   for (const it of rows) box.append(row(it));
@@ -1016,7 +1029,7 @@ function detailOf(it) {
     const a = el("a", null, it.url);
     a.href = it.url; a.target = "_blank"; a.rel = "noopener noreferrer";
     a.style.fontSize = "14px"; a.style.wordBreak = "break-all";
-    d.append(a, el("div", "mono", "Sin fecha: las referencias no guardan cuándo se catalogaron."));
+    d.append(a, el("div", "mono", tx("refs.no_date")));
   } else {
     d.append(el("div", "mono", it.path));
     const open = el("button", "primary", "Leer documento");
@@ -1024,6 +1037,53 @@ function detailOf(it) {
     d.append(open);
   }
   return d;
+}
+
+// ---------------------------------------------------------- the language
+// DRAWN FROM THE LOCALES THE SERVER LISTS, never from a list here: a
+// catalogue added to i18n/ appears as a flag with no change to this page.
+function renderLangs() {
+  const box = $("langs");
+  if (!box) return;
+  box.textContent = "";
+  if (S.locales.length < 2) return;      // nothing to choose between
+  for (const l of S.locales) {
+    const b = el("button", "hbtn" + (l.code === S.locale ? " on" : ""), l.flag);
+    b.title = l.name;
+    b.setAttribute("aria-pressed", String(l.code === S.locale));
+    b.onclick = () => setLocale(l.code);
+    box.append(b);
+  }
+}
+
+function setLocale(code) {
+  if (code === S.locale) return;
+  if (MOCK) {
+    // No backend behind a mock page, so it swaps catalogues itself.
+    return fetch("strings/" + encodeURIComponent(code))
+      .then((r) => r.json())
+      .then((st) => { S.strings = st; S.locale = code; renderAll(); });
+  }
+  // The server WRITES the choice beside the workspace and publishes a
+  // fresh snapshot to every tab this person has open, so the page does
+  // not apply it locally: one answer, from one place, to all of them.
+  return fetch("locale", { method: "POST",
+                           headers: { "content-type": "application/json" },
+                           body: JSON.stringify({ locale: code }) });
+}
+
+// ------------------------------------------------------------------- i18n
+// Every string the page draws comes from the catalogue the server sent.
+// A key with no entry renders as the key: loud and greppable, where a
+// fallback to Spanish would make an untranslated English page look
+// finished — which is how a half-translated product ships for years.
+function tx(key, params) {
+  let text = S.strings[key];
+  if (text == null) return key;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) text = text.split("{" + k + "}").join(v);
+  }
+  return text;
 }
 
 // --------------------------------------------------------------- engines
@@ -1043,7 +1103,7 @@ function renderEngines() {
   const hasConsumo = !!(c.window || c.spend);
   if (!hasMotor && !hasConsumo) return;
   const sub = el("div", "tabs sub");
-  for (const [key, label] of [["motor", "Motor"], ["contexto", "Contexto"]]) {
+  for (const [key, label] of [["motor", tx("motor.tab")], ["contexto", tx("contexto.tab")]]) {
     const b = el("button", key === S.engTab ? "on" : "");
     b.append(el("span", null, label));
     b.onclick = () => { S.engTab = key; renderEngines(); };
@@ -1089,8 +1149,9 @@ function renderEngines() {
 //     not name are still shown, after the ones it does, so a dimension
 //     added later appears instead of being silently dropped.
 const NUM = new Intl.NumberFormat("es-ES");
-const DIM = { usd: "coste", turns: "turnos", tool_calls: "llamadas",
-              seconds: "tiempo", tokens: "tokens" };
+// The dimension NAMES are catalogue keys; the daemon decides which
+// dimensions exist, this only decides what each is called.
+const DIM = ["usd", "turns", "tool_calls", "seconds", "tokens"];
 
 function sec(v) {
   const n = Math.round(Number(v) || 0);
@@ -1113,7 +1174,7 @@ function kv(box, k, v, of) {
   const r = el("div", "kv");
   const val = el("span", "v");
   val.append(el("span", null, v));
-  if (of) val.append(el("span", "of", " de " + of));
+  if (of) val.append(el("span", "of", tx("unit.of", { v: of })));
   r.append(el("span", "k", k), val);
   box.append(r);
 }
@@ -1129,45 +1190,46 @@ function bar(box, pct) {
 function renderConsumo(box, c) {
   const w = c.window, sp = c.spend;
   if (!w && !sp) {
-    box.append(el("div", "note", "aún sin medir; tras el primer turno"));
+    box.append(el("div", "note", tx("consumo.unmeasured")));
     return;
   }
   if (w) {
-    box.append(el("div", "grp", "ventana"));
+    box.append(el("div", "grp", tx("consumo.window")));
     const pct = Number(w.percent_used);
     if (Number.isFinite(pct)) {
       bar(box, pct);
-      kv(box, "ocupada", dec(pct, 1) + " %");
+      kv(box, tx("consumo.occupied"), dec(pct, 1) + " %");
     }
-    if (w.tokens_remaining != null) kv(box, "disponibles", NUM.format(w.tokens_remaining));
+    if (w.tokens_remaining != null) kv(box, tx("consumo.available"), NUM.format(w.tokens_remaining));
     // The useful limit, not the raw window: `percent_used` and
     // `tokens_remaining` are ALREADY net of what each request reserves
     // for its own output (jaato#1444).  Showing the raw window beside
     // them is arithmetic the reader cannot make work, so the reservation
     // is named instead of quietly subtracted.
-    if (w.effective_limit != null) kv(box, "límite útil", NUM.format(w.effective_limit));
+    if (w.effective_limit != null) kv(box, tx("consumo.useful_limit"), NUM.format(w.effective_limit));
     if (w.reserved_output) {
       kv(box, "reservado para la respuesta", NUM.format(w.reserved_output));
       box.append(el("div", "note",
         "lo ocupado y lo disponible ya descuentan esta reserva"));
     }
-    if (w.turns != null) kv(box, "turnos", NUM.format(w.turns));
+    if (w.turns != null) kv(box, tx("consumo.turns"), NUM.format(w.turns));
   }
   if (!sp) return;
   const b = sp.budget;
   if (b && b.limits) {
-    box.append(el("div", "grp", "gasto"));
+    box.append(el("div", "grp", tx("consumo.spend")));
     const frac = Number(b.fraction_used);
     if (Number.isFinite(frac)) bar(box, frac * 100);
     // The DECLARED dimensions decide what exists here, not a list in this
     // page: an undeclared dimension is unbounded and has no ceiling to
     // show, and one added to the profile later must appear by itself.
     for (const dim of Object.keys(b.limits)) {
-      kv(box, DIM[dim] || dim, dimv(dim, (b.used || {})[dim]), dimv(dim, b.limits[dim]));
+      kv(box, DIM.includes(dim) ? tx("dim." + dim) : dim,
+         dimv(dim, (b.used || {})[dim]), dimv(dim, b.limits[dim]));
     }
     if (b.next_rung) {
-      box.append(el("div", "note", "próximo escalón: "
-        + Number(b.next_rung.at_percent).toFixed(0) + " %"
+      box.append(el("div", "note",
+        tx("consumo.next_rung", { pct: Number(b.next_rung.at_percent).toFixed(0) })
         + (b.next_rung.action ? " · " + b.next_rung.action : "")));
     }
     if (b.exhausted_reason) {
@@ -1177,14 +1239,14 @@ function renderConsumo(box, c) {
   const t = sp.totals || {};
   const shown = new Set();
   const rows = [
-    ["uncached_input_tokens", "entrada nueva"],
-    ["cache_read_tokens", "leído de caché"],
-    ["cache_creation_tokens", "escrito en caché"],
-    ["output_tokens", "salida"],
-    ["reasoning_tokens", "de ella, razonamiento"],
+    ["uncached_input_tokens", tx("consumo.new_input")],
+    ["cache_read_tokens", tx("consumo.cache_read")],
+    ["cache_creation_tokens", tx("consumo.cache_write")],
+    ["output_tokens", tx("consumo.output")],
+    ["reasoning_tokens", tx("consumo.reasoning")],
   ];
   const any = rows.some(([k]) => t[k] != null);
-  if (any) box.append(el("div", "grp", "tokens"));
+  if (any) box.append(el("div", "grp", tx("consumo.tokens")));
   for (const [k, label] of rows) {
     shown.add(k);
     if (t[k] != null) kv(box, label, NUM.format(t[k]));
@@ -1192,8 +1254,9 @@ function renderConsumo(box, c) {
   // `reasoning_tokens` is a SUBSET of `output_tokens` (jaato#1047) --
   // labelled "de ella" above so nobody adds the two.
   if (t.cost_usd != null) {
-    kv(box, "coste medido", dec(t.cost_usd, 4) + " $");
-    if (t.cost_source) box.append(el("div", "note", "coste según " + t.cost_source));
+    kv(box, tx("consumo.measured_cost"), dec(t.cost_usd, 4) + " $");
+    if (t.cost_source) box.append(el("div", "note",
+      tx("consumo.cost_source", { src: t.cost_source })));
   }
 }
 
@@ -1251,7 +1314,7 @@ function start(e, auto) {
     if (!auto) { fail(e); return; }
     // A BLOCKED AUTOPLAY IS NOT A FAILURE.  The browser withholding
     // sound until somebody has interacted with the page is a policy, not
-    // a broken file, and calling it "fallo de reproducción" would send
+    // a broken file, and calling it tx("entry.playback_failed") would send
     // the reader to look at an archive that is perfectly fine.  The row
     // keeps its `escuchar` button, which is the whole remedy.
     S.playing = null;
@@ -1340,16 +1403,16 @@ function pttFace() {
   ptt.setAttribute("aria-pressed", String(S.recording));
   if (S.micReason) {
     ptt.disabled = true;
-    t.textContent = "Micrófono no disponible";
+    t.textContent = tx("alert.insecure.title");
     s.textContent = S.micReason;
     time.textContent = "";
     return;
   }
   ptt.disabled = false;
-  t.textContent = S.recording ? "Grabando" : "Mantén pulsado para hablar";
+  t.textContent = S.recording ? "Grabando" : tx("ptt.title");
   s.textContent = S.recording ? "Suelta para enviar"
-    : S.status.status === "speaking" ? "Interrumpe al escriba · o mantén ESPACIO"
-    : "O mantén la barra ESPACIO";
+    : S.status.status === "speaking" ? tx("ptt.interrupt")
+    : tx("ptt.sub");
   time.textContent = S.recording ? mmss(S.rec) : "";
 }
 
@@ -1370,9 +1433,9 @@ async function mic() {
   // before anybody has tried to talk gets dismissed.
   stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   for (const track of stream.getAudioTracks()) {
-    track.onmute = () => { S.micReason = "la pista está silenciada"; raise("mic"); pttFace(); };
+    track.onmute = () => { S.micReason = tx("entry.muted"); raise("mic"); pttFace(); };
     track.onunmute = () => { S.micReason = null; clearAlert("mic"); pttFace(); };
-    track.onended = () => { S.micReason = "la pista terminó"; raise("mic"); pttFace(); };
+    track.onended = () => { S.micReason = tx("entry.ended"); raise("mic"); pttFace(); };
   }
   return stream;
 }
@@ -1494,7 +1557,12 @@ function onEvent(kind, data) {
     S.engines = data.engines || S.engines;
     S.wiki = data.wiki || S.wiki;
     S.consumo = data.consumo || S.consumo;
-    renderPills(); renderEngines(); renderCounts(); renderTabs(); renderPanel(); renderDays(); renderTranscript();
+    // The catalogue arrives WITH the snapshot, so the strings and the
+    // data they label can never be a version apart.
+    S.strings = data.strings || S.strings;
+    S.locale = data.locale || S.locale;
+    S.locales = data.locales || S.locales;
+    renderAll();
   } else if (kind === "entry") {
     updateEntry(data);
   } else if (kind === "counts") {
@@ -1511,7 +1579,7 @@ function onEvent(kind, data) {
     // to recover — but a stream that simply ended looks exactly like a
     // network fault, and the page would spend five seconds accusing one.
     // Said in the server's own words instead.
-    S.restarting = data.reason || "el escriba se está reiniciando";
+    S.restarting = data.reason || tx("alert.restarting");
     raise("restarting", { reason: S.restarting });
   } else if (kind === "wiki") {
     S.wiki = data; renderTabs(); renderPanel(); renderCounts();
@@ -1567,7 +1635,7 @@ function connect() {
     // The browser reconnects on its own; five seconds is the point at
     // which the silence stops being a blip and starts being a failure.
     // Nothing is said about a restart we were told about: the page is
-    // already showing why, and "se ha perdido la conexión" on top of it
+    // already showing why, and tx("alert.lost") on top of it
     // would be a second, wrong explanation.
     if (lost === null && !S.restarting) {
       lost = setTimeout(() => raise("connection", { had: S.everConnected }), 5000);
@@ -1729,15 +1797,56 @@ function mockTurn(seconds) {
 // drawn from the empty state first: four pills with `escuchando` waiting,
 // counts reading `—`, tabs at zero.  The alert then says what is wrong.
 function renderAll() {
-  renderPills(); renderCounts(); renderTabs(); renderPanel();
+  applyTheme();                 // its label is a string like any other
+  renderLangs(); renderPills(); renderCounts(); renderTabs(); renderPanel();
   renderDays(); renderTranscript(); renderEngines(); pttFace();
+  // The static markup carries no Spanish any more, so the parts of the
+  // chrome that are not redrawn by a renderer are set here.
+  $("audit-btn").title = tx("header.ids.title");
+  $("audit-btn").textContent = tx("header.ids");
+  $("nav-head").textContent = tx("nav.days");
+  $("nav-note").textContent = tx("nav.note");
+  $("audio-in").textContent = tx("header.audio_in");
+  $("jump").textContent = tx("jump.new");
 }
 applyTheme();
 $("audit-btn").setAttribute("aria-pressed", String(S.showIds));
 S.micReason = micUnavailable();
-if (S.micReason) raise("insecure");
-renderAll();
-if (MOCK) onEvent("state", mockState()); else connect();
+
+// THE CATALOGUE IS NEEDED BEFORE THE FIRST SNAPSHOT.  The page draws its
+// whole chrome at load, deliberately — with no backend it used to render
+// nothing at all — and an insecure-origin alert fires here, before any
+// session exists.  So the strings are fetched first and everything is
+// drawn once they are in hand.  The person's own locale arrives with the
+// snapshot a moment later and replaces this one; until then the browser's
+// preference is a better opening guess than the default.
+function boot() {
+  if (S.micReason) raise("insecure");
+  renderAll();
+  if (MOCK) {
+  // The catalogue is FETCHED rather than inlined, so the mock page draws
+  // the same strings the live one does and there is no second copy to
+  // drift.  `?lang=en` previews another locale.  If the fetch fails —
+  // the page opened from disk, with no backend behind it — it still
+  // renders, showing keys, which is visibly unfinished rather than
+  // silently Spanish.
+    const want = new URLSearchParams(location.search).get("lang") || "es";
+    fetch("strings/" + encodeURIComponent(want))
+      .then((r) => r.json())
+      .then((st) => onEvent("state", Object.assign(mockState(), { strings: st, locale: want })))
+      .catch(() => onEvent("state", mockState()));
+  } else connect();
+}
+
+const wanted = MOCK ? (new URLSearchParams(location.search).get("lang") || "es")
+                    : (navigator.language || "es").slice(0, 2);
+fetch("strings/" + encodeURIComponent(wanted))
+  .then((r) => r.json())
+  .then((st) => { S.strings = st; S.locale = wanted; })
+  // Rendering with no catalogue shows keys, which is visibly broken
+  // rather than silently monolingual.  The page still comes up.
+  .catch(() => {})
+  .then(boot);
 </script>
 </body>
 </html>

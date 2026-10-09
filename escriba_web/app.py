@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fastapi import FastAPI, HTTPException, Request, UploadFile    # noqa: E402
 from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse  # noqa: E402
 
+import i18n                                                      # noqa: E402
 import archive as _archive                                         # noqa: E402
 import housekeeping as _housekeeping                               # noqa: E402
 import transcribe as _transcribe                                   # noqa: E402
@@ -277,6 +278,38 @@ async def doc(request: Request, path: str) -> PlainTextResponse:
 async def days(request: Request):
     person = await person_of(request)
     return person.days()
+
+
+@app.get("/strings/{locale}")
+async def strings(locale: str) -> dict:
+    """One locale's catalogue.
+
+    The snapshot already carries the active one, so a live page never
+    needs this — it exists for `?mock=1`, which has no session to be
+    handed a snapshot by and would otherwise need a second copy of the
+    catalogue inlined in the page.  `i18n` resolves an unknown locale to
+    the default, so the path cannot name a file.
+    """
+    return i18n.catalogue(locale)
+
+
+@app.post("/locale")
+async def locale(request: Request):
+    """Change the language this person is answered in.
+
+    A POST rather than a query on `/events`, because it CHANGES
+    something: the choice is written beside the workspace and survives
+    the next sign-in, on this device or another.  The new state is
+    published to every tab the person has open, so a language picked in
+    one is not a second opinion in the next.
+
+    The body names a locale; an unknown one resolves to the default
+    rather than being refused, since `i18n` already decides what exists
+    and there is nothing useful for a page to do with the rejection.
+    """
+    person = await person_of(request)
+    body = await request.json()
+    return {"locale": person.speak(str((body or {}).get("locale") or ""))}
 
 
 @app.get("/day/{date}")

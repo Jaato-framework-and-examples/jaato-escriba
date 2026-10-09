@@ -39,7 +39,8 @@ from jaato_sdk.media_identity import ATTACHMENT_ID_KEY           # noqa: E402
 
 import archive as _archive                                       # noqa: E402
 import board as _board                                           # noqa: E402
-import enrichment                                                # noqa: E402
+import enrichment
+import i18n                                                # noqa: E402
 import memory                                                    # noqa: E402
 import voice                                                     # noqa: E402
 import yaml                                                      # noqa: E402
@@ -281,13 +282,20 @@ class Person:
         # reads exist — nothing can subscribe until `Person(...)` returns.
         self.hub = Hub(self.snapshot)
         self.board = WebBoard(self.hub)
+        #: Read BEFORE provisioning, because `provision` can already emit
+        #: a note — the template refresh — and the first note of a
+        #: session is the worst one to get in the wrong language.
+        #: `caller_dir` rather than a second copy of the naming rule:
+        #: the directory is not simply the principal.
+        self.home = (root / _workspace.caller_dir(principal)).resolve()
+        self.locale = _workspace.prefs(self.home).get("locale", i18n.DEFAULT)
         # The board exists first so the refresh can be SEEN.  A person's
         # profiles being replaced under them is a thing that happened,
         # and the transcript is where this driver says what happened.
         self.ws = _workspace.provision(
             principal, root=root, identity=identity,
             on_refresh=lambda what: self.board.note(
-                f"· assets actualizados desde la plantilla: {', '.join(what)}"))
+                self.say("note.assets_refreshed", what=", ".join(what))))
         self.archive = _archive.Archive(
             self.ws, limit=limit,
             on_full=lambda m: self.board.note(f"· {m}"))
@@ -337,13 +345,13 @@ class Person:
         pending = memory.uncurated_count(self.ws)
         if not pending:
             return
-        self.board.note(f"· {pending} memorias en crudo — consolidando")
+        self.board.note(self.say("note.consolidating", n=pending))
         async with IPCClient.session(profile="curator", agent="curator",
                                      **self.conn) as curator:
             await curator.ask(DRAIN)
         held = memory.counts(self.ws)
         self.board.memories(held["curated"], held["raw"])
-        self.board.note("· consolidado")
+        self.board.note(self.say("note.consolidated"))
 
     async def open(self) -> None:
         """Open the session and start the clock on this conversation.
@@ -421,8 +429,7 @@ class Person:
         if state in ("RECONNECTING", "DISCONNECTED", "CLOSED"):
             if self._scribe is not None:
                 self._scribe = None
-                self.board.note("· se ha perdido la conexión con el daemon; "
-                                "reconectando")
+                self.board.note(self.say("note.connection_lost"))
         elif state == "CONNECTED" and self._scribe is None and self._stack is not None:
             # Back, with a session the daemon no longer knows.  The new
             # one opens WITHOUT a greeting: nobody asked for one, the
@@ -438,10 +445,10 @@ class Person:
                 await self._close_session()
                 await self._open_session()
             except Exception as exc:                          # noqa: BLE001
-                self.board.note(f"· no pude reabrir la sesión: "
-                                f"{type(exc).__name__}: {str(exc)[:90]}")
+                self.board.note(self.say("note.reopen_failed",
+                                         what=f"{type(exc).__name__}: {str(exc)[:90]}"))
                 return
-        self.board.note("· sesión nueva tras el reinicio del daemon")
+        self.board.note(self.say("note.session_new"))
         self.hub.publish("state", self.snapshot())
 
     async def _close_session(self) -> None:
@@ -663,11 +670,10 @@ class Person:
                 # archived either way; what must not happen is the page
                 # waiting on it forever, so the session is dropped and
                 # reopened and the person is told to try again.
-                self.board.note(f"· el turno no respondió en "
-                                f"{int(TURN_TIMEOUT)} s; abro sesión nueva")
+                self.board.note(self.say("note.turn_timeout", secs=int(TURN_TIMEOUT)))
                 self._scribe = None
                 asyncio.create_task(self._resume())
-                raise NotReady("el escriba no respondió; inténtalo de nuevo")
+                raise NotReady(self.say("note.no_answer"))
             except SessionGone as exc:
                 # NAME THE REASON WE HAVE, not the one that sounds likely.
                 # `SessionGone` covers an RPC closing, a session
@@ -720,8 +726,42 @@ class Person:
         asyncio.create_task(run())
 
     # -- what a new browser is handed ------------------------------------
+    def say(self, key: str, **params) -> str:
+        """One string in this person's language."""
+        return i18n.t(self.locale, key, **params)
+
+    def speak(self, locale: str) -> str:
+        """Change the language, and redraw everything in it.
+
+        Mid-conversation is allowed, and nothing is warned about: the
+        recalled memories and the archive stay in whatever language they
+        were written in, which is accepted rather than prevented.
+
+        Only the CHROME re-renders.  Notes already in the transcript keep
+        the words they were written with, because the transcript is a
+        record of what was said at the time, not a view that re-renders
+        into the language of the moment.
+        """
+        self.locale = locale if locale in i18n.available() else i18n.DEFAULT
+        _workspace.set_pref(self.home, "locale", self.locale)
+        self.hub.publish("state", self.snapshot())
+        return self.locale
+
     def snapshot(self) -> dict:
         return self.board.snapshot(session_at=_iso(self.opened),
+                                   locale=self.locale,
+                                   locales=[{"code": c,
+                                             "name": i18n.t(c, "locale.name"),
+                                             "flag": i18n.t(c, "locale.flag")}
+                                            for c in i18n.available()],
+                                   # The whole catalogue travels WITH the
+                                   # snapshot rather than being fetched:
+                                   # a language change then arrives by
+                                   # the same route as everything else
+                                   # the page redraws from, and there is
+                                   # no window where the strings and the
+                                   # data disagree.
+                                   strings=i18n.catalogue(self.locale),
                                    playback="navegador", days=self.days(),
                                    engines=self.engines(),
                                    wiki=wiki_references(),

@@ -176,6 +176,37 @@ def _copy_template(template: Path, dest: Path) -> None:
             shutil.copy2(src, target)
 
 
+#: What a person chose, as opposed to who they are.
+#:
+#: BESIDE `person.json`, NOT IN IT.  That file is written once and never
+#: again, deliberately: it records who the directory was created for, and
+#: a later rename does not change that.  A preference is the opposite —
+#: it exists to be changed — so putting one in a write-once record would
+#: mean either breaking that rule or having a setting that cannot be
+#: unset.  Same directory, same 0700/0600, different lifetime.
+PREFS = "prefs.json"
+
+
+def prefs(home: Path) -> dict:
+    """Whatever this person has chosen, or nothing."""
+    try:
+        row = json.loads((home / PREFS).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return row if isinstance(row, dict) else {}
+
+
+def set_pref(home: Path, key: str, value) -> dict:
+    """Change one preference, keeping the rest."""
+    row = prefs(home)
+    row[key] = value
+    target = home / PREFS
+    target.write_text(json.dumps(row, indent=2, ensure_ascii=False) + "\n",
+                      encoding="utf-8")
+    target.chmod(0o600)
+    return row
+
+
 def _write_identity(home: Path, principal: str, identity: Optional[dict]) -> None:
     """Record who this directory is for, once.
 
