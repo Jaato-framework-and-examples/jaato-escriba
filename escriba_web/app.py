@@ -185,6 +185,15 @@ async def days(request: Request):
     return person.days()
 
 
+@app.get("/day/{date}")
+async def day(request: Request, date: str):
+    person = await person_of(request)
+    try:
+        return person.day(date)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @app.post("/heard")
 async def heard(request: Request) -> Response:
     """What a BROWSER says it played, recorded as a claim.

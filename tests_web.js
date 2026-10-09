@@ -195,6 +195,8 @@ check("both agents are named",
       ["escriba", "documentalista"].every((a) => engines.textContent.includes(a)), true);
 check("both of the escriba's tiers are shown",
       ["voz", "escribano"].every((t) => engines.textContent.includes(t)), true);
+check("the provider is text, not a tooltip",
+      engines.textContent.includes("escriba · openrouter"), true);
 check("with their models",
       ["openai/gpt-audio", "openai/gpt-4o-mini"].every((m) => engines.textContent.includes(m)), true);
 
@@ -223,11 +225,27 @@ check("a republished row is not sounded again", played.length, 1);
 T.onEvent("entry", { id: 500002, kind: "said", at: new Date().toISOString(),
                      text: "", audio: "att_bbbbbbbbbbbbbbbb", seconds: 6, repeats: 1 });
 check("their own utterance is not played back", played.length, 1);
+const afterAutoplay = played.length;
+
+// ------------------------------------------------- an unknown duration
+// Entries archived before the record carried durations have none, and
+// "0:00" beside a counter already at 0:08 is a length nobody measured.
+T.onEvent("entry", { id: 500010, kind: "spoke", at: new Date().toISOString(),
+                     text: "sin duración", audio: "att_cccccccccccccccc",
+                     seconds: null, repeats: 1, silent: false });
+const transcript = () => byId.get("scroll").textContent;
+check("an unknown length is not printed as zero", transcript().includes("escuchar 0:00"), false);
+check("the control still offers to play", transcript().includes("escuchar"), true);
+T.onEvent("entry", { id: 500011, kind: "spoke", at: new Date().toISOString(),
+                     text: "con duración", audio: "att_dddddddddddddddd",
+                     seconds: 14, repeats: 1, silent: false });
+check("a known length is shown", transcript().includes("escuchar 0:14"), true);
 
 // ------------------------------------------------------ a silent reply
 // Waiting and never-coming look identical in the data — both are a
 // `spoke` row with no audio — and only the driver can tell them apart.
 // A row that says "audio llegando…" forever is how it was found.
+const soundedBefore = played.length;     // counted, not assumed
 const silentId = 500003;
 T.onEvent("entry", { id: silentId, kind: "spoke", at: new Date().toISOString(),
                      text: "La sesión se ha cerrado.", audio: null, seconds: null,
@@ -239,7 +257,7 @@ T.onEvent("entry", { id: silentId, kind: "spoke", at: new Date().toISOString(),
                      repeats: 1, silent: true });
 check("once it has ended it says so", rowText().includes("sin audio"), true);
 check("and stops waiting", rowText().includes("audio llegando…"), false);
-check("a silent row is never autoplayed", played.length, 1);
+check("a silent row is never autoplayed", played.length, soundedBefore);
 
 // --------------------------------------------- what arrives after the row
 // The audio ref lands well after the text, and it must patch the row that

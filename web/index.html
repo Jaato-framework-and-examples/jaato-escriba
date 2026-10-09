@@ -352,7 +352,7 @@ const S = {
   //: that has spoken to nothing is a statement about the person's
   //: workspace, and it is one we have no grounds for.
   loaded: false,
-  activeDay: null, progSec: 0, engines: [],
+  activeDay: null, progSec: 0, engines: [], loadedDays: new Set(),
   //: Replies already offered to the speakers, by entry id.  A reply is
   //: played ONCE and never again on its own: the audio ref arrives in a
   //: second event after the text, a `repeats` bump re-publishes a row,
@@ -372,6 +372,17 @@ const el = (tag, cls, text) => {
   return n;
 };
 const mmss = (s) => Math.floor((s || 0) / 60) + ":" + String(Math.floor((s || 0) % 60)).padStart(2, "0");
+// UNKNOWN IS NOT ZERO, here as everywhere else on this page.  A reply
+// recorded before the archive carried durations has none, and printing
+// "0:00" states a length nobody measured — read back as "/ 0:00" beside
+// a counter that is already at 0:08.  The element knows it once the file
+// is loaded, so that is used when the record cannot say.
+const known = (s) => (typeof s === "number" && s > 0 ? s : null);
+function total(e) {
+  const fromRecord = known(e.seconds);
+  if (fromRecord) return fromRecord;
+  return (S.playing === e.id && isFinite(player.duration)) ? known(player.duration) : null;
+}
 const hhmm = (iso) => {
   const d = new Date(iso);
   return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
@@ -529,25 +540,60 @@ function renderDays() {
   const box = $("days");
   box.textContent = "";
   for (const d of S.days) {
-    const b = el("button", d.in_view ? "" : "archived");
+    const b = el("button", (d.in_view || S.loadedDays.has(d.date)) ? "" : "archived");
     const l = el("span", "l");
+    const loaded = d.in_view || S.loadedDays.has(d.date);
     l.append(el("span", "label", dayName(d.date)),
-             el("span", "meta", dayDate(d.date) + " · " + (d.in_view ? d.count + " entradas" : "archivo")));
+             el("span", "meta", dayDate(d.date) + " · " +
+                (loaded ? (d.count || S.loadedDays.has(d.date) ? countOf(d) : 0) + " entradas"
+                        : "archivo")));
     b.append(l);
-    if (d.in_view) {
-      b.onclick = () => {
-        const t = $("scroll").querySelector('[data-day="' + d.date + '"]');
-        if (t) $("scroll").scrollTop = t.offsetTop - $("scroll").offsetTop;
-        markDay(d.date);
-      };
-    } else {
-      b.disabled = true;
-    }
+    const here = () => {
+      const t = $("scroll").querySelector('[data-day="' + d.date + '"]');
+      if (t) $("scroll").scrollTop = t.offsetTop - $("scroll").offsetTop;
+      markDay(d.date);
+    };
+    b.onclick = d.in_view || S.loadedDays.has(d.date) ? here : () => loadDay(d.date, here);
     b.dataset.day = d.date;
     box.append(b);
   }
   markDay(S.activeDay);
 }
+const countOf = (d) => S.order.filter((id) => dayKey(S.byId.get(id).at) === d.date).length;
+
+// A DAY IS READ BACK FROM THE MANIFEST, not from memory: the view keeps
+// 400 entries and a restart keeps none, while `audio/` has every turn.
+// What comes back is the talking — the `note` lines were this driver's
+// own commentary and were never written down — and it is inserted in
+// chronological place rather than appended, because `renderTranscript`
+// walks the order and would otherwise draw last Tuesday under today.
+async function loadDay(date, then) {
+  if (S.loadedDays.has(date)) { then(); return; }
+  let rows;
+  try {
+    const res = await fetch("/day/" + date);
+    if (!res.ok) throw new Error(res.status);
+    rows = await res.json();
+  } catch (err) {
+    raise("connection", { had: S.everConnected });
+    return;
+  }
+  S.loadedDays.add(date);
+  for (const e of rows) {
+    if (S.byId.has(e.id)) continue;
+    S.byId.set(e.id, e);
+    S.order.push(e.id);
+    S.autoplayed.add(e.id);     // history: read, never sounded unasked
+  }
+  S.order.sort((a, b) => {
+    const x = S.byId.get(a), y = S.byId.get(b);
+    return x.at === y.at ? a - b : (x.at < y.at ? -1 : 1);
+  });
+  renderTranscript();
+  renderDays();
+  then();
+}
+
 function markDay(key) {
   S.activeDay = key;
   for (const b of $("days").children) b.classList.toggle("on", b.dataset.day === key);
@@ -595,8 +641,9 @@ function paint(e) {
     b.style.width = Math.min(100 + (e.seconds || 0) * 8, 420) + "px";
     b.title = e.audio || "";
     const prog = el("span", "prog");
+    const span = total(e);
     b.append(prog, (() => { const g = el("span", "glyph"); g.append(playGlyph(playing, "14")); return g; })(),
-             el("span", "dur", mmss(e.seconds)));
+             el("span", "dur", span ? mmss(span) : "—"));
     b.onclick = () => toggle(e);
     w.append(b);
     if (S.showIds && e.audio) w.append(el("span", "audit", e.audio));
@@ -612,8 +659,10 @@ function paint(e) {
     if (e.audio) {
       const b = el("button", "listen" + (playing ? " sounding" : ""));
       b.title = e.audio;
-      const label = el("span", null, playing ? "sonando " + mmss(S.progSec) + " / " + mmss(e.seconds)
-                                             : "escuchar " + mmss(e.seconds));
+      const span = total(e);
+      const label = el("span", null,
+        playing ? "sonando " + mmss(S.progSec) + (span ? " / " + mmss(span) : "")
+                : "escuchar" + (span ? " " + mmss(span) : ""));
       b.append(playGlyph(playing, "12"), label);
       b.onclick = () => toggle(e);
       meta.append(b);
@@ -869,17 +918,19 @@ function renderEngines() {
   box.append(el("div", "head", "Motor"));
   for (const e of S.engines) {
     const a = el("div", "agent");
-    a.append(el("div", "who", e.agent));
+    // The provider is TEXT, not a tooltip: it is half of what answers
+    // and a reader should not have to hover to learn it.  Shown once on
+    // the agent when every tier agrees, and per tier when they do not —
+    // tiers may span providers, so one line cannot always speak for all
+    // of them.
+    const providers = [...new Set(e.rows.map((r) => r.provider).filter(Boolean))];
+    const shared = providers.length === 1 ? providers[0] : null;
+    a.append(el("div", "who", e.agent + (shared ? " · " + shared : "")));
     for (const r of e.rows) {
       const row = el("div", "tier");
-      if (r.tier) {
-        const n = el("span", "name", r.tier + (r.audible ? " ♪" : ""));
-        n.title = r.audible ? "el tier que se oye" : "sin audio";
-        row.append(n);
-      }
-      const m = el("span", "model", r.model || "—");
-      m.title = r.provider ? "proveedor: " + r.provider : "";
-      row.append(m);
+      if (r.tier) row.append(el("span", "name", r.tier + (r.audible ? " ♪" : "")));
+      row.append(el("span", "model",
+                    (shared ? "" : (r.provider ? r.provider + " · " : "")) + (r.model || "—")));
       a.append(row);
     }
     box.append(a);
@@ -970,6 +1021,10 @@ function fail(e) {
   raise("playback", { audio: e.audio });
   heard(e, "error");
 }
+player.addEventListener("loadedmetadata", () => {
+  const e = S.byId.get(S.playing);
+  if (e && !known(e.seconds)) paint(e);   // the length is knowable now
+});
 player.addEventListener("playing", () => {
   S.status = { status: "speaking", query: null };
   const e = S.byId.get(S.playing);
@@ -986,7 +1041,9 @@ player.addEventListener("timeupdate", () => {
   } else if (e.kind === "spoke" && r && r.playLabel) {
     // Only the label, never the row: repainting would rebuild the button
     // the reader just pressed and throw away its focus ring.
-    r.playLabel.textContent = "sonando " + mmss(player.currentTime) + " / " + mmss(e.seconds);
+    const span = total(e);
+    r.playLabel.textContent = "sonando " + mmss(player.currentTime) +
+                              (span ? " / " + mmss(span) : "");
   }
 });
 for (const ev of ["ended", "pause"]) player.addEventListener(ev, () => {

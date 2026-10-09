@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -422,6 +424,65 @@ class Person:
                                    playback="navegador", days=self.days(),
                                    engines=self.engines())
 
+    def day(self, date: str) -> List[dict]:
+        """A past day's conversation, read back out of the manifest.
+
+        THE MANIFEST IS THE RECORD, and this is what it was for: the
+        transcript keeps 400 entries in memory and a restart keeps none,
+        while `audio/<session>/manifest.jsonl` has one appended row per
+        turn with the ids of both halves.  Reading it back is the only
+        way a person can see a conversation they had last week.
+
+        WHAT IT CANNOT GIVE BACK, stated rather than faked: the `note`
+        lines.  Searching, judging, a document being written — those are
+        this driver's own commentary, never written to the manifest,
+        because the manifest records what the CONVERSATION did.  A
+        reconstructed day is the talking, and nothing claims otherwise.
+
+        Ids are NEGATIVE.  Live entries count up from 1 and a reloaded
+        day must never collide with one — the page patches rows by id,
+        and a collision would have a search note overwritten by a reply
+        from last Tuesday.
+        """
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            raise ValueError("a date, as YYYY-MM-DD")
+        stamp = date.replace("-", "")
+        rows: List[dict] = []
+        root = self.ws / _archive.ROOT
+        for d in sorted(root.glob(f"{stamp}_*")) if root.is_dir() else []:
+            manifest = d / "manifest.jsonl"
+            if not manifest.is_file():
+                continue
+            with manifest.open(encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        rows.extend(self._turn_entries(json.loads(line)))
+        rows.sort(key=lambda r: r["at"])
+        for n, row in enumerate(rows, start=1):
+            row["id"] = -n
+        return rows
+
+    @staticmethod
+    def _turn_entries(row: dict) -> List[dict]:
+        """One manifest row, as the entries it describes."""
+        if row.get("stage"):
+            return []            # policy, budget, a playback claim: not talk
+        at = row.get("at") or ""
+        out = []
+        if row.get("heard"):
+            out.append({"at": at, "kind": "said", "text": "",
+                        "seconds": row.get("heard_seconds"),
+                        "audio": row["heard"], "repeats": 1, "silent": False})
+        spoke = row.get("spoke") or {}
+        if row.get("transcript") or spoke:
+            out.append({"at": at, "kind": "spoke", "text": row.get("transcript") or "",
+                        "seconds": spoke.get("seconds"), "audio": spoke.get("sha"),
+                        "repeats": 1, "silent": not spoke})
+        if row.get("anotado"):
+            out.append({"at": at, "kind": "anotado", "text": row["anotado"],
+                        "seconds": None, "audio": None, "repeats": 1, "silent": False})
+        return out
+
     def days(self) -> List[dict]:
         """Every day that has an archive, and whether it is in the view.
 
@@ -442,8 +503,7 @@ class Person:
                 continue
             key = d.name[:8]
             key = f"{key[:4]}-{key[4:6]}-{key[6:8]}"
-            if key not in in_view:
-                in_view.setdefault(key, 0)
+            in_view.setdefault(key, 0)
         for key, count in sorted(in_view.items(), reverse=True):
             out.append({"date": key, "count": count, "in_view": count > 0})
         return out
