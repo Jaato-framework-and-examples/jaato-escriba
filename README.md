@@ -866,12 +866,24 @@ seseo. Those are measurements of model behaviour, not of the framework.
 
 ## Requirements
 
-Python is pinned to `>=3.10,<3.13`: `ptt_capture.py` imports `audioop`,
-which 3.13 removed.
+Python is pinned to `>=3.12,<3.13`: `ptt_capture.py` imports `audioop`,
+which 3.13 removed, and `jaato-sdk` 0.30 floors at 3.12.
 
 ```bash
-uv sync --extra tui            # the client, and the live view
+uv sync --extra tui                          # the terminal client and its live view
+uv sync --extra web                          # the web backend (fastapi, uvicorn, multipart)
+uv sync --extra web --extra stt              # ...and local transcription
 ```
+
+**Name every extra you want on every sync.** `uv sync` makes the
+environment match what you asked for, so a later `uv sync --extra web`
+UNINSTALLS `faster-whisper` that an earlier `--extra stt` put there. The
+deployed host runs `--extra web --extra stt`.
+
+**ffmpeg is a system dependency, not a package.** Every spoken turn is
+transcoded through it (the browser records webm/opus, the model path
+takes MP3), and transcription decodes through it too. `apt install
+ffmpeg`.
 
 `pyproject.toml` carries the floors, and they are floors WITH REASONS — a
 clone on a second machine resolved `jaato-sdk` freely, got 0.19.0, and

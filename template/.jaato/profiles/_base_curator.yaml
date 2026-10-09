@@ -55,6 +55,27 @@ gc:
   preserve_recent_turns: 4
 
 plugin_configs:
+  # NO TELEMETRY FROM A PERSON'S SECOND BRAIN.
+  #
+  # The daemon on the deployed host loads another tenant's environment
+  # file (the Telegram bot's), which sets JAATO_TELEMETRY_ENABLED=true,
+  # the langfuse backend, cloud.langfuse.com — and
+  # JAATO_TELEMETRY_REDACT_CONTENT=false, against a framework default of
+  # true.  Every runner inherits it, so these sessions have been trying
+  # to export prompts and responses, unredacted, to a third party's
+  # cloud, and have failed only because the Langfuse keys live in that
+  # other tenant's workspace.  The exposure is one credential away, and
+  # what would go is a person's private conversation with their own
+  # second brain.
+  #
+  # Declared HERE rather than in the workspace `.env` for two reasons the
+  # framework states itself: the profile block outranks the `.env` per
+  # key (`explain env`), and `.jaato/profiles/` is on the AppArmor
+  # write-deny list while everything in the workspace is writable by the
+  # session.  The opt-out therefore cannot be undone by the thing it
+  # constrains.
+  telemetry:
+    enabled: false
   memory:
     # Same store as the scribe, and same reasoning — see _base_escriba.
     # ONE STORE, AND EVERY AGENT MUST NAME THE SAME ONE.  These paths are
@@ -109,3 +130,12 @@ apparmor: true
 # projects' grants, which would silently widen these sessions.  `[]` takes
 # the framework's base policy and adds nothing.
 apparmor_fragments: []
+
+# If telemetry is ever turned on for this application deliberately, it
+# starts from the framework's own default rather than the host's: the
+# daemon's inherited environment sets redaction to false, and a second
+# brain is the last thing that should export its content verbatim.  This
+# costs nothing while telemetry is off and is the difference between a
+# leak and a trace if it is ever switched on.
+env:
+  JAATO_TELEMETRY_REDACT_CONTENT: "true"
