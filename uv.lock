@@ -574,8 +574,8 @@ requires-dist = [
     { name = "ddgs", specifier = ">=9.16.0" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
     { name = "faster-whisper", marker = "extra == 'stt'", specifier = ">=1.2" },
-    { name = "jaato-sdk", specifier = ">=0.30.0rc6", index = "https://test.pypi.org/simple/" },
-    { name = "jaato-server", extras = ["openrouter", "web"], marker = "extra == 'daemon'", specifier = ">=1.3.0rc9", index = "https://test.pypi.org/simple/" },
+    { name = "jaato-sdk", specifier = ">=0.30.0rc7", index = "https://test.pypi.org/simple/" },
+    { name = "jaato-server", extras = ["openrouter", "web"], marker = "extra == 'daemon'", specifier = ">=1.3.0rc10", index = "https://test.pypi.org/simple/" },
     { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.9" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", marker = "extra == 'tui'", specifier = ">=13.0" },
@@ -585,20 +585,20 @@ provides-extras = ["tui", "web", "stt", "daemon"]
 
 [[package]]
 name = "jaato-sdk"
-version = "0.30.0rc6"
+version = "0.30.0rc7"
 source = { registry = "https://test.pypi.org/simple/" }
 dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
 ]
-sdist = { url = "https://test-files.pythonhosted.org/packages/2c/1d/b3ec9daf2d8e5fef7d9b3e5986039533d7413ed644932d59f3e547f061eb/jaato_sdk-0.30.0rc6.tar.gz", hash = "sha256:1d8b2c2fa61e7379e874423c4f45e0b9d32482cd84fd190f9528f6b3c3e6ec09", size = 854821, upload-time = "2026-10-06T20:04:36.725Z" }
+sdist = { url = "https://test-files.pythonhosted.org/packages/32/b8/824b0cdd518814a081fd4b6f46d498bccdcd965c9f4d9a315a2bb1b126a9/jaato_sdk-0.30.0rc7.tar.gz", hash = "sha256:3d004a9d878327db05b0d37bf1641fdad0781cb9f001763c738b157690ffd398", size = 861492, upload-time = "2026-10-09T13:44:38.873Z" }
 wheels = [
-    { url = "https://test-files.pythonhosted.org/packages/46/b7/02fdfc563c12c7e91b4e3960c045f44733fde78715174b29b2a10beadb85/jaato_sdk-0.30.0rc6-py3-none-any.whl", hash = "sha256:882e81e1b4bbd6b1fc33f5bca01ff074fef32b612667fe3a4b34da426e419db0", size = 876395, upload-time = "2026-10-06T20:04:34.306Z" },
+    { url = "https://test-files.pythonhosted.org/packages/f0/06/76456b7e17e2a297668a790e46656a4f3c33948a99bcb44937516573a22d/jaato_sdk-0.30.0rc7-py3-none-any.whl", hash = "sha256:852334b5a34e54fd3433b6728e91c36b111de947304f01563501a6fa8f1033f1", size = 884657, upload-time = "2026-10-09T13:44:36.65Z" },
 ]
 
 [[package]]
 name = "jaato-server"
-version = "1.3.0rc9"
+version = "1.3.0rc10"
 source = { registry = "https://test.pypi.org/simple/" }
 dependencies = [
     { name = "anthropic" },
@@ -618,9 +618,9 @@ dependencies = [
     { name = "wcwidth" },
     { name = "websockets" },
 ]
-sdist = { url = "https://test-files.pythonhosted.org/packages/74/e2/ec26eeb2a7b3242bdb4655113eb1669c84bea85a7a95cda2919cb28ca552/jaato_server-1.3.0rc9.tar.gz", hash = "sha256:3d9ff11895fd15b642d723ce23fa6617a523631e9f78d9fb70d996ed4ce75ffd", size = 7379346, upload-time = "2026-10-07T21:17:15.578Z" }
+sdist = { url = "https://test-files.pythonhosted.org/packages/b6/d7/878779edd421d1b73d725eeff1d52c2dd924099b9ef8ba886dc118570450/jaato_server-1.3.0rc10.tar.gz", hash = "sha256:27d9fffaa332330bf70fbc7b32c98a3b6eac257ff9c949a8a4a66186b381902f", size = 7417173, upload-time = "2026-10-09T14:17:12.57Z" }
 wheels = [
-    { url = "https://test-files.pythonhosted.org/packages/bd/96/ec578ed9d67bd7bc59baea9fd299801444b553691996ff2792113b520343/jaato_server-1.3.0rc9-py3-none-any.whl", hash = "sha256:32ca2928493a9456b3b27602a49dd4efe1f973dcc5a46fd4f0c0e8c8e92ca07b", size = 8467730, upload-time = "2026-10-07T21:17:12.012Z" },
+    { url = "https://test-files.pythonhosted.org/packages/6f/dd/b84b85c9746ed7a3cfcae798d75309faef58bdd06be11a053b3db5399fbb/jaato_server-1.3.0rc10-py3-none-any.whl", hash = "sha256:8f501f417a983bd52d5e9ec3af9e8e6544b617903f7f4033bbf6e7d3f0b08658", size = 8508723, upload-time = "2026-10-09T14:17:09.756Z" },
 ]
 
 [package.optional-dependencies]

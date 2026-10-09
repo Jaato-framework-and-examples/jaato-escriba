@@ -35,8 +35,8 @@ dependencies = [
     # hole pyproject.toml exists to close: a dependency the code imports
     # and the manifest does not name.
     "ddgs>=9.16.0",
-    # 0.21.0 is a FLOOR WITH A REASON, not a snapshot of what happened to
-    # be installed.  Two of them:
+    # This is a FLOOR WITH A REASON, not a snapshot of what happened to
+    # be installed.  Three of them:
     #   - `jaato-server` imports `reported_cache_count` (added in SDK
     #     0.21.0, commit 8e6f0182) from seven model providers, and declares
     #     no floor of its own — see jaato#1055.  A resolver that picks an
@@ -45,7 +45,18 @@ dependencies = [
     #     this project: jaato#944 (allow_inline), #950 (plugin_configs
     #     reachability), #955, #957, #961 (the explicit `{agent}` trace
     #     form).  An older framework rejects them at session init.
-    "jaato-sdk>=0.30.0rc6",
+    #   - rc7 is the first SDK cut carrying `PLUGIN_TOOL_REQUEST_TYPES`,
+    #     which `jaato-server` imports from `jaato_sdk.events` at MODULE
+    #     level (`server/ipc.py:109`, jaato#1606, protocol 1.37).  rc6
+    #     does not have it, and `jaato-server` 1.3.0 declares only
+    #     `jaato-sdk>=0.30.0.dev0`, which rc6 satisfies — so a resolver
+    #     will pair them and the daemon then fails to import its own IPC
+    #     transport.  Reproduced against the published rc6 wheel:
+    #     `ImportError: cannot import name 'PLUGIN_TOOL_REQUEST_TYPES'`.
+    #     The framework declines to raise that floor on purpose (jaato
+    #     #1153: a floor at the cut's final excludes every build on the
+    #     staging index), so naming the working SDK is OUR job.
+    "jaato-sdk>=0.30.0rc7",
     # `memory.py:25` reads the curated store.
     "PyYAML>=6.0",
 ]
@@ -108,4 +119,10 @@ stt = ["faster-whisper>=1.2"]
 #     `web_fetch` plugin the scribe and the juez both declare.
 # Everything else the profiles use — memory, references, subagent,
 # permission, file_edit — is core `jaato-server` and needs no extra.
-daemon = ["jaato-server[openrouter,web]>=1.3.0rc9"]
+#
+# Moved to rc10 for jaato#1605 — a subagent now inherits the secret its
+# parent resolved, which is what the documentalista spawn needs: the
+# provider key is a `pass://` pointer, and resolving it runner-side under
+# confinement fails.  The SDK floor above moves in the SAME step, and not
+# as tidiness: see its third bullet.
+daemon = ["jaato-server[openrouter,web]>=1.3.0rc10"]
