@@ -218,16 +218,23 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
              color:var(--ink-2);font-weight:600;font-size:13px;text-align:left;cursor:pointer;display:flex;
              flex-direction:column;gap:1px;min-width:0}
 .tabs button.on{background:var(--accent-soft);color:var(--accent-ink)}
+/* The second row is subordinate to the first and says so: smaller, on
+   the panel's own ground, and with the active one marked by a rule
+   rather than a fill, so two filled tabs never compete for "where am
+   I". */
+.tabs.sub{grid-template-columns:repeat(2,minmax(0,1fr));background:var(--bg)}
+.tabs.sub button{font-weight:500;font-size:12px;padding:var(--space-2) var(--space-3);
+                 border-bottom:2px solid transparent}
+.tabs.sub button.on{background:transparent;color:var(--accent-ink);
+                    border-bottom-color:var(--accent);font-weight:600}
+.tabs.sub button .n{font-size:11px}
 .tabs button .n{font-weight:400;font-size:12px;opacity:.8}
-.list{overflow:auto;min-height:0}
+.list{overflow:auto;min-height:0;display:flex;flex-direction:column}
+.list .tabs.sub{flex:none;position:sticky;top:0;z-index:1}
 .list .item{width:100%;display:flex;flex-direction:column;gap:var(--space-1);text-align:left;
             padding:var(--space-3) var(--space-4);border:0;border-bottom:1px solid var(--line);background:transparent;
             color:var(--ink);cursor:pointer}
 .list .item:hover{background:var(--accent-tint)}
-.list .group{display:flex;align-items:baseline;gap:var(--space-2);padding:var(--space-3) var(--space-4) var(--space-1);
-             border-bottom:1px solid var(--line);background:var(--chip)}
-.list .group .what{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-2)}
-.list .group .n{font-size:12px;color:var(--muted);margin-left:auto}
 .list .empty{padding:var(--space-3) var(--space-4);font-size:12px;color:var(--muted);
              border-bottom:1px solid var(--line)}
 .list .item .text{font-size:14px;line-height:1.4;font-weight:600}
@@ -361,7 +368,7 @@ const S = {
   counts: {}, items: { memoria: [], referencias: [], documentos: [] }, days: [],
   status: { status: "listening", query: null },
   session_at: null, archive_dir: null, playback: "navegador",
-  tab: "memoria", sel: null, reader: false,
+  tab: "memoria", refTab: "local", sel: null, reader: false,
   recording: false, rec: 0, playing: null, failed: null,
   alert: null, dismissed: null, everConnected: false, restarting: null,
   //: True once the hub has sent a snapshot.  Before that every count is
@@ -901,7 +908,11 @@ const keyOf = (tab, it) => tab === "memoria" ? it.id : tab === "referencias" ? i
 function renderPanel() {
   const box = $("panel");
   box.textContent = "";
-  const items = S.items[S.tab] || [];
+  // The references panel carries its own tabs, and they stay on screen
+  // with a detail open — the same way the panel's own tabs do, so
+  // "which list am I in" never depends on having scrolled back.
+  const sub = S.tab === "referencias" ? subTabs(box) : null;
+  const items = shown();
   if (S.sel) {
     const it = items.find((x) => keyOf(S.tab, x) === S.sel);
     if (it) { box.append(detailOf(it)); return; }
@@ -909,6 +920,29 @@ function renderPanel() {
   }
   if (S.tab === "referencias") { references(box, items); return; }
   for (const it of items) box.append(row(it));
+}
+
+//: Which rows the panel is listing right now.  For references that is
+//: one of the two ORIGINS, which are different kinds of thing: found
+//: here by the judge, or granted to this person in the wiki.
+function shown() {
+  if (S.tab !== "referencias") return S.items[S.tab] || [];
+  return S.refTab === "wiki" ? (S.wiki.rows || []) : (S.items.referencias || []);
+}
+
+function subTabs(box) {
+  const w = S.wiki || { state: "sin conectar", rows: [] };
+  const sub = el("div", "tabs sub");
+  for (const [key, label, n] of [
+        ["local", "de esta conversación", String((S.items.referencias || []).length)],
+        ["wiki", "del wiki", w.state === "ok" ? String((w.rows || []).length) : w.state]]) {
+    const b = el("button", key === S.refTab ? "on" : "");
+    b.append(el("span", null, label), el("span", "n", n));
+    b.onclick = () => { S.refTab = key; S.sel = null; renderPanel(); };
+    sub.append(b);
+  }
+  box.append(sub);
+  return sub;
 }
 
 function row(it) {
@@ -921,32 +955,25 @@ function row(it) {
   return b;
 }
 
-// TWO ORIGINS, TWO GROUPS.  A reference found here — searched from a
-// memory's tags and kept by the judge — and one the person is granted in
-// the wiki are different kinds of thing, and the difference should not
-// need reading a row to notice.  The group header is also the only place
-// an unreachable wiki can say so honestly: an empty list and a server
-// that did not answer look identical, and mean opposite things.
-function references(box, local) {
-  group(box, "de esta conversación", local.length + "");
-  if (!local.length) box.append(el("div", "empty", "todavía nada encontrado aquí"));
-  for (const it of local) box.append(row(it));
-
-  const w = S.wiki || { state: "sin conectar", rows: [] };
-  const ok = w.state === "ok";
-  group(box, "del wiki", ok ? w.rows.length + "" : w.state);
-  if (!ok) {
+// TWO ORIGINS, TWO TABS.  A reference found here — searched from a
+// memory's tags and kept by the judge — and one the person is granted
+// in the wiki are different kinds of thing, and which one you are
+// looking at should not need reading a row to tell.  The wiki tab also
+// carries its own STATE in place of a count, because an empty list and
+// a server that did not answer look identical and mean opposite things.
+function references(box, rows) {
+  const w = S.wiki || { state: "sin conectar", rows: [], detail: "" };
+  if (S.refTab === "wiki" && w.state !== "ok") {
     box.append(el("div", "empty", w.detail || w.state));
     return;
   }
-  if (!w.rows.length) box.append(el("div", "empty", "nada que puedas ver todavía"));
-  for (const it of w.rows) box.append(row(it));
-}
-
-function group(box, what, n) {
-  const g = el("div", "group");
-  g.append(el("span", "what", what), el("span", "n", n));
-  box.append(g);
+  if (!rows.length) {
+    box.append(el("div", "empty", S.refTab === "wiki"
+      ? "nada que puedas ver todavía"
+      : "todavía nada encontrado aquí"));
+    return;
+  }
+  for (const it of rows) box.append(row(it));
 }
 function host(url) { try { return new URL(url).host; } catch (e) { return url; } }
 

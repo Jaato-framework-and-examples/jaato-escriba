@@ -237,23 +237,35 @@ const afterAutoplay = played.length;
 T.onEvent("status", { status: "listening", query: null });
 const panel = byId.get("panel");
 const showRefs = () => { T.S.tab = "referencias"; T.S.sel = null; T.renderPanel(); return panel.textContent; };
+const showWiki = () => { T.S.tab = "referencias"; T.S.refTab = "wiki"; T.S.sel = null;
+                         T.renderPanel(); return panel.textContent; };
 let refs = showRefs();
-check("the local group is labelled", refs.includes("de esta conversación"), true);
-check("the wiki group is labelled", refs.includes("del wiki"), true);
-check("a connected wiki lists its rows", refs.includes("Riego por goteo: patrones de montaje"), true);
+check("both origins are offered as tabs",
+      refs.includes("de esta conversación") && refs.includes("del wiki"), true);
+check("the local tab lists what was found here",
+      refs.includes("Nombres de Gatos") || refs.includes("Riego por gravedad"), true);
+check("and not the wiki's rows beside them",
+      refs.includes("Riego por goteo: patrones de montaje"), false);
+check("the wiki tab is reachable from here", refs.includes("del wiki"), true);
+check("a connected wiki lists its rows under its own tab",
+      showWiki().includes("Riego por goteo: patrones de montaje"), true);
 
-// Unreachable is SAID, not shown as emptiness.
+// The wiki tab carries its STATE where a count would go, and says it
+// again in place of the list: an empty list and a server that did not
+// answer look identical and mean opposite things.
 T.onEvent("wiki", { state: "error", rows: [], detail: "el wiki no responde" });
-refs = showRefs();
+refs = showWiki();
 check("an unreachable wiki says so", refs.includes("el wiki no responde"), true);
 check("and does not pretend to be empty", refs.includes("nada que puedas ver"), false);
-check("the local group is still there", refs.includes("de esta conversación"), true);
+check("its state is on the tab too", refs.includes("error"), true);
+check("the local tab is still offered", refs.includes("de esta conversación"), true);
 
-// Not wired is a third state, and also said.
 T.onEvent("wiki", { state: "sin conectar", rows: [],
                     detail: "no hay ninguna fuente MCP configurada para el wiki" });
-refs = showRefs();
-check("an unwired wiki says so", refs.includes("no hay ninguna fuente MCP"), true);
+check("an unwired wiki says so", showWiki().includes("no hay ninguna fuente MCP"), true);
+check("switching back shows what was found here",
+      (() => { T.S.refTab = "local"; T.renderPanel();
+               return panel.textContent.includes("no hay ninguna fuente MCP"); })(), false);
 T.S.tab = "memoria"; T.renderPanel();
 
 // ------------------------------------------------ a turn that ends badly
