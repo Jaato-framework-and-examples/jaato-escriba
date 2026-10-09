@@ -24,6 +24,20 @@ def check(label: str, got, want) -> None:
 
 root = Path(tempfile.mkdtemp(prefix="escriba-ws-"))
 try:
+    # THE ROOT IS NOT OURS TO CREATE.  Left to `mkdir(parents=True)` it
+    # appears with whatever the umask says — measured 0775 — and on a
+    # shared host every local account can then list the directory names,
+    # each of which is a sanitised authenticated principal.  A missing
+    # root is a misconfiguration, and a typo'd one must not quietly
+    # become a second tree that looks provisioned.
+    absent = root / "no-such-root"
+    try:
+        w.provision("alice@example.com", root=absent)
+        check("a missing root is refused", "provisioned", "refused")
+    except w.NotProvisioned:
+        pass
+    check("and is not created either", absent.exists(), False)
+
     alice = w.provision("alice@example.com", root=root)
     bob = w.provision("bob@example.com", root=root)
 

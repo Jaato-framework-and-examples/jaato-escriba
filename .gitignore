@@ -4,9 +4,13 @@
 .env
 !.env.example
 
-# The project's own virtualenv (uv sync --extra tui) and its lock.
+# The project's own virtualenv.  `uv.lock` is COMMITTED, not ignored:
+# this is an application that gets deployed, and the lock is the half
+# that makes a second host resolve what this one resolved.  Ignoring it
+# was the same mistake pyproject.toml exists to fix — a clone resolved
+# `jaato-sdk` freely, landed on 0.19.0, and every session was refused.
+# `uv sync --frozen` on the VPS failed outright without it.
 .venv/
-uv.lock
 __pycache__/
 
 # A session never runs here, so none of this should ever appear: the repo

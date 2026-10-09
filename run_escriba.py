@@ -605,6 +605,13 @@ if __name__ == "__main__":
             sys.exit(f"{ws} is not a workspace: no .jaato/ in it")
     else:
         try:
+            # The DEPLOYMENT's root is the account owner's to create, and
+            # `provision` refuses a missing one — a multi-tenant root made
+            # by whatever the umask said is how every local account comes
+            # to read a list of authenticated principals.  This root is a
+            # developer's own, single-user, so the driver makes it, with
+            # the mode said out loud rather than inherited.
+            DEV_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
             ws = _workspace.provision("dev", root=DEV_ROOT)
         except _workspace.NotProvisioned as exc:
             sys.exit(f"cannot provision a workspace: {exc}")

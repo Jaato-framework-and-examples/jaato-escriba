@@ -114,6 +114,20 @@ def provision(principal: str, root: Path = DEFAULT_ROOT,
         if not (template / need).exists():
             raise NotProvisioned(f"template: {template} has no {need}")
 
+    # THE ROOT IS NOT OURS TO CREATE.  `mkdir(parents=True)` below would
+    # happily make it, and that is how a multi-tenant root comes into
+    # being with whatever the umask says: measured 0775 on a developer
+    # box, which on a shared host lets every local account list the
+    # directory names — and each name is a sanitised authenticated
+    # principal, usually somebody's email address.  The deployment's root
+    # is created once by whoever owns the account, with the mode they
+    # chose (0750), and a missing one is a misconfiguration to report
+    # rather than a directory to invent.  A typo would otherwise provision
+    # a whole second tree that looks like it worked.
+    if not root.is_dir():
+        raise NotProvisioned(f"root: {root} does not exist. It is created "
+                             f"once, by the account that owns it, with the "
+                             f"mode that account chose")
     root = root.resolve()
     ws = (root / caller_dir(principal) / "workspace").resolve()
     # A principal is authenticated, not trusted: the one thing it must
