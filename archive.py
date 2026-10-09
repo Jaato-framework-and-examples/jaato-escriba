@@ -86,6 +86,25 @@ def _bytes_under(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
+def frozen_profile(workspace: Path, session_id: str) -> Optional[dict]:
+    """The resolved profile a session froze at creation, or None.
+
+    `profile_snapshot` is *"the RESOLVED profile the session actually ran
+    under, frozen at creation"* (`session_manager.py:14232`), sealed by
+    the daemon and carrying every field post-merge.  It is the only
+    client-reachable answer to "what is this session actually running",
+    and it answers several questions — the retention clocks below, and
+    which model is behind the voice.
+    """
+    record = workspace / ".jaato" / "sessions" / f"{session_id}.json"
+    try:
+        snapshot = json.loads(record.read_text(encoding="utf-8")).get(
+            "profile_snapshot")
+    except (OSError, json.JSONDecodeError):
+        return None
+    return snapshot if isinstance(snapshot, dict) else None
+
+
 def clocks(workspace: Path, session_id: str) -> Optional[dict]:
     """The RESOLVED retention this session runs under, or None.
 
@@ -105,13 +124,8 @@ def clocks(workspace: Path, session_id: str) -> Optional[dict]:
     one absence is how a housekeeping pass deletes an archive it was
     simply unable to ask about.
     """
-    record = workspace / ".jaato" / "sessions" / f"{session_id}.json"
-    try:
-        snapshot = json.loads(record.read_text(encoding="utf-8")).get(
-            "profile_snapshot")
-    except (OSError, json.JSONDecodeError):
-        return {"resolved": False, "record_keeping": None}
-    if not isinstance(snapshot, dict):
+    snapshot = frozen_profile(workspace, session_id)
+    if snapshot is None:
         return {"resolved": False, "record_keeping": None}
     keeping = snapshot.get("record_keeping")
     return {"resolved": True,

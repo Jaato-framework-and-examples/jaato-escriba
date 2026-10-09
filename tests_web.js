@@ -78,7 +78,7 @@ class El {
 
 const IDS = ["pills", "session-at", "hright", "playback-where", "audit-btn", "theme-btn", "alert-slot",
              "days", "scroll", "jump", "ptt", "ptt-title", "ptt-sub", "ptt-time", "counts", "tabs",
-             "panel", "reader-slot", "player"];
+             "panel", "engines", "reader-slot", "player"];
 const byId = new Map(IDS.map((id) => [id, new El("div")]));
 byId.get("player").paused = true;
 
@@ -149,6 +149,7 @@ check("documents are unknown, not zero", cellText(3).includes("—"), true);
 check("no delta is drawn against an unobserved start", cellText(0).includes("±0"), false);
 check("no claim about the queue direction",
       cellText(1).includes("la cola"), false);
+check("no engine is claimed before the hub", byId.get("engines").children.length, 0);
 check("tab counts are unknown too", (byId.get("tabs").children[0] || blank).textContent.includes("—"), true);
 
 // ----------------------------------------- a browser that has no microphone
@@ -183,6 +184,19 @@ const today = new Date();
 const localToday = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, "0"),
                     String(today.getDate()).padStart(2, "0")].join("-");
 check("today's entries are under today's local date", dayKeys[dayKeys.length - 1], localToday);
+
+// -------------------------------------------------------------- engines
+// Every tier, not just the live one: `voz` is the only tier the person
+// hears and `escribano` is where the escriba writes in silence, so one
+// name would hide the switch that explains the quiet.
+const engines = byId.get("engines");
+check("the block is drawn", engines.textContent.includes("Motor"), true);
+check("both agents are named",
+      ["escriba", "documentalista"].every((a) => engines.textContent.includes(a)), true);
+check("both of the escriba's tiers are shown",
+      ["voz", "escribano"].every((t) => engines.textContent.includes(t)), true);
+check("with their models",
+      ["openai/gpt-audio", "openai/gpt-4o-mini"].every((m) => engines.textContent.includes(m)), true);
 
 // ------------------------------------------------------------- autoplay
 // A reply sounds by itself, because a voice assistant that waits to be

@@ -186,7 +186,15 @@ nav .note code{font-family:var(--mono)}
 
 /* ------------------------------------------------------------- knowledge */
 aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
-      grid-template-rows:auto auto minmax(0,1fr);min-height:0}
+      grid-template-rows:auto auto minmax(0,1fr) auto;min-height:0}
+.engines{border-top:1px solid var(--line);padding:var(--space-3) var(--space-4);
+         display:flex;flex-direction:column;gap:var(--space-2)}
+.engines .head{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.engines .agent{display:flex;flex-direction:column;gap:2px}
+.engines .who{font-size:12px;font-weight:600;color:var(--ink-2)}
+.engines .tier{display:flex;align-items:baseline;gap:var(--space-2);flex-wrap:wrap;padding-left:var(--space-2)}
+.engines .name{font-size:12px;color:var(--muted);min-width:66px}
+.engines .model{font-family:var(--mono);font-size:12px;color:var(--ink)}
 .counts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-bottom:1px solid var(--line)}
 .counts .cell{padding:var(--space-3);border-right:1px solid var(--line);border-bottom:1px solid var(--line);
               display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -299,6 +307,7 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
       <div class="counts" id="counts"></div>
       <div class="tabs" id="tabs"></div>
       <div class="list" id="panel"></div>
+      <div class="engines" id="engines"></div>
     </aside>
   </main>
 </div>
@@ -343,7 +352,7 @@ const S = {
   //: that has spoken to nothing is a statement about the person's
   //: workspace, and it is one we have no grounds for.
   loaded: false,
-  activeDay: null, progSec: 0,
+  activeDay: null, progSec: 0, engines: [],
   //: Replies already offered to the speakers, by entry id.  A reply is
   //: played ONCE and never again on its own: the audio ref arrives in a
   //: second event after the text, a `repeats` bump re-publishes a row,
@@ -473,6 +482,8 @@ const ALERTS = {
   // that never reached the backend had not LOST anything.  Somebody
   // reading "se ha perdido la conexión" on a first load goes looking for
   // a network fault that is not there.
+  session: (d) => ["Sesión terminada",
+    `La sesión ha terminado: ${d.detail || "sin detalle"}. Lo dicho hasta aquí está guardado.`],
   // NOT a permission problem, and saying "revisa el permiso" sends the
   // reader looking for a setting the browser is not offering: on an
   // insecure origin Chrome does not expose `navigator.mediaDevices` at
@@ -834,6 +845,39 @@ function detailOf(it) {
   return d;
 }
 
+// --------------------------------------------------------------- engines
+// WHO IS ANSWERING, and with what.  Every tier is listed rather than just
+// the one that happens to be live: the escriba's `voz` is the only tier
+// the person hears and `escribano` is where it annotates and commissions
+// documents in silence, so a single name would hide the switch that
+// explains why it sometimes goes quiet.  The live tier is NOT shown,
+// because nothing on the wire reports it — the framework logs the switch
+// and emits no event for it, and a guess here would be a label that is
+// wrong exactly when it matters.
+function renderEngines() {
+  const box = $("engines");
+  box.textContent = "";
+  if (!S.engines.length) return;
+  box.append(el("div", "head", "Motor"));
+  for (const e of S.engines) {
+    const a = el("div", "agent");
+    a.append(el("div", "who", e.agent));
+    for (const r of e.rows) {
+      const row = el("div", "tier");
+      if (r.tier) {
+        const n = el("span", "name", r.tier + (r.audible ? " ♪" : ""));
+        n.title = r.audible ? "el tier que se oye" : "sin audio";
+        row.append(n);
+      }
+      const m = el("span", "model", r.model || "—");
+      m.title = r.provider ? "proveedor: " + r.provider : "";
+      row.append(m);
+      a.append(row);
+    }
+    box.append(a);
+  }
+}
+
 // ------------------------------------------------------------ doc reader
 async function openReader(it) {
   const slot = $("reader-slot");
@@ -1115,7 +1159,8 @@ function onEvent(kind, data) {
     S.archive_dir = data.archive_dir || null;
     S.playback = data.playback || S.playback;
     S.days = data.days || S.days;
-    renderPills(); renderCounts(); renderTabs(); renderPanel(); renderDays(); renderTranscript();
+    S.engines = data.engines || S.engines;
+    renderPills(); renderEngines(); renderCounts(); renderTabs(); renderPanel(); renderDays(); renderTranscript();
   } else if (kind === "entry") {
     updateEntry(data);
   } else if (kind === "counts") {
@@ -1198,6 +1243,13 @@ function mockState() {
   return {
     session_at: d(0, 9, 12), archive_dir: "20261009_091200", playback: "navegador",
     status: { status: "listening", query: null },
+    engines: [
+      { agent: "escriba", rows: [
+        { tier: "voz", model: "openai/gpt-audio", provider: "openrouter", audible: true, initial: true },
+        { tier: "escribano", model: "openai/gpt-4o-mini", provider: "openrouter", audible: false, initial: false }] },
+      { agent: "documentalista", rows: [
+        { tier: null, model: "openai/gpt-4o-mini", provider: "openrouter", audible: false, initial: true }] },
+    ],
     entries: [
       E(d(3, 19, 2), "said", { seconds: 21, audio: "att_1b90e44c" }),
       E(d(3, 19, 3), "spoke", { text: "¿Las macetas del balcón dan al sur o al oeste? Cambia mucho cuánta agua van a necesitar en agosto.", audio: "att_c4a2071e", seconds: 6 }),
@@ -1291,7 +1343,7 @@ function mockTurn(seconds) {
 // counts reading `—`, tabs at zero.  The alert then says what is wrong.
 function renderAll() {
   renderPills(); renderCounts(); renderTabs(); renderPanel();
-  renderDays(); renderTranscript(); pttFace();
+  renderDays(); renderTranscript(); renderEngines(); pttFace();
 }
 applyTheme();
 $("audit-btn").setAttribute("aria-pressed", String(S.showIds));

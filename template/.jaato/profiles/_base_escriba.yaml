@@ -107,23 +107,35 @@ plugins:
 # `usd` is what stops a bad night costing real money.
 budget_control:
   limits:
-    usd: 2.00
+    # REAL MONEY, and the audio tier is where it goes: `voz` is
+    # openai/gpt-audio, every utterance stays in history as base64 and is
+    # re-sent on all later turns, so the cost of turn N grows with N.
+    # Measured on this deployment: ~10k prompt tokens by the fourth turn.
+    # 10.00 is a working session, not a licence — the ladder below still
+    # aborts at 100 %.
+    usd: 10.00
     turns: 120
-    tool_calls: 300
-    # The one that matters, and the one this profile did not have.
+    tool_calls: 400
+    # SUMMED TURN WALL-CLOCK ACROSS THE SESSION, not per turn. The
+    # framework's own words (`budget_control.py:71`): "seconds -> summed
+    # turn / tool wall-clock". This was 90, with a comment reasoning
+    # about "a plausible long turn" — which read the dimension as
+    # per-turn and was simply wrong. At ~20 s for an audio turn it ended
+    # every conversation at the fourth or fifth message, which is how it
+    # was found: by somebody being cut off mid-conversation.
     #
-    # 2026-09-11: the greeting turn stored the SAME three memories 83 times
-    # over 179 seconds — one turn, 90 tool calls, no text emitted between
-    # the first store and the 90th. Neither other ceiling can see that:
-    # `turns: 120` counts turns and this was ONE, and `tool_calls: 300` is
-    # sized for a whole conversation, so a single runaway turn never
-    # approaches it. Since jaato#955 both are observed DURING a turn rather
-    # than at its end, so a wall-clock limit now actually bites mid-loop.
+    # 3600 is an hour of actual turn time, which is a long conversation
+    # and not an unbounded one; the person's own thinking and talking is
+    # not in it, so an hour here is several hours at the microphone.
     #
-    # 90 s is deliberately below a plausible long turn: the slowest healthy
-    # turn measured here is ~8 s (audio in, model, audio out), and the
-    # opening drain that precedes the session is not part of it.
-    seconds: 90
+    # WHAT THIS GIVES UP, said plainly: the 90 did catch the 2026-09-11
+    # pathology — one turn, 90 tool calls, 83 identical memories, 179
+    # seconds. Nothing per-turn replaces it, because the framework has no
+    # per-turn wall-clock dimension: `runtime_limits` caps a TOOL's
+    # wall-clock, and every `budget_control` dimension is cumulative. So
+    # a runaway turn is now caught by `tool_calls` instead, which that
+    # turn would have hit in four of its own kind.
+    seconds: 3600
   degrade:
     - at: 80
       action: finalize

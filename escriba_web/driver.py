@@ -39,6 +39,7 @@ import board as _board                                           # noqa: E402
 import enrichment                                                # noqa: E402
 import memory                                                    # noqa: E402
 import voice                                                     # noqa: E402
+import yaml                                                      # noqa: E402
 import workspace as _workspace                                   # noqa: E402
 from run_escriba import GREETING, SessionGone, _reconcile, _turn  # noqa: E402
 
@@ -52,6 +53,44 @@ def _iso(at: datetime) -> str:
 def entry_json(e) -> Dict[str, Any]:
     return {"id": e.id, "at": _iso(e.at), "kind": e.kind, "text": e.text,
             "seconds": e.seconds, "audio": e.audio, "repeats": e.repeats}
+
+
+#: Which agents the page names.  The curator and the juez run too, but
+#: neither answers the person: one consolidates afterwards and the other
+#: judges search results.  Naming every profile would be a list of
+#: machinery rather than a cue about who is talking.
+SHOWN = ("escriba", "documentalista")
+
+
+def engine_rows(summary) -> List[dict]:
+    """What one profile is bound to, flattened for display.
+
+    A profile binds exactly one provider and model — EXCEPT one with
+    `model_tiers`, and the escriba is exactly that: `voz` is the tier the
+    person hears and `escribano` is where it annotates and commissions
+    documents, silently.  So "the model in place" is not one value for
+    it, and showing a single name would be picking one of two and hiding
+    the switch that explains why it sometimes goes quiet.
+
+    `model_tiers` carries `initial` and `fallback` alongside the tiers
+    themselves, so the tier entries are the mapping-valued ones.
+    """
+    get = (lambda k: summary.get(k) if isinstance(summary, dict)
+           else getattr(summary, k, None))
+    tiers = get("model_tiers") or {}
+    rows = []
+    for name, spec in tiers.items():
+        if not isinstance(spec, dict):
+            continue          # `initial` / `fallback` name a tier, are not one
+        rows.append({"tier": name, "model": spec.get("model"),
+                     "provider": spec.get("provider"),
+                     "audible": bool((spec.get("modalities") or {}).get("audio")),
+                     "initial": name == tiers.get("initial")})
+    if not rows:
+        rows.append({"tier": None, "model": get("model"),
+                     "provider": get("provider"), "audible": False,
+                     "initial": True})
+    return rows
 
 
 class WebBoard(_board.StateBoard):
@@ -221,6 +260,46 @@ class Person:
         await _turn(self._scribe, GREETING, None, self._relay(), log=self.archive.turn,
                     tui=self.board)
 
+    def declared(self, agent: str) -> dict:
+        """What a profile file binds, for an agent with no session yet.
+
+        The `_base_*` tier is PROVIDER-AGNOSTIC by this repo's own design
+        — "Model and provider live in profiles/<set>/<agent>.yaml" — so
+        the set file answers it outright and no merge is involved.
+        """
+        chosen = _workspace.profile_set(self.ws)
+        path = self.ws / ".jaato" / "profiles" / chosen / f"{agent}.yaml"
+        with path.open(encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+
+    def engines(self) -> List[dict]:
+        """Who is answering, and with what.
+
+        TWO SOURCES, FOR TWO DIFFERENT QUESTIONS, and not a fallback
+        chain for one.  The escriba HAS a session, so the honest answer
+        is what that session froze: `profile_snapshot`, sealed by the
+        daemon, post-merge.  The documentalista has none — it is spawned
+        as a subagent when a document is wanted — so the only thing that
+        can be said is what its profile declares.
+
+        NOT `session.profiles`, which looked like the right answer and is
+        not: measured against this daemon it returns 25 profiles, the
+        workspace's four `_base_*` plus 21 from the user tier, and NOT
+        the set profiles the deployment actually runs.  The overlay is
+        applied when a session is created and not when that list is
+        built, so a picker made from it cannot offer `escriba` at all.
+        """
+        rows = []
+        if self._scribe is not None:
+            frozen = _archive.frozen_profile(self.ws, self._scribe.session_id)
+            if frozen:
+                rows.append({"agent": "escriba", "rows": engine_rows(frozen)})
+        for agent in SHOWN:
+            if any(r["agent"] == agent for r in rows):
+                continue
+            rows.append({"agent": agent, "rows": engine_rows(self.declared(agent))})
+        return rows
+
     def _relay(self) -> Relay:
         return Relay(archive=self.archive)
 
@@ -266,14 +345,27 @@ class Person:
                 await _turn(self._scribe, "", said, self._relay(),
                             log=self.archive.turn, tui=self.board)
             except SessionGone as exc:
-                self.hub.publish("alert", {"kind": "budget", "at": datetime.now().strftime("%H:%M"),
-                                           "detail": str(exc)[:200]})
+                # NAME THE REASON WE HAVE, not the one that sounds likely.
+                # `SessionGone` covers an RPC closing, a session
+                # terminating and a session not being found — see
+                # `run_escriba._GONE` — and this used to report every one
+                # of them as "se alcanzó el límite de presupuesto".  A
+                # budget abort says so in its own text; anything else is
+                # reported as what it was, because sending somebody to
+                # raise a ceiling that was never reached wastes the one
+                # piece of evidence they had.
+                text = str(exc)
+                budget = any(w in text.lower() for w in ("budget", "exhaust", "presupuesto"))
+                self.hub.publish("alert", {
+                    "kind": "budget" if budget else "session",
+                    "at": datetime.now().strftime("%H:%M"), "detail": text[:200]})
                 raise
 
     # -- what a new browser is handed ------------------------------------
     def snapshot(self) -> dict:
         return self.board.snapshot(session_at=_iso(self.opened),
-                                   playback="navegador", days=self.days())
+                                   playback="navegador", days=self.days(),
+                                   engines=self.engines())
 
     def days(self) -> List[dict]:
         """Every day that has an archive, and whether it is in the view.
