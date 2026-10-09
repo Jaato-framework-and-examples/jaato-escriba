@@ -97,8 +97,10 @@ async def person_of(request: Request) -> Person:
     browser does is ask for `/events`.  Waiting for the greeting before
     the stream exists would leave the page empty for exactly as long as
     the greeting takes, and the greeting itself is delivered through that
-    stream.  So the snapshot goes out first and the conversation starts
-    behind it.
+    stream.  So the person exists first and the conversation starts
+    behind them; the snapshot is built by `Hub.subscribe` when `/events`
+    arrives, which is also what makes a later RECONNECT correct rather
+    than a replay of whatever was last published.
 
     `Person(...)` does not await, so the check and the insert cannot
     interleave with another request on this loop: two tabs opening at
@@ -122,7 +124,6 @@ async def person_of(request: Request) -> Person:
         person = Person(who, root=Path(str(CONFIG["root"])), limit=CONFIG.get("limit"),
                         identity=identity, scribe=CONFIG.get("scribe"))
         PEOPLE[who] = person
-        person.hub.publish("state", person.snapshot())
         asyncio.create_task(_open(person))
     return person
 

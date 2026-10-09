@@ -46,8 +46,14 @@ def drain(q):
 
 async def main():
     # ------------------------------------------------ one hub per person
-    alice, bob = Hub(), Hub()
+    # A hub is built around a snapshot FUNCTION, so these stand-ins are
+    # what a `Person` would supply: callables reading a live dict.
+    world = {"entries": []}
+    alice, bob = Hub(lambda: dict(world)), Hub(lambda: dict(world))
     qa, qb = alice.subscribe(), bob.subscribe()
+    # Every subscriber is handed the state first, now unconditionally —
+    # drained here so what follows counts deltas and not the snapshot.
+    drain(qa); drain(qb)
     alice.publish("entry", {"id": 1, "text": "lo del balcón"})
     check("the subscriber hears their own hub", len(drain(qa)), 1)
     check("and nobody else's", drain(qb), [])
@@ -63,10 +69,32 @@ async def main():
     # ---------------------------------------------- the snapshot on join
     # A delta against nothing is not interpretable, so a browser that
     # arrives mid-conversation is handed the state first.
-    alice.publish("state", {"entries": [1, 2, 3]})
+    world["entries"] = [1, 2, 3]
     late = alice.subscribe()
-    kinds = [k for k, _ in drain(late)]
-    check("a late joiner gets the state first", kinds, ["state"])
+    first = drain(late)
+    check("a late joiner gets the state first", [k for k, _ in first], ["state"])
+
+    # ------------------------------------- and the state is CURRENT state
+    # THE REGRESSION THIS FILE EXISTS FOR.  The hub used to keep the last
+    # `state` it had published and hand that to the next browser, and
+    # `state` is published only when the session opens — so every
+    # reconnect was answered with the world as it was at open.  On
+    # 2026-10-09 a person talked for two minutes, had a document written,
+    # read it, and came back to an empty transcript and a session clock
+    # from an hour before, with the conversation and the document both
+    # intact on disk.  Nothing had restarted; the page had been handed a
+    # stale snapshot and believed it.
+    #
+    # Publishing a `state` FIRST is what makes this discriminating: a hub
+    # that stores and replays would answer with that published value and
+    # pass a test that only checked "some state arrives".
+    alice.publish("state", {"entries": ["stale"]})
+    world["entries"] = [1, 2, 3, 4]
+    rejoin = alice.subscribe()
+    kind, data = drain(rejoin)[0]
+    check("a reconnect is answered with the state now", data["entries"],
+          [1, 2, 3, 4])
+    check("not with the last one published", data["entries"] != ["stale"], True)
 
     # --------------------------------------------- a reader that stalls
     # A tab that stops reading must not grow a queue for the life of the
@@ -75,7 +103,7 @@ async def main():
     # The discriminating version: one reader keeps up and one does not.
     # Asserting only that the count fell would pass on a hub that dropped
     # everybody, which is the same outage by another route.
-    fresh = Hub()
+    fresh = Hub(lambda: {})
     fast, slow = fresh.subscribe(), fresh.subscribe()
     for i in range(1000):
         fresh.publish("entry", {"id": i})
@@ -84,9 +112,10 @@ async def main():
     check("the one that stalls is dropped", slow in fresh._subs, False)
 
     # ------------------------------------------- the board becomes events
-    hub = Hub()
+    hub = Hub(lambda: {})
     board = WebBoard(hub)
     q = hub.subscribe()
+    drain(q)                        # the join snapshot, not news
     board.spoke("buenos días")
     seen = drain(q)
     check("a new entry is published", [k for k, _ in seen][0], "entry")

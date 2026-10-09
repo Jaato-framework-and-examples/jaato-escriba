@@ -14,12 +14,27 @@ otherwise grow a queue for as long as the session lives.  Dropping it
 costs that reader nothing: `EventSource` reconnects on its own and the
 reconnect is answered with a full snapshot, which is the one message
 that makes any later delta make sense.
+
+THE SNAPSHOT IS BUILT WHEN IT IS ASKED FOR, never stored.  This hub used
+to keep the last `state` it had published and hand that to the next
+browser — and since `state` is published only at session open, every
+reconnect was answered with the world as it looked when the session
+started.  Measured on 2026-10-09: a person talked for two minutes, had a
+document written, opened it, and came back to a page showing an empty
+transcript, no document and a session clock from an hour earlier, while
+the conversation, the document and the live session were all exactly
+where they should be.  Nothing had restarted; the page had been told
+something stale and believed it.
+
+So the hub holds the FUNCTION that builds a snapshot rather than the
+result of having called it once.  Staleness then has nowhere to live:
+there is no second copy of the state to drift from the first.
 """
 from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List
 
 #: How far behind a reader may fall before it is dropped.  Generous
 #: enough that a slow network is not an eviction, small enough that a
@@ -42,19 +57,27 @@ def frame(kind: str, data: Any) -> bytes:
 class Hub:
     """Everything one person's open browsers are told."""
 
-    def __init__(self) -> None:
+    def __init__(self, snapshot: Callable[[], Dict[str, Any]]) -> None:
         self._subs: List[asyncio.Queue] = []
-        #: The last snapshot published, handed to a browser the moment it
-        #: connects.  Without it a reader that arrives mid-conversation
-        #: sees only the deltas that happen to follow, and a delta against
-        #: nothing is not interpretable.
-        self.state: Optional[Dict[str, Any]] = None
+        #: Builds the whole of what a browser needs to draw the page.
+        #: REQUIRED, and called rather than stored — see the module
+        #: docstring.  A hub with no way to answer "what is true now?"
+        #: can only answer "what was true once", which is the defect.
+        self._snapshot = snapshot
 
     def subscribe(self) -> asyncio.Queue:
+        """A queue, with the current state already in front of it.
+
+        Both halves happen with no `await` between them, which is what
+        makes the handover exact: nothing can be published into the gap,
+        so a reader sees the snapshot and then every delta after it,
+        never a delta that the snapshot already contains and never one
+        it missed.  A delta that does arrive twice is harmless anyway —
+        the page patches rows by id.
+        """
         q: asyncio.Queue = asyncio.Queue(maxsize=BACKLOG)
         self._subs.append(q)
-        if self.state is not None:
-            q.put_nowait(frame("state", self.state))
+        q.put_nowait(frame("state", self._snapshot()))
         return q
 
     def drop(self, q: asyncio.Queue) -> None:
@@ -62,8 +85,12 @@ class Hub:
             self._subs.remove(q)
 
     def publish(self, kind: str, data: Any) -> None:
-        if kind == "state":
-            self.state = data
+        """Tell everyone watching.  Nothing is kept for the next reader.
+
+        A `state` publish is for browsers already connected — after a
+        resume, say.  The next one to arrive builds its own in
+        `subscribe`, which is why there is nothing to store here.
+        """
         payload = frame(kind, data)
         for q in list(self._subs):
             try:

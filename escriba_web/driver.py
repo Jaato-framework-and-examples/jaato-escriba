@@ -273,7 +273,12 @@ class Person:
         #: one per person.  It is hundreds of megabytes.
         self.scribe = scribe
         self.principal = principal
-        self.hub = Hub()
+        # The hub is handed `self.snapshot`, not a snapshot: it calls it
+        # whenever a browser connects, so a reconnecting page is answered
+        # with what is true then rather than what was true at open.
+        # Passing the bound method here is safe before the attributes it
+        # reads exist — nothing can subscribe until `Person(...)` returns.
+        self.hub = Hub(self.snapshot)
         self.board = WebBoard(self.hub)
         # The board exists first so the refresh can be SEEN.  A person's
         # profiles being replaced under them is a thing that happened,
@@ -706,9 +711,13 @@ class Person:
 
         Read from `audio/`, which is the durable record: the transcript
         holds 400 entries and the person may well have talked on days that
-        fell out of it.  A day the view still holds is clickable; the rest
-        say `archivo`, because loading them back is not built yet and a
-        button that does nothing is worse than a label that explains.
+        fell out of it.  A day the view still holds opens where it is; a
+        day only the archive has is labelled `archivo` and READ BACK on
+        click, through `/day/{date}` and `day()` below.  `in_view` is
+        therefore about which of the two routes the page takes, not about
+        whether a day can be reached at all — including TODAY, whose
+        earlier conversation is an archive like any other once the
+        session that held it has gone.
         """
         in_view: Dict[str, int] = {}
         for e in self.board.state.entries:
