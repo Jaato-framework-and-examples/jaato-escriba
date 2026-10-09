@@ -55,6 +55,14 @@ class Entry:
     seconds: Optional[float] = None
     audio: Optional[str] = None   # the att_ id, when there is a recording
     repeats: int = 1
+    #: Stable for the life of this entry, and the only safe way to say
+    #: WHICH row changed.  Three things arrive after a row is first drawn
+    #: — the rest of a streamed reply, the audio id once the provider has
+    #: finished speaking, and a `repeats` bump on a folded line — and a
+    #: remote view has to apply each to the row it belongs to.  Position
+    #: cannot do that: the deque drops its oldest entry at 400, so every
+    #: index shifts under a reader who is looking at an older row.
+    id: int = 0
 
 
 @dataclass
@@ -73,6 +81,14 @@ class Conversation:
     #: the session's finds reads as a total and is wrong by the size of
     #: everything learnt before today.
     catalogue: int = 0
+    #: What the catalogue and the documents held when the session opened,
+    #: for the same reason `curated_at_start` exists: a count alone cannot
+    #: say whether anything moved today.  Both are filled on the FIRST
+    #: observation rather than at construction — nothing is known until
+    #: the first disk tick has read them, and zero is a reading, not a
+    #: starting point.
+    catalogue_at_start: Optional[int] = None
+    documents_at_start: Optional[int] = None
     found: Deque[str] = field(default_factory=lambda: deque(maxlen=60))
     selected: Deque[str] = field(default_factory=lambda: deque(maxlen=60))
     documents: Deque[str] = field(default_factory=lambda: deque(maxlen=40))
@@ -95,6 +111,11 @@ class Conversation:
     listening: bool = False
     archive_dir: Optional[str] = None
 
+    #: Hands out `Entry.id`.  Monotonic and never reused, including after
+    #: the deque has dropped the entry it named: an id a reader still
+    #: holds must not come to mean a different row.
+    last_id: int = 0
+
     def add(self, kind: str, text: str, **kw) -> None:
         """Append, or fold a consecutive repeat into a count.
 
@@ -107,7 +128,9 @@ class Conversation:
         if prev is not None and prev.kind == kind and prev.text == text:
             prev.repeats += 1
             return
-        self.entries.append(Entry(datetime.now(), kind, text, **kw))
+        self.last_id += 1
+        self.entries.append(Entry(datetime.now(), kind, text,
+                                  id=self.last_id, **kw))
 
 
 class NullBoard:
@@ -246,10 +269,17 @@ class StateBoard(NullBoard):
         self._refreshed()
 
     def catalogue(self, total: int) -> None:
+        if self.state.catalogue_at_start is None:
+            self.state.catalogue_at_start = total
         self.state.catalogue = total
         self._refreshed()
 
     def listing(self, panel: str, items: List[dict]) -> None:
+        # The documents panel IS the document count: `state.documents`
+        # holds only what this process wrote, and the documenter is a
+        # subagent whose output this process never sees.
+        if panel == "documentos" and self.state.documents_at_start is None:
+            self.state.documents_at_start = len(items)
         self.state.items[panel] = items
         self._refreshed()
 
