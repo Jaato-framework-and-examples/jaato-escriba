@@ -40,7 +40,7 @@ import json
 import wave
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 #: The mime grammar for headerless PCM lives in the player, which is the
 #: module that had to learn it first.  Imported rather than re-implemented:
@@ -61,6 +61,61 @@ from pulse_playback import _pcm_params
 #: `.jaato/memory` and `.jaato/references`, and an archive it could reach
 #: would not be an archive.
 ROOT = Path("audio")
+
+
+#: How a conversation's directory is named, and the name `housekeeping`
+#: parses an age out of.  Defined here because this module makes the name.
+STAMP = "%Y%m%d_%H%M%S"
+
+
+def _unused(path: Path) -> Path:
+    """`path`, or the first free `path_1`, `path_2`, … beside it."""
+    if not path.exists():
+        return path
+    for n in range(1, 1000):
+        candidate = path.with_name(f"{path.name}_{n}")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"{path}: a thousand archives in one second")
+
+
+def _bytes_under(path: Path) -> int:
+    """What a person's recordings occupy today."""
+    if not path.is_dir():
+        return 0
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def clocks(workspace: Path, session_id: str) -> Optional[dict]:
+    """The RESOLVED retention this session runs under, or None.
+
+    Read out of the session record the daemon sealed, whose
+    `profile_snapshot` is *"the RESOLVED profile the session actually ran
+    under, frozen at creation"* (`session_manager.py:14232`) and carries
+    `record_keeping` post-merge — after `inherits:` and
+    most-restrictive-wins.  That matters because the clocks are what the
+    housekeeping sweep is allowed to act on, and the merge rule is the
+    framework's: restating it here would be a second statement of it.
+
+    Two outcomes that must not be confused, because they mean opposite
+    things for a sweep: `resolved: false` is "the snapshot could not be
+    read", and nothing may be deleted on a guess; `resolved: true` with a
+    null block is "the profile declares no retention", which the framework
+    reads as nothing having promised to keep it.  Collapsing the two into
+    one absence is how a housekeeping pass deletes an archive it was
+    simply unable to ask about.
+    """
+    record = workspace / ".jaato" / "sessions" / f"{session_id}.json"
+    try:
+        snapshot = json.loads(record.read_text(encoding="utf-8")).get(
+            "profile_snapshot")
+    except (OSError, json.JSONDecodeError):
+        return {"resolved": False, "record_keeping": None}
+    if not isinstance(snapshot, dict):
+        return {"resolved": False, "record_keeping": None}
+    keeping = snapshot.get("record_keeping")
+    return {"resolved": True,
+            "record_keeping": keeping if isinstance(keeping, dict) else None}
 
 
 def digest(data: bytes) -> str:
@@ -84,13 +139,35 @@ class Archive:
     is append-only: a manifest that can be rewritten is not evidence.
     """
 
-    def __init__(self, workspace: Path, client_id: Optional[str] = None) -> None:
+    def __init__(self, workspace: Path, client_id: Optional[str] = None,
+                 limit: Optional[int] = None,
+                 on_full: Optional[Callable[[str], None]] = None) -> None:
         self._started = datetime.now()
-        self.dir = workspace / ROOT / self._started.strftime("%Y%m%d_%H%M%S")
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self._ws = workspace
+        # ONE DIRECTORY PER CONVERSATION, and the stamp alone does not
+        # guarantee it: two archives opened inside the same second would
+        # share a directory and a manifest, which gives the sweep two
+        # policy rows for one archive and no way to tell whose clocks
+        # govern which recording.  The suffix is the daemon's own
+        # spelling for the same collision — its session records run
+        # `20261002_210637`, `20261002_210637_1`, `_2`.
+        self.dir = _unused(workspace / ROOT / self._started.strftime(STAMP))
+        self.dir.mkdir(parents=True)
         self._manifest = self.dir / "manifest.jsonl"
         self._client_id = client_id
         self._session_id: Optional[str] = None
+        #: The ceiling, in bytes, or None for no ceiling at all.  The
+        #: sweep is the enforcer; this exists because one long
+        #: conversation can cross the ceiling between two sweeps, and the
+        #: honest place to stop is before the write.
+        self._limit = limit
+        self._on_full = on_full
+        #: Counted once, here, from what the person already holds — not
+        #: re-walked per write.  `audio/` is ours alone, so nothing else
+        #: grows it behind us.
+        self._used = _bytes_under(workspace / ROOT)
+        self._suspended = False
+        self._policy_written = False
         #: Chunks in flight, keyed by `stream_id`.  The provider restarts
         #: `sequence` at 0 per utterance and the session turns that into a
         #: new stream_id, so a key here is exactly one spoken utterance.
@@ -101,6 +178,33 @@ class Archive:
         """Record who we are, once the daemon has told us."""
         self._session_id = session_id
         self._client_id = client_id or self._client_id
+
+    # ------------------------------------------------------------ limits
+    def _room_for(self, size: int) -> bool:
+        """May these bytes be kept?
+
+        The RECORD never stops — the manifest goes on being appended, and
+        it is the audit half, governed by `retention_days`.  Only the
+        recordings stop, which are the conversation half.  That split is
+        the framework's (`explain audit`: the session record *"is the
+        CONVERSATION, not the log about it"*), and stopping both would
+        throw away the cheap evidence to save the expensive kind.
+        """
+        if self._limit is None:
+            return True
+        if self._used + size <= self._limit:
+            return True
+        if not self._suspended:
+            self._suspended = True
+            self.turn(stage="budget", limit=self._limit, held=self._used,
+                      note="recordings stopped; the manifest continues")
+            if self._on_full is not None:
+                self._on_full(f"tope de audio alcanzado ({self._limit} bytes): "
+                              f"dejo de grabar, el registro sigue")
+        return False
+
+    def _wrote(self, size: int) -> None:
+        self._used += size
 
     # ---------------------------------------------------------- inbound
     def heard(self, data: bytes) -> str:
@@ -113,7 +217,12 @@ class Archive:
         which is the one property the scheme rests on.
         """
         att = digest(data)
-        (self.dir / f"in_{att}.mp3").write_bytes(data)
+        # The id is returned whether or not the bytes are kept: it is the
+        # daemon's own identifier for this utterance, so the manifest can
+        # still name the turn when the ceiling stopped the recording.
+        if self._room_for(len(data)):
+            (self.dir / f"in_{att}.mp3").write_bytes(data)
+            self._wrote(len(data))
         return att
 
     # --------------------------------------------------------- outbound
@@ -134,6 +243,13 @@ class Archive:
             return None
         raw = b"".join(chunks)
         params = _pcm_params(mime)
+        if not self._room_for(len(raw)):
+            # The digest still goes in the manifest: what the caller heard
+            # is identified even when the ceiling kept it from being kept,
+            # and `file: None` is the archive saying so rather than naming
+            # a recording that is not there.
+            return {"stream_id": stream_id, "file": None,
+                    "sha": digest(raw), "bytes": len(raw), "mime": mime}
         if params is None:
             # Not PCM: keep the bytes as they came rather than guessing a
             # container for them.  An unplayable archive still verifies.
@@ -149,10 +265,34 @@ class Archive:
                 w.setsampwidth(2 if params["encoding"].endswith("16le") else 1)
                 w.setframerate(int(params["rate"]))
                 w.writeframes(raw)
+        self._wrote((self.dir / name).stat().st_size)
         return {"stream_id": stream_id, "file": name,
                 "sha": digest(raw), "bytes": len(raw), "mime": mime}
 
     # --------------------------------------------------------- manifest
+    def _policy(self) -> None:
+        """Record, once, the retention this archive was made under.
+
+        WHY THE ARCHIVE CARRIES ITS OWN CLOCKS.  The sweep that prunes
+        these recordings must know the resolved `record_keeping:` — after
+        `inherits:` and most-restrictive-wins — and that resolution lives
+        in the daemon, not in the SDK.  Copying the sealed snapshot's
+        block in here, at the time, gives the sweep a stdlib-only read and
+        gives an auditor the stronger statement: not "this is the policy
+        today" but "this is the policy this conversation was recorded
+        under".
+
+        WRITTEN AT THE FIRST TURN, not at `identify`.  The record is saved
+        by the daemon as the session runs; at creation there may be
+        nothing on disk to read.  One attempt, one honest outcome: a null
+        block means the clocks could not be read, and `housekeeping`
+        refuses to prune an archive that says so.
+        """
+        if self._policy_written or self._session_id is None:
+            return
+        self._policy_written = True
+        self.turn(stage="policy", **clocks(self._ws, self._session_id))
+
     def turn(self, **fields) -> None:
         """Append one turn's record.
 
@@ -161,6 +301,7 @@ class Archive:
         enters history and nothing upstream names it.  The inbound half
         needs none of them: its id is in the journal already.
         """
+        self._policy()
         row = {"at": datetime.now().isoformat(timespec="seconds"),
                "client_id": self._client_id, "session_id": self._session_id,
                **fields}

@@ -248,3 +248,40 @@ apparmor: true
 # projects' grants, which would silently widen these sessions.  `[]` takes
 # the framework's base policy and adds nothing.
 apparmor_fragments: []
+
+# ----------------------------------------------------------------- audit
+# WHERE THE RECORD LANDS, and why this profile of the four needs it.
+#
+# This is the agent that talks to the person, so it is the one the Art.
+# 50(1) announcement is written for — and the row is written by the
+# DAEMON at session creation, into `trace.ledger`.  With no ledger
+# configured `explain audit` is explicit about the outcome: the row "is
+# held in memory and never reaches disk — announced at WARNING, and
+# `validate` reports the profile as disclosure_unrecorded (#1157)".  So
+# the ledger exists BEFORE anything declares `interacts_with_persons`,
+# or the person is told and the telling is not recorded.
+#
+# Workspace-relative, so it lands in THIS person's tree. The default
+# would interleave every person on the host into one file.
+trace:
+  ledger: .jaato/logs/ledger.jsonl
+  session_log: .jaato/logs/{agent}/session.log
+
+# HOW LONG THE TWO HALVES ARE KEPT (Arts. 12, 19, 26(6)).
+#
+# `retention_days: 180` is Art. 19(1)'s own figure — the provider keeps
+# the logs at least six months, and 26(6) asks the same of the deployer.
+# It is a floor, not a preference, which is why it is the one number here
+# that needed nobody's opinion.
+#
+# `conversation_retention_days` IS DELIBERATELY ABSENT, and the absence
+# is load-bearing rather than an omission: how long a person's own
+# recorded voice is kept is the provider's policy, not a default this
+# file may invent.  `housekeeping` reads these two clocks out of the
+# session's sealed snapshot and treats an undeclared clock the way the
+# framework does — "delete removes everything, exactly as before" — so
+# until it is declared the recordings carry no floor and the disk ceiling
+# alone governs them.  Declare it and the sweep will refuse to delete
+# inside it, reporting the conflict instead.
+record_keeping:
+  retention_days: 180

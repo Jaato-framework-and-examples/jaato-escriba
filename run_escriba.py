@@ -49,7 +49,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from jaato_sdk.media_identity import ATTACHMENT_ID_KEY
 from jaato_sdk import AgentError, ClientType, EventType, IPCClient
@@ -59,6 +59,7 @@ import board as _board
 import keys as _keys
 import console
 import enrichment
+import housekeeping as _housekeeping
 import memory
 import ptt_capture
 import voice
@@ -339,7 +340,7 @@ async def _reconcile(view, ws: Path, stop: asyncio.Event) -> None:
 
 
 async def main(ws: Path, assume_yes: bool = False,
-               tui: bool = False) -> int:
+               tui: bool = False, limit: Optional[int] = None) -> int:
     # Opened before anything can speak or be heard.  Audio is
     # CLIENT-audience: it reaches this process, plays, and is gone unless
     # written down here (`jaato_session.py:8719`).  The inbound half is
@@ -361,11 +362,19 @@ async def main(ws: Path, assume_yes: bool = False,
     # path as it was before any of this existed.  Present so "is the
     # archive doing this?" is one run rather than a bisect: a question
     # about audio timing that takes a checkout to ask does not get asked.
-    tape = None if os.environ.get("ESCRIBA_NO_ARCHIVE") else _archive.Archive(ws)
+    tape = (None if os.environ.get("ESCRIBA_NO_ARCHIVE")
+            else _archive.Archive(ws, limit=limit,
+                                  on_full=lambda m: view.note(f"· {m}")))
     mouth = voice.Tongue(archive=tape,
                          on_problem=lambda m: view.note(f"· AUDIO: {m}"))
     if tape is None:
         view.note("· ESCRIBA_NO_ARCHIVE: recording nothing this run")
+    elif limit is None:
+        # Said out loud rather than left to be noticed. The sweep is the
+        # enforcer and it REFUSES to run without a budget file, so a host
+        # that forgot one fails a unit; here the only honest report is
+        # that this run has no ceiling at all.
+        view.note("· sin tope de audio: no se ha indicado --budget-file")
     conn = dict(workspace_path=str(ws),
                 env_file=str(ws / ".env"),
                 # The framework writes its own artefacts — backups, session
@@ -567,6 +576,14 @@ if __name__ == "__main__":
                              "the conversation in one panel, what it has "
                              "learnt in a sidebar. Nothing else may write to "
                              "the terminal while it runs")
+    parser.add_argument("--budget-file", metavar="PATH",
+                        help="file holding ONE integer: megabytes of "
+                             "recordings this person may hold. Enforced "
+                             "again by `python -m housekeeping`, which is "
+                             "what prunes; this only stops a single long "
+                             "conversation from crossing the ceiling "
+                             "between two sweeps. Omitted, this run keeps "
+                             "recording with no ceiling")
     parser.add_argument("--yes", action="store_true",
                         help="skip the confirmation for --forget")
     parser.add_argument("--workspace", metavar="DIR",
@@ -592,11 +609,18 @@ if __name__ == "__main__":
         except _workspace.NotProvisioned as exc:
             sys.exit(f"cannot provision a workspace: {exc}")
 
+    limit = None
+    if args.budget_file:
+        try:
+            limit = _housekeeping.ceiling(Path(args.budget_file))
+        except _housekeeping.BudgetUnreadable as exc:
+            sys.exit(f"cannot read the audio budget: {exc}")
+
     if args.forget and _forget(ws, args.yes) != 0:
         sys.exit(1)
 
     try:
-        sys.exit(asyncio.run(main(ws, args.yes, tui=args.tui)))
+        sys.exit(asyncio.run(main(ws, args.yes, tui=args.tui, limit=limit)))
     except ptt_capture.SourceMuted as exc:
         sys.exit(f"microphone muted: {exc}")
     except KeyboardInterrupt:

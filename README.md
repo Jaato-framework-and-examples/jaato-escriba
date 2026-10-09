@@ -685,8 +685,9 @@ in every person's directory.
 | `.jaato/agents/*.md` | The four personas: escriba, curator, juez, documentalista. |
 | `.jaato/profiles/` | Provider-agnostic `_base_*` plus the `openrouter_gpt_audio` set. |
 | `workspace.py` | One root, one directory per person, provisioned from `template/` on first authentication. |
+| `housekeeping.py` | Prunes each person's recordings to the disk ceiling without reaching inside the retention floor the profile declared. `python -m housekeeping --root … --budget-file …`. |
 | `template/` | What a new workspace is made of. Copied, never shared: the workspace is the isolation boundary. |
-| `tests_render.py`, `tests_terminal.py`, `tests_workspace.py` | Every render path at four sizes; the terminal handover on a pty; provisioning and what must never leak between people. All headless. |
+| `tests_render.py`, `tests_terminal.py`, `tests_workspace.py`, `tests_housekeeping.py` | Every render path at four sizes; the terminal handover on a pty; provisioning and what must never leak between people; the two retention clocks and what the ceiling may never delete. All headless. |
 
 Everything that is not SDK lives outside the driver on purpose:
 `run_escriba.py` should read as what it means to demonstrate.
