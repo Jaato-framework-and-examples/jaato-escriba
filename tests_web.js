@@ -121,7 +121,8 @@ const html = fs.readFileSync(path.join(__dirname, "web", "index.html"), "utf8");
 const blocks = [...html.matchAll(/<script>\n([\s\S]*?)\n<\/script>/g)].map((m) => m[1]);
 if (!blocks.length) { console.log("  FAIL could not find the application script in web/index.html"); process.exit(1); }
 const ctx = vm.createContext(sandbox);
-vm.runInContext(blocks[blocks.length - 1] + "\n;globalThis.__test = {S, onEvent, mockState, renderAll};", ctx);
+vm.runInContext(blocks[blocks.length - 1] +
+  "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel};", ctx);
 const T = sandbox.__test;
 
 // ------------------------------------------------ the page before the hub
@@ -226,6 +227,34 @@ T.onEvent("entry", { id: 500002, kind: "said", at: new Date().toISOString(),
                      text: "", audio: "att_bbbbbbbbbbbbbbbb", seconds: 6, repeats: 1 });
 check("their own utterance is not played back", played.length, 1);
 const afterAutoplay = played.length;
+
+// -------------------------------------------- two origins, two groups
+// A reference found here and one the person is granted in the wiki are
+// different kinds of thing, and the difference must not need reading a
+// row to notice.  The header is also the only honest place for a wiki
+// that did not answer: an empty list and an unreachable server look
+// identical and mean opposite things.
+T.onEvent("status", { status: "listening", query: null });
+const panel = byId.get("panel");
+const showRefs = () => { T.S.tab = "referencias"; T.S.sel = null; T.renderPanel(); return panel.textContent; };
+let refs = showRefs();
+check("the local group is labelled", refs.includes("de esta conversación"), true);
+check("the wiki group is labelled", refs.includes("del wiki"), true);
+check("a connected wiki lists its rows", refs.includes("Riego por goteo: patrones de montaje"), true);
+
+// Unreachable is SAID, not shown as emptiness.
+T.onEvent("wiki", { state: "error", rows: [], detail: "el wiki no responde" });
+refs = showRefs();
+check("an unreachable wiki says so", refs.includes("el wiki no responde"), true);
+check("and does not pretend to be empty", refs.includes("nada que puedas ver"), false);
+check("the local group is still there", refs.includes("de esta conversación"), true);
+
+// Not wired is a third state, and also said.
+T.onEvent("wiki", { state: "sin conectar", rows: [],
+                    detail: "no hay ninguna fuente MCP configurada para el wiki" });
+refs = showRefs();
+check("an unwired wiki says so", refs.includes("no hay ninguna fuente MCP"), true);
+T.S.tab = "memoria"; T.renderPanel();
 
 // ------------------------------------------------- an unknown duration
 // Entries archived before the record carried durations have none, and

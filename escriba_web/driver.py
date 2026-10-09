@@ -185,6 +185,34 @@ class WebBoard(_board.StateBoard):
                 self.hub.publish("items", {"panel": panel, "rows": rows})
 
 
+#: The wiki group's state when no MCP source is wired.  A DECLARED
+#: absence: the panel says "sin conectar" rather than showing an empty
+#: list, because an empty list and an unreachable server look the same to
+#: a reader and mean opposite things.
+WIKI_UNWIRED = {"state": "sin conectar", "rows": [],
+                "detail": "no hay ninguna fuente MCP configurada para el wiki"}
+
+
+def wiki_references() -> Dict[str, Any]:
+    """References the person may see in the kbwiki, listed LIVE.
+
+    NOTHING FROM THE WIKI IS WRITTEN INTO THE WORKSPACE, and that is the
+    design rather than an omission.  The wiki serves each identity only
+    what it has been granted, and a copy on disk outlives the grant: a
+    node revoked tomorrow would still sit in `.jaato/references/` and the
+    references plugin would go on offering its content to the model.
+    Listing live means a revocation fails closed, with no expiry pass to
+    write and nothing to get wrong.
+
+    THIS IS THE SEAM.  The MCP tools are not connected yet; until they
+    are, the state is reported and no rows are invented.  When they land,
+    this returns `{"state": "ok", "rows": [...]}` with each row carrying
+    `origin: "wiki"` — and the local path above stays untouched, because
+    the two never meet on disk.
+    """
+    return dict(WIKI_UNWIRED)
+
+
 class Relay:
     """`voice.Tongue` with the speaker taken out.
 
@@ -422,7 +450,8 @@ class Person:
     def snapshot(self) -> dict:
         return self.board.snapshot(session_at=_iso(self.opened),
                                    playback="navegador", days=self.days(),
-                                   engines=self.engines())
+                                   engines=self.engines(),
+                                   wiki=wiki_references())
 
     def day(self, date: str) -> List[dict]:
         """A past day's conversation, read back out of the manifest.

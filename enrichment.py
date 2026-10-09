@@ -345,7 +345,14 @@ def catalogue_entries(workspace: Path, n: int = 60) -> list[dict]:
                     "text": d.get("name") or d.get("id", ""),
                     "url": d.get("url", ""),
                     "content": d.get("description", ""),
-                    "tags": d.get("tags") or []})
+                    "tags": d.get("tags") or [],
+                    # WHERE IT CAME FROM, carried rather than inferred.
+                    # Everything under this directory was found by the
+                    # search and kept by the judge; references reached
+                    # through MCP are NEVER written here, so a row's
+                    # origin is a fact about which reader produced it and
+                    # not a label anybody has to remember to set.
+                    "origin": "local"})
     return out
 
 

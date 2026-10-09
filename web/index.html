@@ -213,6 +213,12 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
             padding:var(--space-3) var(--space-4);border:0;border-bottom:1px solid var(--line);background:transparent;
             color:var(--ink);cursor:pointer}
 .list .item:hover{background:var(--accent-tint)}
+.list .group{display:flex;align-items:baseline;gap:var(--space-2);padding:var(--space-3) var(--space-4) var(--space-1);
+             border-bottom:1px solid var(--line);background:var(--chip)}
+.list .group .what{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-2)}
+.list .group .n{font-size:12px;color:var(--muted);margin-left:auto}
+.list .empty{padding:var(--space-3) var(--space-4);font-size:12px;color:var(--muted);
+             border-bottom:1px solid var(--line)}
 .list .item .text{font-size:14px;line-height:1.4;font-weight:600}
 .list .item .meta{font-size:12px;color:var(--muted)}
 .detail{padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-4)}
@@ -353,6 +359,7 @@ const S = {
   //: workspace, and it is one we have no grounds for.
   loaded: false,
   activeDay: null, progSec: 0, engines: [], loadedDays: new Set(),
+  wiki: { state: "sin conectar", rows: [], detail: "" },
   //: Replies already offered to the speakers, by entry id.  A reply is
   //: played ONCE and never again on its own: the audio ref arrives in a
   //: second event after the text, a `repeats` bump re-publishes a row,
@@ -802,7 +809,9 @@ function renderCounts() {
       // news: it is work waiting for the curator, not knowledge gained.
       good: (d) => d <= 0, rising: true },
     { label: "referencias", value: c.catalogue, d: delta(c.catalogue, c.catalogue_at_start),
-      hint: S.loaded ? (c.found || 0) + " encontradas · " + (c.selected || 0) + " elegidas" : "",
+      hint: !S.loaded ? ""
+            : (c.found || 0) + " encontradas · " + (c.selected || 0) + " elegidas"
+              + (S.wiki.state === "ok" ? " · " + S.wiki.rows.length + " del wiki" : ""),
       good: (d) => d >= 0 },
     { label: "documentos", value: S.loaded ? (S.items.documentos || []).length : u,
       d: delta((S.items.documentos || []).length, c.documents_at_start),
@@ -835,8 +844,9 @@ function renderTabs() {
   box.textContent = "";
   for (const t of TABS) {
     const b = el("button", t === S.tab ? "on" : "");
-    b.append(el("span", null, t),
-             el("span", "n", S.loaded ? String((S.items[t] || []).length) : "—"));
+    const listed = (S.items[t] || []).length +
+                   (t === "referencias" && S.wiki.state === "ok" ? S.wiki.rows.length : 0);
+    b.append(el("span", null, t), el("span", "n", S.loaded ? String(listed) : "—"));
     b.onclick = () => { S.tab = t; S.sel = null; renderTabs(); renderPanel(); };
     box.append(b);
   }
@@ -854,15 +864,46 @@ function renderPanel() {
     if (it) { box.append(detailOf(it)); return; }
     S.sel = null;        // it is gone from disk; fall back to the list
   }
-  for (const it of items) {
-    const b = el("button", "item");
-    const meta = S.tab === "memoria" ? [it.at, (it.tags || []).join(", ")].filter(Boolean).join(" · ")
-               : S.tab === "referencias" ? host(it.url)
-               : [it.at, it.path].filter(Boolean).join(" · ");
-    b.append(el("span", "text", it.text), el("span", "meta", meta));
-    b.onclick = () => { S.sel = keyOf(S.tab, it); renderPanel(); };
-    box.append(b);
+  if (S.tab === "referencias") { references(box, items); return; }
+  for (const it of items) box.append(row(it));
+}
+
+function row(it) {
+  const b = el("button", "item");
+  const meta = S.tab === "memoria" ? [it.at, (it.tags || []).join(", ")].filter(Boolean).join(" · ")
+             : S.tab === "referencias" ? host(it.url)
+             : [it.at, it.path].filter(Boolean).join(" · ");
+  b.append(el("span", "text", it.text), el("span", "meta", meta));
+  b.onclick = () => { S.sel = keyOf(S.tab, it); renderPanel(); };
+  return b;
+}
+
+// TWO ORIGINS, TWO GROUPS.  A reference found here — searched from a
+// memory's tags and kept by the judge — and one the person is granted in
+// the wiki are different kinds of thing, and the difference should not
+// need reading a row to notice.  The group header is also the only place
+// an unreachable wiki can say so honestly: an empty list and a server
+// that did not answer look identical, and mean opposite things.
+function references(box, local) {
+  group(box, "de esta conversación", local.length + "");
+  if (!local.length) box.append(el("div", "empty", "todavía nada encontrado aquí"));
+  for (const it of local) box.append(row(it));
+
+  const w = S.wiki || { state: "sin conectar", rows: [] };
+  const ok = w.state === "ok";
+  group(box, "del wiki", ok ? w.rows.length + "" : w.state);
+  if (!ok) {
+    box.append(el("div", "empty", w.detail || w.state));
+    return;
   }
+  if (!w.rows.length) box.append(el("div", "empty", "nada que puedas ver todavía"));
+  for (const it of w.rows) box.append(row(it));
+}
+
+function group(box, what, n) {
+  const g = el("div", "group");
+  g.append(el("span", "what", what), el("span", "n", n));
+  box.append(g);
 }
 function host(url) { try { return new URL(url).host; } catch (e) { return url; } }
 
@@ -1225,11 +1266,14 @@ function onEvent(kind, data) {
     S.playback = data.playback || S.playback;
     S.days = data.days || S.days;
     S.engines = data.engines || S.engines;
+    S.wiki = data.wiki || S.wiki;
     renderPills(); renderEngines(); renderCounts(); renderTabs(); renderPanel(); renderDays(); renderTranscript();
   } else if (kind === "entry") {
     updateEntry(data);
   } else if (kind === "counts") {
     S.counts = data; renderCounts();
+  } else if (kind === "wiki") {
+    S.wiki = data; renderTabs(); renderPanel(); renderCounts();
   } else if (kind === "items") {
     S.items[data.panel] = data.rows;
     renderTabs(); renderPanel(); renderCounts();
@@ -1269,7 +1313,7 @@ async function readStream(res, sink) {
 let lost = null;
 function connect() {
   const es = new EventSource("/events");
-  for (const kind of ["state", "entry", "counts", "items", "status", "alert", "days"]) {
+  for (const kind of ["state", "entry", "counts", "items", "status", "alert", "days", "wiki"]) {
     es.addEventListener(kind, (m) => onEvent(kind, JSON.parse(m.data)));
   }
   es.onopen = () => { clearTimeout(lost); lost = null; S.everConnected = true; clearAlert("connection"); };
@@ -1308,6 +1352,12 @@ function mockState() {
   return {
     session_at: d(0, 9, 12), archive_dir: "20261009_091200", playback: "navegador",
     status: { status: "listening", query: null },
+    wiki: { state: "ok", rows: [
+      { text: "Riego por goteo: patrones de montaje", url: "https://kb.darumalabs.ai/n/riego-goteo",
+        content: "Nodo del wiki sobre montajes de riego.", tags: ["riego"], origin: "wiki" },
+      { text: "Consumo hídrico de hortalizas en maceta", url: "https://kb.darumalabs.ai/n/consumo-hidrico",
+        content: "Tabla de consumo por especie y volumen.", tags: ["riego", "huerto"], origin: "wiki" },
+    ] },
     engines: [
       { agent: "escriba", rows: [
         { tier: "voz", model: "openai/gpt-audio", provider: "openrouter", audible: true, initial: true },
