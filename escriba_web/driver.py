@@ -412,6 +412,10 @@ class Person:
             # against a cold autostart of 30-60 s, and the session
             # confirmation needs room on a shared daemon.
             connect_timeout=120.0, session_timeout=60.0,
+            # Before this stopped rebuilding on CONNECTED there could be
+            # several clients alive at once, each with this same callback
+            # attached and none of them removed.  There is now exactly
+            # one at a time.
             on_status_change=self._connection, **self.conn)
         self._scribe = await self._stack.__aenter__()
         self.archive.identify(self._scribe.session_id,
@@ -433,16 +437,37 @@ class Person:
         loop.call_soon_threadsafe(self._connection_changed, state)
 
     def _connection_changed(self, state: str) -> None:
+        """Say what happened.  Do not act on it.
+
+        THIS USED TO REBUILD THE SESSION and that was the defect.  On a
+        daemon restart (2026-10-09 17:10) the old backend opened FOUR IPC
+        connections and created three sessions where one was wanted, then
+        the daemon logged 184 broken-pipe sends to the two it had been
+        streaming to, and held SessionManager._lock for 1374 ms fighting
+        a socket nobody was reading.
+
+        Two mistakes, one cause.  `IPCRecoveryClient` OWNS the connection
+        and restores it — that is the whole reason it is used here — and
+        this handler built a second client, and therefore a second
+        connection, on top of the one the SDK had just brought back.  And
+        every such client installed this same callback while the previous
+        one's was never removed, so a stale CONNECTED from an abandoned
+        client started the next rebuild: two connections became four.
+
+        So the transport's state is now REPORTED and nothing else.  The
+        session is replaced only when a turn proves it dead — `SessionGone`
+        and `TURN_TIMEOUT` both already do that, and were written for
+        exactly this — which costs the first turn after a restart and
+        cannot cost a second connection, because nothing here opens one.
+
+        `self._scribe` is deliberately NOT cleared.  Clearing it made
+        `talk()` answer "still waking" to every press, and with the
+        rebuild gone nothing would ever set it again: the person would be
+        told to wait forever.  The session is left in place precisely so
+        the next turn can fail against it and trigger the repair.
+        """
         if state in ("RECONNECTING", "DISCONNECTED", "CLOSED"):
-            if self._scribe is not None:
-                self._scribe = None
-                self.board.note(self.say("note.connection_lost"))
-        elif state == "CONNECTED" and self._scribe is None and self._stack is not None:
-            # Back, with a session the daemon no longer knows.  The new
-            # one opens WITHOUT a greeting: nobody asked for one, the
-            # page already holds the conversation, and speaking
-            # unprompted because a service restarted is noise.
-            asyncio.create_task(self._resume())
+            self.board.note(self.say("note.connection_lost"))
 
     async def _resume(self) -> None:
         async with self._opening:
@@ -465,8 +490,16 @@ class Person:
             return
         try:
             await stack.__aexit__(None, None, None)
-        except Exception:                                     # noqa: BLE001
-            pass      # it is already gone; that is why we are here
+        except Exception as exc:                          # noqa: BLE001
+            # SAID, not swallowed.  A stack that fails to close is a
+            # connection the daemon keeps streaming to: on 2026-10-09 two
+            # abandoned ones drew 184 broken-pipe sends and a 1374 ms
+            # hold on the daemon's session lock.  Still not raised — we
+            # are usually here because the far end is already gone, and a
+            # close failure must not stop the caller — but no longer
+            # invisible.
+            self.board.note(self.say("note.close_failed",
+                                     what=f"{type(exc).__name__}: {str(exc)[:90]}"))
 
     def declared(self, agent: str) -> dict:
         """What a profile file binds, for an agent with no session yet.
@@ -696,6 +729,24 @@ class Person:
                 self.hub.publish("alert", {
                     "kind": "budget" if budget else "session",
                     "at": datetime.now().strftime("%H:%M"), "detail": text[:200]})
+                if not budget:
+                    # AND REPAIR IT, which this did not used to do.  The
+                    # transport handler no longer rebuilds the session
+                    # when the connection returns — that was opening a
+                    # second connection every time — so a turn failing
+                    # is now the ONLY thing that replaces a dead
+                    # session.  `TURN_TIMEOUT` already did it for a turn
+                    # that hangs; a `SessionGone` fails fast instead,
+                    # and without this the next press would fail the
+                    # same way forever.
+                    #
+                    # Not after a BUDGET ending: that session ended
+                    # because a declared ceiling was reached, and
+                    # quietly opening another one with a fresh budget
+                    # answers a limit by ignoring it.  The alert stands
+                    # and the person decides.
+                    self._scribe = None
+                    asyncio.create_task(self._resume())
                 raise
 
     def _transcribing(self, entry, att: str) -> None:

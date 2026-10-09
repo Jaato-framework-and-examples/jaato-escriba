@@ -101,5 +101,6 @@
   "note.searching": "· «{query}»: ya buscado en esta sesión",
   "note.no_text": "(sin texto)",
   "agent.speech": "Castellano peninsular. Distingues c/z, y hablas como se habla en España.",
-  "agent.greeting": "[La sesión se abre. El usuario está a la escucha.]"
+  "agent.greeting": "[La sesión se abre. El usuario está a la escucha.]",
+  "note.close_failed": "· no pude cerrar la sesión anterior: {what}"
 }
