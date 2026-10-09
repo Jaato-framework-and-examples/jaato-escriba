@@ -252,6 +252,18 @@ rows2 = [json.loads(l) for l in
 check("an unreadable snapshot is marked unresolved", rows2[0]["resolved"], False)
 check("the sweep refuses to judge it", h._clocks(tape2.dir).resolved, False)
 
+# HOW LONG IT SOUNDED, from the one place that has already parsed the
+# rate.  Without it a reply's play control reads "0:00" until the file
+# has been fetched, and the manifest cannot answer "how much did they
+# hear" at all.
+tape4 = a.Archive(ws, client_id="c1")
+tape4.identify("sid-1", "c1")
+mime = "audio/pcm;rate=24000;channels=1;encoding=s16le"
+tape4.speaking("model:escriba:1", mime, b"\0" * 48000)   # one second at 24k/16-bit
+rec = tape4.spoke("model:escriba:1")
+check("the record carries its duration", rec["seconds"], 1.0)
+check("and still its digest", rec["sha"].startswith("att_"), True)
+
 # The write-time ceiling stops the RECORDINGS and not the record.
 tape3 = a.Archive(ws, client_id="c1", limit=1024)
 tape3.identify("sid-1", "c1")

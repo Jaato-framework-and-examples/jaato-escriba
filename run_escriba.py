@@ -224,7 +224,8 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
     words = spoken()
     spoke_rec = mouth.recordings[-1] if getattr(mouth, "recordings", None) else None
     (tui or _LINES).spoke(words, (payload or {}).get("anotado", ""),
-                          audio=(spoke_rec or {}).get("sha"))
+                          audio=(spoke_rec or {}).get("sha"),
+                          seconds=(spoke_rec or {}).get("seconds"))
     # One row per turn, written AFTER the turn closed so it records what
     # happened rather than what was attempted.  `said` carries the id we
     # minted for the utterance; `mouth.recordings` carries what we kept of

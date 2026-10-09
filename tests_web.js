@@ -224,6 +224,23 @@ T.onEvent("entry", { id: 500002, kind: "said", at: new Date().toISOString(),
                      text: "", audio: "att_bbbbbbbbbbbbbbbb", seconds: 6, repeats: 1 });
 check("their own utterance is not played back", played.length, 1);
 
+// ------------------------------------------------------ a silent reply
+// Waiting and never-coming look identical in the data — both are a
+// `spoke` row with no audio — and only the driver can tell them apart.
+// A row that says "audio llegando…" forever is how it was found.
+const silentId = 500003;
+T.onEvent("entry", { id: silentId, kind: "spoke", at: new Date().toISOString(),
+                     text: "La sesión se ha cerrado.", audio: null, seconds: null,
+                     repeats: 1, silent: false });
+const rowText = () => byId.get("scroll").textContent;
+check("while the turn runs it waits", rowText().includes("audio llegando…"), true);
+T.onEvent("entry", { id: silentId, kind: "spoke", at: new Date().toISOString(),
+                     text: "La sesión se ha cerrado.", audio: null, seconds: null,
+                     repeats: 1, silent: true });
+check("once it has ended it says so", rowText().includes("sin audio"), true);
+check("and stops waiting", rowText().includes("audio llegando…"), false);
+check("a silent row is never autoplayed", played.length, 1);
+
 // --------------------------------------------- what arrives after the row
 // The audio ref lands well after the text, and it must patch the row that
 // is already on screen rather than append a second one.

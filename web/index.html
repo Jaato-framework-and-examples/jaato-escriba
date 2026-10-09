@@ -618,6 +618,14 @@ function paint(e) {
       b.onclick = () => toggle(e);
       meta.append(b);
       r.playLabel = label;
+    } else if (e.silent) {
+      // The turn ENDED with no speech.  The escriba has a silent tier —
+      // where it annotates and commissions documents — and a reply from
+      // there sounds nothing, ever.  Saying "audio llegando…" here is
+      // waiting for something that is not coming.
+      const t = el("span", "tag neutral", "sin audio");
+      t.title = "el turno terminó sin audio del modelo";
+      meta.append(t);
     } else if (e.text) {
       // Text first, audio after: the provider finishes speaking well after
       // the words exist, and waiting for it would hold back the reply.

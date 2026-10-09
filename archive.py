@@ -79,6 +79,15 @@ def _unused(path: Path) -> Path:
     raise RuntimeError(f"{path}: a thousand archives in one second")
 
 
+def _seconds(size: int, params: Optional[dict]) -> Optional[float]:
+    """Duration of raw PCM, or None when the container is unknown."""
+    if not params:
+        return None
+    width = 2 if params["encoding"].endswith("16le") else 1
+    rate = int(params["rate"]) * int(params["channels"]) * width
+    return round(size / rate, 2) if rate else None
+
+
 def _bytes_under(path: Path) -> int:
     """What a person's recordings occupy today."""
     if not path.is_dir():
@@ -280,8 +289,13 @@ class Archive:
                 w.setframerate(int(params["rate"]))
                 w.writeframes(raw)
         self._wrote((self.dir / name).stat().st_size)
-        return {"stream_id": stream_id, "file": name,
-                "sha": digest(raw), "bytes": len(raw), "mime": mime}
+        return {"stream_id": stream_id, "file": name, "sha": digest(raw),
+                "bytes": len(raw), "mime": mime,
+                # HOW LONG IT SOUNDED, computed here because here is where
+                # the rate is already parsed.  Without it a player can only
+                # say "0:00" until it has downloaded the file, and a
+                # manifest row cannot answer "how much did they hear".
+                "seconds": _seconds(len(raw), params)}
 
     # --------------------------------------------------------- manifest
     def _policy(self) -> None:

@@ -52,7 +52,8 @@ def _iso(at: datetime) -> str:
 
 def entry_json(e) -> Dict[str, Any]:
     return {"id": e.id, "at": _iso(e.at), "kind": e.kind, "text": e.text,
-            "seconds": e.seconds, "audio": e.audio, "repeats": e.repeats}
+            "seconds": e.seconds, "audio": e.audio, "repeats": e.repeats,
+            "silent": e.silent}
 
 
 #: Which agents the page names.  The curator and the juez run too, but
@@ -144,7 +145,7 @@ class WebBoard(_board.StateBoard):
     @staticmethod
     def _draws(e) -> tuple:
         """What a row shows.  Anything else changing is not news."""
-        return (e.id, e.text, e.audio, e.repeats, e.seconds)
+        return (e.id, e.text, e.audio, e.repeats, e.seconds, e.silent)
 
     def _refreshed(self) -> None:
         s = self.state
@@ -289,6 +290,7 @@ class Person:
         self.hub.publish("state", self.snapshot())
         await _turn(self._scribe, GREETING, None, self._relay(), log=self.archive.turn,
                     tui=self.board)
+        self._settle()
 
     def declared(self, agent: str) -> dict:
         """What a profile file binds, for an agent with no session yet.
@@ -329,6 +331,26 @@ class Person:
                 continue
             rows.append({"agent": agent, "rows": engine_rows(self.declared(agent))})
         return rows
+
+    def _settle(self) -> None:
+        """Close the books on a turn that produced no speech.
+
+        A `spoke` entry with no audio means one of two opposite things,
+        and only the driver knows which: DURING a turn the provider is
+        still generating and the audio is on its way; AFTER it, nothing
+        is coming.  The escriba has a silent tier by design — `escribano`
+        is where it annotates and commissions documents, and its own
+        description says so — so a turn answered from there sounds
+        nothing, ever.  Observed live: a reply whose row sat on "audio
+        llegando…" forever while the manifest recorded `spoke: null`.
+        """
+        for e in reversed(self.board.state.entries):
+            if e.kind != "spoke":
+                continue
+            if e.audio is None and not e.silent:
+                e.silent = True
+                self.board._refreshed()
+            return
 
     def _relay(self) -> Relay:
         return Relay(archive=self.archive)
@@ -376,6 +398,7 @@ class Person:
             try:
                 await _turn(self._scribe, "", said, self._relay(),
                             log=self.archive.turn, tui=self.board)
+                self._settle()
             except SessionGone as exc:
                 # NAME THE REASON WE HAVE, not the one that sounds likely.
                 # `SessionGone` covers an RPC closing, a session

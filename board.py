@@ -55,6 +55,12 @@ class Entry:
     seconds: Optional[float] = None
     audio: Optional[str] = None   # the att_ id, when there is a recording
     repeats: int = 1
+    #: Set when a turn ENDED without the model producing any speech.
+    #: Distinct from "no audio yet": the escriba has a silent tier
+    #: (`escribano`, where it annotates and commissions documents) and a
+    #: turn answered from there sounds nothing, ever.  A view that cannot
+    #: tell the two apart waits for audio that is not coming.
+    silent: bool = False
     #: Stable for the life of this entry, and the only safe way to say
     #: WHICH row changed.  Three things arrive after a row is first drawn
     #: — the rest of a streamed reply, the audio id once the provider has
@@ -146,7 +152,8 @@ class NullBoard:
     def listening(self, on: bool) -> None: ...
     def heard(self, seconds: float, audio: Optional[str] = None) -> None: ...
     def spoke(self, words: str, anotado: str = "",
-              audio: Optional[str] = None) -> None: ...
+              audio: Optional[str] = None,
+              seconds: Optional[float] = None) -> None: ...
     # facts
     def memories(self, curated: int, raw: int) -> None: ...
     def catalogue(self, total: int) -> None: ...
@@ -198,7 +205,8 @@ class LineBoard(NullBoard):
         console.log(f"· heard {seconds:.1f}s")
 
     def spoke(self, words: str, anotado: str = "",
-              audio: Optional[str] = None) -> None:
+              audio: Optional[str] = None,
+              seconds: Optional[float] = None) -> None:
         console.log(f"escriba: {words}")
         if anotado:
             console.log(f"   ↳ {anotado}")
@@ -254,9 +262,10 @@ class StateBoard(NullBoard):
         self._refreshed()
 
     def spoke(self, words: str, anotado: str = "",
-              audio: Optional[str] = None) -> None:
+              audio: Optional[str] = None,
+              seconds: Optional[float] = None) -> None:
         self.state.thinking = self.state.speaking = False
-        self.state.add("spoke", words, audio=audio)
+        self.state.add("spoke", words, audio=audio, seconds=seconds)
         if anotado:
             self.state.add("anotado", anotado)
         self._refreshed()
