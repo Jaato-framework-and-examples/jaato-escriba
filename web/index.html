@@ -75,7 +75,12 @@ header{background:var(--panel);display:flex;flex-wrap:wrap;align-items:stretch;b
        border-right:1px solid var(--line)}
 .brand .name{font-weight:600;font-size:18px;display:flex;align-items:center;gap:var(--space-2)}
 .brand .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
-.brand .sub{font-size:12px;color:var(--muted)}
+.brand .sub{font-size:12px;color:var(--muted);display:flex;align-items:baseline;gap:var(--space-2);max-width:30ch}
+/* An email is as long as somebody's email: it gives way, and the full
+   value stays in the title. The separator hangs off the name so an
+   unknown person is not announced by a stray dot. */
+.brand .who{color:var(--ink-2);max-width:20ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.brand .who:not(:empty)::after{content:"·";margin-left:var(--space-2);color:var(--muted)}
 .pills{flex:1 1 520px;display:grid;grid-template-columns:repeat(4,minmax(max-content,1fr));gap:var(--space-2);
        padding:10px var(--space-3);align-items:center}
 .pill{padding:6px var(--space-3);border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--muted);
@@ -304,7 +309,7 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
   <header>
     <div class="brand">
       <div class="name"><span class="dot"></span>escriba</div>
-      <div class="sub" id="session-at"></div>
+      <div class="sub"><span class="who" id="who"></span><span id="session-at"></span></div>
     </div>
     <div class="pills" id="pills" aria-live="polite"></div>
     <div class="hright" id="hright" title="">
@@ -383,6 +388,10 @@ const S = {
   counts: {}, items: { memoria: [], referencias: [], documentos: [] }, days: [],
   status: { status: "listening", query: null },
   session_at: null, archive_dir: null, playback: "navegador",
+  //: Who the backend says is connected: the identity their directory was
+  //: provisioned for. Empty until the first snapshot, like every other
+  //: fact here — a page that has spoken to nothing knows no name.
+  who: "",
   tab: "memoria", refTab: "local", engTab: "motor", sel: null, reader: false,
   // The active catalogue, handed over with each snapshot.  Empty until
   // the first one arrives, which is why `tx` renders the KEY rather than
@@ -524,6 +533,10 @@ function renderPills() {
   }
   $("session-at").textContent = S.session_at
     ? tx("header.session", { at: hhmm(S.session_at) }) : tx("header.session.none");
+  $("who").textContent = S.who;
+  // The name is ellipsised when it is long, so the title carries it in
+  // full: a truncated email that cannot be read is not an identity.
+  $("who").title = S.who ? tx("header.who.title", { who: S.who }) : "";
   $("hright").title = S.archive_dir ? "audio/" + S.archive_dir : "";
   $("playback-where").textContent = S.playback;
 }
@@ -1553,6 +1566,7 @@ function onEvent(kind, data) {
     S.session_at = data.session_at || null;
     S.archive_dir = data.archive_dir || null;
     S.playback = data.playback || S.playback;
+    S.who = data.who || S.who;
     S.days = data.days || S.days;
     S.engines = data.engines || S.engines;
     S.wiki = data.wiki || S.wiki;
@@ -1670,6 +1684,7 @@ function mockState() {
   const E = (at, kind, rest) => Object.assign({ id: ++n, at, kind, text: "", repeats: 1 }, rest);
   return {
     session_at: d(0, 9, 12), archive_dir: "20261009_091200", playback: "navegador",
+    who: "ana.ruiz@ejemplo.es",
     status: { status: "listening", query: null },
     // Deliberately PARTIAL: no cache_creation_tokens and no cost in the
     // totals, so the mock exercises "absent is not zero" rather than a

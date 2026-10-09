@@ -194,6 +194,16 @@ check("a rising uncurated queue says so", cellText(1).includes("la cola crece"),
 check("tab counts are real", (byId.get("tabs").children[0] || blank).textContent.includes("3"), true);
 check("the days column is drawn", byId.get("days").children.length, 5);
 
+// The header names the person the backend says is connected. It is the
+// one thing on the page that answers "whose second brain am I looking
+// at?", which on a multi-tenant deployment is not a cosmetic question.
+check("the header names the connected person",
+      byId.get("who").textContent, "ana.ruiz@ejemplo.es");
+check("and says what that name is on hover",
+      byId.get("who").title.includes(ES["header.who.title"].split(":")[0]), true);
+check("the full name survives the truncation",
+      byId.get("who").title.includes("ana.ruiz@ejemplo.es"), true);
+
 // Entries are grouped by LOCAL day.  A UTC key would file a late-evening
 // turn under the wrong heading east of Greenwich.
 const dayKeys = byId.get("scroll").children.map((c) => c.dataset.day);

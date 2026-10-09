@@ -187,13 +187,41 @@ def _copy_template(template: Path, dest: Path) -> None:
 PREFS = "prefs.json"
 
 
-def prefs(home: Path) -> dict:
-    """Whatever this person has chosen, or nothing."""
+def _record(home: Path, name: str) -> dict:
+    """One of the person's own JSON files, or nothing.
+
+    ABSENT AND UNREADABLE ARE THE SAME ANSWER here, and that is the
+    whole reason this is one function: both files it reads are written
+    by the provisioner and read by a page that must still render — a
+    preference nobody has set and an identity recorded before the proxy
+    passed a name are both "we do not know", with nothing to choose
+    between them.  What is NOT the same is the caller's reaction, and
+    each decides that for itself.
+    """
     try:
-        row = json.loads((home / PREFS).read_text(encoding="utf-8"))
+        row = json.loads((home / name).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     return row if isinstance(row, dict) else {}
+
+
+def prefs(home: Path) -> dict:
+    """Whatever this person has chosen, or nothing."""
+    return _record(home, PREFS)
+
+
+def identity(home: Path) -> dict:
+    """Who this directory was created for, as it was recorded.
+
+    The record, not the assertion.  `person.json` is written once, at
+    provision, from the headers the proxy sent then — so this is the
+    same answer an operator gets when they map a directory to a person,
+    and a page showing it cannot disagree with `ls`.  It is also the
+    only place to read an identity from: everything under
+    `{workspace}/` is writable by the confined session, so a name kept
+    there is a name the escriba could have authored.
+    """
+    return _record(home, IDENTITY)
 
 
 def set_pref(home: Path, key: str, value) -> dict:

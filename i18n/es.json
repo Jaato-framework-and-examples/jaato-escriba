@@ -3,6 +3,7 @@
   "locale.flag": "🇪🇸",
   "header.session": "sesión {at}",
   "header.session.none": "sesión —",
+  "header.who.title": "la cuenta con la que has entrado: {who}",
   "header.audio_in": "audio en",
   "header.playback.browser": "navegador",
   "header.ids": "ids",

@@ -265,6 +265,27 @@ class Relay:
         return text
 
 
+def who(record: Dict[str, Any], principal: str) -> str:
+    """The person's own name for themselves, most readable first.
+
+    `username` and `email` are what the proxy asserted when the
+    directory was provisioned, and EITHER CAN BE ABSENT: oauth2-proxy
+    sends each only when it is configured to, and `person.json` records
+    whatever arrived that day.  So the order is by how much a reader
+    gets out of it, ending at the principal — which is the one thing
+    always there, because no request is served without it.
+
+    The principal is not a consolation prize, it is the honest answer.
+    On a developer's machine it is whatever `--dev-principal` named and
+    reads perfectly well; on the deployed host it is Keycloak's `sub`
+    and reads like a UUID, which is exactly what a proxy that is not
+    passing the name looks like.  Inventing a display name out of the
+    email's local part would hide that, and the header would be lying
+    about something a person can check.
+    """
+    return str(record.get("username") or record.get("email") or principal)
+
+
 class Person:
     """One authenticated person: a workspace, a session, a hub."""
 
@@ -296,6 +317,21 @@ class Person:
             principal, root=root, identity=identity,
             on_refresh=lambda what: self.board.note(
                 self.say("note.assets_refreshed", what=", ".join(what))))
+        #: Who the header says is connected.  Read from the record beside
+        #: the workspace rather than from the request: the page is told
+        #: the identity the directory was PROVISIONED for, which is the
+        #: one an operator can map back to a directory, and which the
+        #: session living inside cannot rewrite.
+        #:
+        #: AFTER `provision`, which is what writes that record.  Read
+        #: before it — beside the locale, where this started — a person's
+        #: FIRST session finds no file and falls through to the
+        #: principal, and since one `Person` is kept per principal for
+        #: the life of the process, their header would show a `sub`
+        #: until the service restarted.  The locale is read early on
+        #: purpose, because provisioning can already emit a note; this
+        #: has no such reason and the order is the whole correctness.
+        self.who = who(_workspace.identity(self.home), principal)
         self.archive = _archive.Archive(
             self.ws, limit=limit,
             on_full=lambda m: self.board.note(f"· {m}"))
@@ -810,6 +846,7 @@ class Person:
 
     def snapshot(self) -> dict:
         return self.board.snapshot(session_at=_iso(self.opened),
+                                   who=self.who,
                                    locale=self.locale,
                                    locales=[{"code": c,
                                              "name": i18n.t(c, "locale.name"),

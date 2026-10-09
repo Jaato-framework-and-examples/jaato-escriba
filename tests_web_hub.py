@@ -172,6 +172,36 @@ async def main():
     board.memories(8, 2)
     check("a changed count is published", [k for k, _ in drain(q)], ["counts"])
 
+    # -------------------------------------------------- who is connected
+    # The header names the person, and what it names them is read from
+    # the record beside their workspace — so this is the precedence that
+    # decides what somebody sees, and the one case that must not be
+    # invented: a provisioning that recorded no readable name shows the
+    # principal, which on the deployed host is a `sub` and is MEANT to
+    # look like one.  A display name derived from the email's local part
+    # would hide a proxy that is not passing the name.
+    from escriba_web.driver import who
+    check("the username is preferred",
+          who({"username": "ana", "email": "ana@ejemplo.es"}, "s-1"), "ana")
+    check("the email when there is no username",
+          who({"email": "ana@ejemplo.es"}, "s-1"), "ana@ejemplo.es")
+    check("the principal when the proxy sent neither", who({}, "s-1"), "s-1")
+    check("an empty header is not a name",
+          who({"username": "", "email": None}, "s-1"), "s-1")
+
+    # AND IT IS READ AFTER PROVISIONING, which is the whole correctness
+    # of where that line sits.  Read beside the locale — before the
+    # workspace exists — a person's FIRST session finds no record and
+    # falls through to the principal; one `Person` is kept per principal
+    # for the life of the process, so their header would show a `sub`
+    # until the service restarted.  Nobody would see it twice, which is
+    # exactly why it needs asserting.
+    from escriba_web.driver import Person
+    first = Person("a3f1-sub-9c2b", root=Path(tempfile.mkdtemp(prefix="escriba-who-")),
+                   identity={"username": "ana", "email": "ana@ejemplo.es"})
+    check("a first-ever session already knows the name", first.who, "ana")
+    check("and the page is told it", first.snapshot()["who"], "ana")
+
     # ------------------------------------------------------ path guards
     from escriba_web.app import ATT
     check("a real attachment id is accepted", bool(ATT.match("att_0123456789abcdef")), True)

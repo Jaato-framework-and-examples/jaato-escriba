@@ -3,6 +3,7 @@
   "locale.flag": "🇬🇧",
   "header.session": "session {at}",
   "header.session.none": "session —",
+  "header.who.title": "the account you signed in with: {who}",
   "header.audio_in": "audio on",
   "header.playback.browser": "browser",
   "header.ids": "ids",

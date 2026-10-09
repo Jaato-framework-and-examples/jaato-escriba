@@ -121,6 +121,19 @@ try:
     check("their store survives re-provisioning", kept.read_text(),
           "una memoria\n")
 
+    # WHO A DIRECTORY BELONGS TO IS READ BACK, and from outside the
+    # workspace.  The page's header shows this, so if it came from
+    # anywhere under `{workspace}/` the confined session could author
+    # the name its own person is shown.  A record that is absent or
+    # unparseable reads as "we do not know" rather than raising, because
+    # a workspace provisioned before the proxy passed any name has one.
+    check("the identity is read beside the workspace",
+          w.identity(alice.parent).get("principal"), "alice@example.com")
+    check("and an absent record is not an error",
+          w.identity(root / "nobody"), {})
+    (bob.parent / w.IDENTITY).write_text("{ not json")
+    check("nor is an unparseable one", w.identity(bob.parent), {})
+
     # Two principals that sanitise alike are still two people.
     check("near-collisions stay apart",
           w.provision("a b", root=root) != w.provision("a-b", root=root), True)
