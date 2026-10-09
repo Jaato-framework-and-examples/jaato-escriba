@@ -276,14 +276,33 @@ check("as waking, not as a fault",
 // transcribed beside the turn — so it takes the same patch-by-id path a
 // late audio ref does.
 T.onEvent("entry", { id: 500020, kind: "said", at: new Date().toISOString(),
-                     text: "", seconds: 6, audio: "att_eeeeeeeeeeeeeeee", repeats: 1 });
+                     text: "", seconds: 6, audio: "att_eeeeeeeeeeeeeeee", repeats: 1,
+                     transcribing: true });
 check("a said row starts with no words",
       byId.get("scroll").textContent.includes("quiero hablar sobre gatos"), false);
+check("but says the words are coming",
+      byId.get("scroll").textContent.includes("transcribiendo…"), true);
 T.onEvent("entry", { id: 500020, kind: "said", at: new Date().toISOString(),
                      text: "quiero hablar sobre gatos", seconds: 6,
                      audio: "att_eeeeeeeeeeeeeeee", repeats: 1 });
 check("the transcript lands on the row",
       byId.get("scroll").textContent.includes("quiero hablar sobre gatos"), true);
+// Scoped to ITS row: the snapshot has another utterance still being
+// transcribed, and a whole-transcript check would be answered by that
+// one and prove nothing about this.
+const rowOf = (id) => byId.get("scroll").walk().find((n) => n.dataset && String(n.dataset.id) === String(id));
+check("and the placeholder goes",
+      rowOf(500020).textContent.includes("transcribiendo…"), false);
+
+// With no transcriber there is nothing to wait for, and a placeholder
+// for words that are never coming is the "audio llegando…" defect again.
+T.onEvent("entry", { id: 500021, kind: "said", at: new Date().toISOString(),
+                     text: "", seconds: 4, audio: "att_ffffffffffffffff", repeats: 1,
+                     transcribing: false });
+const spinners = rowOf(500021).walk().filter((n) => n.className === "spin").length;
+check("no spinner where nothing is transcribing", spinners, 0);
+check("and one where something is",
+      rowOf(500020) && byId.get("scroll").walk().filter((n) => n.className === "spin").length >= 1, true);
 
 // ------------------------------------------------- an unknown duration
 // Entries archived before the record carried durations have none, and

@@ -149,6 +149,14 @@ nav .note code{font-family:var(--mono)}
 .bar .dur{font-weight:700;font-size:14px;font-variant-numeric:tabular-nums}
 .heard{margin:var(--space-2) 0 0;font-size:15px;line-height:1.45;color:var(--ink-2);max-width:68ch;
        text-wrap:pretty}
+.heard.waiting{display:flex;align-items:center;gap:var(--space-2);color:var(--muted);font-size:13px}
+.spin{width:12px;height:12px;flex:none;border-radius:50%;border:2px solid var(--line-strong);
+      border-top-color:var(--accent);animation:turn .8s linear infinite}
+@keyframes turn{to{transform:rotate(360deg)}}
+/* A spinner is a claim that something is happening; it must not become
+   the only way to learn that.  With motion reduced it stops turning and
+   the words beside it carry the meaning on their own. */
+@media (prefers-reduced-motion:reduce){.spin{animation:none;border-top-color:var(--line-strong)}}
 .spoke{display:flex;flex-direction:column;gap:var(--space-2);padding-left:var(--space-4);
        border-left:3px solid var(--accent)}
 .spoke.sounding{border-left-color:var(--ok)}
@@ -670,6 +678,15 @@ function paint(e) {
       const said = el("p", "heard", e.text);
       said.title = "transcripción local de la grabación";
       r.body.append(said);
+    } else if (e.transcribing) {
+      // WHERE THE WORDS WILL GO, while they are being read off the
+      // recording.  Only while something is actually working on it: a
+      // deployment with no transcriber shows nothing here rather than a
+      // placeholder for words that are not coming, which is the same
+      // rule the reply's "audio llegando…" follows.
+      const wait = el("p", "heard waiting");
+      wait.append(el("span", "spin"), el("span", null, "transcribiendo…"));
+      r.body.append(wait);
     }
     r.prog = prog;
     return;
@@ -1422,6 +1439,9 @@ function mockState() {
       E(d(0, 9, 14), "spoke", { text: "Buenos días. Ayer quedamos en el depósito elevado. Antes de seguir: ¿cuántas macetas son y de qué tamaño, más o menos? Con eso puedo calcular si veinte litros te bastan para diez días.", audio: "att_2a6bd310", seconds: 14 }),
       E(d(0, 9, 15), "anotado", { text: "Seis macetas de 30 litros: cuatro tomateras, dos de albahaca." }),
       E(d(0, 9, 16), "note", { text: "documentalista: escribió riego-por-goteo-balcon.md" }),
+      // one utterance still being read off the recording, so the
+      // placeholder can be judged without a transcriber running
+      E(d(0, 9, 17), "said", { seconds: 9, audio: "att_5de1c440", transcribing: true }),
       E(d(0, 9, 16), "spoke", { text: "Con seis macetas de ese tamaño, al oeste y en agosto, calcula entre dos y tres litros por tomatera al día. Veinte litros no llegan; necesitarías unos cincuenta, o dos depósitos. He dejado el cálculo completo en un documento.", audio: "att_91d4c6b8", seconds: 16 }),
     ],
     counts: { curated: 142, curated_at_start: 137, raw: 8, raw_at_start: 3, catalogue: 61,

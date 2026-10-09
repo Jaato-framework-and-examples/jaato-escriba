@@ -56,7 +56,7 @@ def _iso(at: datetime) -> str:
 def entry_json(e) -> Dict[str, Any]:
     return {"id": e.id, "at": _iso(e.at), "kind": e.kind, "text": e.text,
             "seconds": e.seconds, "audio": e.audio, "repeats": e.repeats,
-            "silent": e.silent}
+            "silent": e.silent, "transcribing": e.transcribing}
 
 
 #: Which agents the page names.  The curator and the juez run too, but
@@ -148,7 +148,8 @@ class WebBoard(_board.StateBoard):
     @staticmethod
     def _draws(e) -> tuple:
         """What a row shows.  Anything else changing is not news."""
-        return (e.id, e.text, e.audio, e.repeats, e.seconds, e.silent)
+        return (e.id, e.text, e.audio, e.repeats, e.seconds, e.silent,
+                e.transcribing)
 
     def _refreshed(self) -> None:
         s = self.state
@@ -604,6 +605,10 @@ class Person:
         if self.scribe is None:
             return
         recording = self.archive.dir / f"in_{att}.mp3"
+        # Said BEFORE the work starts, so the row shows it is waiting for
+        # words rather than looking like an utterance that has none.
+        entry.transcribing = True
+        self.board._refreshed()
 
         async def run() -> None:
             try:
@@ -611,10 +616,14 @@ class Person:
             except Exception as exc:                          # noqa: BLE001
                 self.board.note(f"· no pude transcribir {att}: "
                                 f"{type(exc).__name__}: {str(exc)[:90]}")
-                return
+                text = None
+            # Cleared on EVERY path.  A row left waiting after the
+            # transcriber has given up is the same defect as "audio
+            # llegando…" on a turn that produced none.
+            entry.transcribing = False
             if text:
                 entry.text = text
-                self.board._refreshed()
+            self.board._refreshed()
 
         asyncio.create_task(run())
 

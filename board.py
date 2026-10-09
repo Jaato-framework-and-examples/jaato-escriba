@@ -61,6 +61,13 @@ class Entry:
     #: turn answered from there sounds nothing, ever.  A view that cannot
     #: tell the two apart waits for audio that is not coming.
     silent: bool = False
+    #: Set while a transcriber is working on this utterance.  The
+    #: counterpart of `silent` on the other voice: an empty `said` row
+    #: means "the words are coming" only when something is producing
+    #: them, and with transcription off it means there will never be
+    #: any.  A view that cannot tell them apart either spins forever or
+    #: never says it is working.
+    transcribing: bool = False
     #: Stable for the life of this entry, and the only safe way to say
     #: WHICH row changed.  Three things arrive after a row is first drawn
     #: — the rest of a streamed reply, the audio id once the provider has
