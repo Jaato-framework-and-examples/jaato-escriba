@@ -344,6 +344,12 @@ const S = {
   //: workspace, and it is one we have no grounds for.
   loaded: false,
   activeDay: null, progSec: 0,
+  //: Replies already offered to the speakers, by entry id.  A reply is
+  //: played ONCE and never again on its own: the audio ref arrives in a
+  //: second event after the text, a `repeats` bump re-publishes a row,
+  //: and a reconnect re-sends the world.  Without this, any of the three
+  //: would sound the answer again.
+  autoplayed: new Set(), live: false,
   theme: localStorage.getItem("escriba-theme") || "auto",
   showIds: localStorage.getItem("escriba-audit") === "1",
   micReason: null,
@@ -670,6 +676,7 @@ function appendEntry(e) {
   holder.append(entryRow(e));
   if (stick) toBottom(); else $("jump").hidden = false;
   renderPills();
+  maybeAutoplay(e);
 }
 
 function updateEntry(e) {
@@ -678,6 +685,7 @@ function updateEntry(e) {
   Object.assign(prev, e);
   paint(prev);
   renderPills();
+  maybeAutoplay(prev);        // the audio ref usually lands on THIS event
 }
 
 // Scroll only if the reader was already at the bottom. Dragging them back
@@ -866,7 +874,9 @@ window.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeReade
 // backend reports `navegador`, because shipping a selector whose other
 // value cannot work is worse than shipping one value.
 const player = $("player");
-function toggle(e) {
+function toggle(e) { start(e, false); }
+
+function start(e, auto) {
   if (S.playing === e.id) { player.pause(); return; }
   if (!e.audio) return;
   S.failed = null;
@@ -874,7 +884,32 @@ function toggle(e) {
   S.progSec = 0;
   if (MOCK) { mockPlay(e); return; }
   player.src = "/audio/" + e.audio;
-  player.play().catch(() => fail(e));
+  player.play().catch(() => {
+    if (!auto) { fail(e); return; }
+    // A BLOCKED AUTOPLAY IS NOT A FAILURE.  The browser withholding
+    // sound until somebody has interacted with the page is a policy, not
+    // a broken file, and calling it "fallo de reproducción" would send
+    // the reader to look at an archive that is perfectly fine.  The row
+    // keeps its `escuchar` button, which is the whole remedy.
+    S.playing = null;
+    paint(e);
+    renderPills();
+  });
+}
+
+// WHEN A REPLY SOUNDS BY ITSELF.  The terminal plays the answer as it
+// arrives and this should too — a voice assistant that waits to be asked
+// twice is not one.  Three guards, each for something that would
+// otherwise replay an old answer:
+//   - only after the first snapshot, so a reload does not sound history;
+//   - once per entry, because text and audio arrive as separate events;
+//   - never while the microphone is open, which would be the escriba
+//     talking over the person mid-sentence.
+function maybeAutoplay(e) {
+  if (!S.live || e.kind !== "spoke" || !e.audio || S.autoplayed.has(e.id)) return;
+  S.autoplayed.add(e.id);
+  if (S.recording) return;
+  start(e, true);
 }
 function fail(e) {
   S.playing = null;
@@ -1065,7 +1100,14 @@ function onEvent(kind, data) {
   if (kind === "state") {
     S.loaded = true;
     S.order = []; S.byId.clear();
-    for (const e of data.entries || []) { S.byId.set(e.id, e); S.order.push(e.id); }
+    for (const e of data.entries || []) {
+      S.byId.set(e.id, e);
+      S.order.push(e.id);
+      // History, not news: everything in a snapshot has already been
+      // heard, or was deliberately not.  A reconnect must be silent.
+      S.autoplayed.add(e.id);
+    }
+    S.live = true;
     S.counts = data.counts || {};
     S.items = data.items || S.items;
     S.status = data.status || S.status;

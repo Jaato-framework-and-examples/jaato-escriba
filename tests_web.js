@@ -80,8 +80,14 @@ const IDS = ["pills", "session-at", "hright", "playback-where", "audit-btn", "th
              "days", "scroll", "jump", "ptt", "ptt-title", "ptt-sub", "ptt-time", "counts", "tabs",
              "panel", "reader-slot", "player"];
 const byId = new Map(IDS.map((id) => [id, new El("div")]));
-byId.get("player").pause = () => {};
 byId.get("player").paused = true;
+
+// The player records what it was asked to sound, so autoplay can be
+// asserted without a speaker.
+const played = [];
+const player = byId.get("player");
+player.play = () => { played.push(player.src); return Promise.resolve(); };
+player.pause = () => {};
 
 const store = new Map();
 const sandbox = {
@@ -177,6 +183,32 @@ const today = new Date();
 const localToday = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, "0"),
                     String(today.getDate()).padStart(2, "0")].join("-");
 check("today's entries are under today's local date", dayKeys[dayKeys.length - 1], localToday);
+
+// ------------------------------------------------------------- autoplay
+// A reply sounds by itself, because a voice assistant that waits to be
+// asked twice is not one.  But ONLY a new one: everything in the
+// snapshot above has already been heard, and a reconnect re-sends the
+// world.
+check("a snapshot sounds nothing", played.length, 0);
+
+const liveId = 500001;
+T.onEvent("entry", { id: liveId, kind: "spoke", at: new Date().toISOString(),
+                     text: "Con seis macetas…", audio: null, seconds: 9, repeats: 1 });
+check("text with no audio sounds nothing", played.length, 0);
+T.onEvent("entry", { id: liveId, kind: "spoke", at: new Date().toISOString(),
+                     text: "Con seis macetas…", audio: "att_aaaaaaaaaaaaaaaa", seconds: 9, repeats: 1 });
+check("the audio arriving sounds the reply", played, ["/audio/att_aaaaaaaaaaaaaaaa"]);
+
+// The same row republished — a repeat, a reconnect, a late `seconds` —
+// must not sound it a second time.
+T.onEvent("entry", { id: liveId, kind: "spoke", at: new Date().toISOString(),
+                     text: "Con seis macetas…", audio: "att_aaaaaaaaaaaaaaaa", seconds: 11, repeats: 1 });
+check("a republished row is not sounded again", played.length, 1);
+
+// The person's own voice is never sounded back at them unasked.
+T.onEvent("entry", { id: 500002, kind: "said", at: new Date().toISOString(),
+                     text: "", audio: "att_bbbbbbbbbbbbbbbb", seconds: 6, repeats: 1 });
+check("their own utterance is not played back", played.length, 1);
 
 // --------------------------------------------- what arrives after the row
 // The audio ref lands well after the text, and it must patch the row that
