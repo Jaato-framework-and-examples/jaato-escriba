@@ -33,7 +33,8 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from jaato_sdk import ClientType, IPCClient, IPCRecoveryClient    # noqa: E402
+from jaato_sdk import (ClientType, EventType, IPCClient,          # noqa: E402
+                       IPCRecoveryClient)
 from jaato_sdk.media_identity import ATTACHMENT_ID_KEY           # noqa: E402
 
 import archive as _archive                                       # noqa: E402
@@ -298,6 +299,15 @@ class Person:
         self._stop = asyncio.Event()
         self._turn_lock = asyncio.Lock()
         self._opening = asyncio.Lock()
+        #: How full the window is, from ContextUpdatedEvent, and what the
+        #: session has spent, from the daemon's own consumption report.
+        #: Two questions with two sources, never merged into one number:
+        #: `context` is measured against the shared history and belongs to
+        #: no particular model, while spend is attributed per binding —
+        #: and the escriba is a TIERED profile, so it has one history and
+        #: several bills.
+        self._window: Optional[dict] = None
+        self._spend: Optional[dict] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     # -- lifecycle -------------------------------------------------------
@@ -353,6 +363,7 @@ class Person:
         await _turn(self._scribe, GREETING, None, self._relay(), log=self.archive.turn,
                     tui=self.board)
         self._settle()
+        asyncio.create_task(self._measure())
 
     async def _open_session(self) -> None:
         """One session on a connection that can come back.
@@ -392,6 +403,7 @@ class Person:
                               getattr(self._scribe.client, "client_id", None))
         self._watcher = enrichment.Observer(self.conn, self.ws, board=self.board)
         self._watcher.attach(self._scribe.client)
+        self._scribe.client.subscribe(EventType.CONTEXT_UPDATED, self._context)
 
     def _connection(self, status) -> None:
         """The transport's state changed, reported from the SDK's thread.
@@ -496,6 +508,74 @@ class Person:
              "audible": False, "initial": True}]})
         return rows
 
+    def _context(self, ev) -> None:
+        """How full the window is, as the daemon measures it.
+
+        Delivered on this loop — the SDK calls subscribers there, which
+        is why `enrichment.Observer` can `create_task` from one — so the
+        hub is published to directly.
+
+        `tokens_remaining` AND `percent_used` ARE ALREADY NET of what the
+        request reserves for its own output (jaato#1444): the window a
+        provider will accept input into is `context_limit` minus that
+        reservation, not `context_limit`.  So the reservation is carried
+        through and shown rather than quietly subtracted, because "43% of
+        128 000" beside "58 240 used" is arithmetic a reader cannot make
+        work and will assume is a bug.
+        """
+        reserved = getattr(ev, "reserved_output_tokens", 0) or 0
+        limit = getattr(ev, "context_limit", None)
+        self._window = {
+            "percent_used": getattr(ev, "percent_used", None),
+            "tokens_remaining": getattr(ev, "tokens_remaining", None),
+            "context_limit": limit,
+            # The limit the percentage is actually against.  Derived here
+            # rather than in the page: one definition, jaato#1444's.
+            "effective_limit": (limit - reserved) if limit else None,
+            "reserved_output": reserved or None,
+            "turns": getattr(ev, "turns", None),
+        }
+        self.hub.publish("consumo", self.consumption())
+
+    async def _measure(self) -> None:
+        """What the session has spent, from the daemon's accounting.
+
+        NOT RE-DERIVED FROM TURN EVENTS, which is the trap this avoids.
+        `UsageBreakdown.spend_*` and `cost_usd` on `ContextUpdatedEvent`
+        and `TurnCompletedEvent` are PER-TURN — billed across that turn's
+        responses — not session-cumulative, despite the name.  Summing
+        them client-side drifts the moment one event is missed, and
+        rendering one as a session total is wrong by however many turns
+        the person has had.  `get_diagnostics()` answers the daemon's own
+        `get_consumption()`, which is where spend already accumulates.
+
+        KEPT VERBATIM.  The report is one dict with its own rules — three
+        disjoint input buckets, `cost_source` beside any cost, dimensions
+        OMITTED rather than zeroed when nothing measured them — and a
+        client that reshapes it is a second opinion about what the
+        numbers mean.  The page reads the keys that are there.
+
+        A failure leaves the previous reading in place: an empty panel
+        reads as "nothing spent", which is a lie a stale figure does not
+        tell.
+        """
+        scribe = self._scribe
+        if scribe is None:
+            return
+        try:
+            answer = await scribe.client.get_diagnostics()
+        except Exception:                                     # noqa: BLE001
+            return            # a reading we could not take is not a zero
+        consumption = getattr(answer, "consumption", None)
+        if not consumption:
+            return            # absent is not zero, here as everywhere
+        self._spend = consumption
+        self.hub.publish("consumo", self.consumption())
+
+    def consumption(self) -> dict:
+        """The two readouts, kept apart because they answer differently."""
+        return {"window": self._window, "spend": self._spend}
+
     def _settle(self) -> None:
         """Close the books on a turn that produced no speech.
 
@@ -577,6 +657,7 @@ class Person:
                           log=self.archive.turn, tui=self.board),
                     timeout=TURN_TIMEOUT)
                 self._settle()
+                asyncio.create_task(self._measure())
             except asyncio.TimeoutError:
                 # Nothing came back and nothing failed.  The recording is
                 # archived either way; what must not happen is the page
@@ -643,7 +724,8 @@ class Person:
         return self.board.snapshot(session_at=_iso(self.opened),
                                    playback="navegador", days=self.days(),
                                    engines=self.engines(),
-                                   wiki=wiki_references())
+                                   wiki=wiki_references(),
+                                   consumo=self.consumption())
 
     def day(self, date: str) -> List[dict]:
         """A past day's conversation, read back out of the manifest.

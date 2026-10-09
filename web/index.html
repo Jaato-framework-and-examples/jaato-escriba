@@ -206,6 +206,17 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
 .engines .tier{display:flex;align-items:baseline;gap:var(--space-2);flex-wrap:wrap;padding-left:var(--space-2)}
 .engines .name{font-size:12px;color:var(--muted);min-width:66px}
 .engines .model{font-family:var(--mono);font-size:12px;color:var(--ink)}
+.engines .grp{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--muted);margin-top:var(--space-2)}
+.engines .kv{display:flex;align-items:baseline;justify-content:space-between;gap:var(--space-2)}
+.engines .k{font-size:12px;color:var(--muted)}
+.engines .v{font-family:var(--mono);font-size:12px;color:var(--ink);text-align:right}
+.engines .v .of{color:var(--muted)}
+.engines .bar{height:6px;border-radius:3px;background:var(--chip);overflow:hidden;margin:2px 0 6px}
+.engines .bar i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.engines .bar.hot i{background:var(--wait)}
+.engines .bar.over i{background:var(--bad)}
+.engines .note{font-size:11px;color:var(--muted);margin-top:var(--space-1)}
 .counts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-bottom:1px solid var(--line)}
 .counts .cell{padding:var(--space-3);border-right:1px solid var(--line);border-bottom:1px solid var(--line);
               display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -368,7 +379,9 @@ const S = {
   counts: {}, items: { memoria: [], referencias: [], documentos: [] }, days: [],
   status: { status: "listening", query: null },
   session_at: null, archive_dir: null, playback: "navegador",
-  tab: "memoria", refTab: "local", sel: null, reader: false,
+  tab: "memoria", refTab: "local", engTab: "motor", sel: null, reader: false,
+  // {window, spend} — two readouts kept apart on purpose, see renderEngines.
+  consumo: { window: null, spend: null },
   recording: false, rec: 0, playing: null, failed: null,
   alert: null, dismissed: null, everConnected: false, restarting: null,
   //: True once the hub has sent a snapshot.  Before that every count is
@@ -1025,8 +1038,19 @@ function detailOf(it) {
 function renderEngines() {
   const box = $("engines");
   box.textContent = "";
-  if (!S.engines.length) return;
-  box.append(el("div", "head", "Motor"));
+  const hasMotor = S.engines.length > 0;
+  const c = S.consumo || {};
+  const hasConsumo = !!(c.window || c.spend);
+  if (!hasMotor && !hasConsumo) return;
+  const sub = el("div", "tabs sub");
+  for (const [key, label] of [["motor", "Motor"], ["contexto", "Contexto"]]) {
+    const b = el("button", key === S.engTab ? "on" : "");
+    b.append(el("span", null, label));
+    b.onclick = () => { S.engTab = key; renderEngines(); };
+    sub.append(b);
+  }
+  box.append(sub);
+  if (S.engTab === "contexto") return renderConsumo(box, c);
   for (const e of S.engines) {
     const a = el("div", "agent");
     // The provider is TEXT, not a tooltip: it is half of what answers
@@ -1045,6 +1069,131 @@ function renderEngines() {
       a.append(row);
     }
     box.append(a);
+  }
+}
+
+// ------------------------------------------------------- consumo (context)
+// TWO READOUTS, NOT TWO VIEWS OF ONE NUMBER, which is the mistake this is
+// written to avoid.  `ventana` is how full the shared history is and
+// belongs to no particular model; `gasto` is what has been spent, which
+// on a TIERED profile like the escriba's is several bills against one
+// history.  Merging them produces a figure no binding ever had.
+//
+// Three rules carried from the daemon's own contract, each one a way a
+// readout starts lying:
+//   - ABSENT IS NOT ZERO.  A dimension nothing measured is omitted, never
+//     drawn as 0: a session with no pricing table must not read as free.
+//   - A COST SAYS WHERE IT CAME FROM (`cost_source`: provider, pricing
+//     table or mixed), because a bare float's meaning depends on it.
+//   - THE PAYLOAD IS THE DAEMON'S.  Keys it carries that this table does
+//     not name are still shown, after the ones it does, so a dimension
+//     added later appears instead of being silently dropped.
+const NUM = new Intl.NumberFormat("es-ES");
+const DIM = { usd: "coste", turns: "turnos", tool_calls: "llamadas",
+              seconds: "tiempo", tokens: "tokens" };
+
+function sec(v) {
+  const n = Math.round(Number(v) || 0);
+  if (n < 60) return n + " s";
+  const m = Math.floor(n / 60);
+  return m < 60 ? `${m} m ${n % 60} s` : `${Math.floor(m / 60)} h ${m % 60} m`;
+}
+// Decimals carry a COMMA here, and money is formatted by hand rather
+// than through `NUM`: Intl's default maximumFractionDigits is 3 and it
+// parses a `toFixed(2)` string back to a number, so a 10.00 ceiling came
+// out as "10" — a money figure quietly losing its cents.
+const dec = (v, n) => Number(v).toFixed(n).replace(".", ",");
+function dimv(dim, v) {
+  if (v == null) return "—";
+  if (dim === "usd") return dec(v, 2) + " $";
+  if (dim === "seconds") return sec(v);
+  return NUM.format(Math.round(Number(v)));
+}
+function kv(box, k, v, of) {
+  const r = el("div", "kv");
+  const val = el("span", "v");
+  val.append(el("span", null, v));
+  if (of) val.append(el("span", "of", " de " + of));
+  r.append(el("span", "k", k), val);
+  box.append(r);
+}
+function bar(box, pct) {
+  const cls = pct >= 100 ? "bar over" : pct >= 80 ? "bar hot" : "bar";
+  const b = el("div", cls);
+  const i = el("i");
+  i.style.width = Math.max(0, Math.min(100, pct)) + "%";
+  b.append(i);
+  box.append(b);
+}
+
+function renderConsumo(box, c) {
+  const w = c.window, sp = c.spend;
+  if (!w && !sp) {
+    box.append(el("div", "note", "aún sin medir; tras el primer turno"));
+    return;
+  }
+  if (w) {
+    box.append(el("div", "grp", "ventana"));
+    const pct = Number(w.percent_used);
+    if (Number.isFinite(pct)) {
+      bar(box, pct);
+      kv(box, "ocupada", dec(pct, 1) + " %");
+    }
+    if (w.tokens_remaining != null) kv(box, "disponibles", NUM.format(w.tokens_remaining));
+    // The useful limit, not the raw window: `percent_used` and
+    // `tokens_remaining` are ALREADY net of what each request reserves
+    // for its own output (jaato#1444).  Showing the raw window beside
+    // them is arithmetic the reader cannot make work, so the reservation
+    // is named instead of quietly subtracted.
+    if (w.effective_limit != null) kv(box, "límite útil", NUM.format(w.effective_limit));
+    if (w.reserved_output) {
+      kv(box, "reservado para la respuesta", NUM.format(w.reserved_output));
+      box.append(el("div", "note",
+        "lo ocupado y lo disponible ya descuentan esta reserva"));
+    }
+    if (w.turns != null) kv(box, "turnos", NUM.format(w.turns));
+  }
+  if (!sp) return;
+  const b = sp.budget;
+  if (b && b.limits) {
+    box.append(el("div", "grp", "gasto"));
+    const frac = Number(b.fraction_used);
+    if (Number.isFinite(frac)) bar(box, frac * 100);
+    // The DECLARED dimensions decide what exists here, not a list in this
+    // page: an undeclared dimension is unbounded and has no ceiling to
+    // show, and one added to the profile later must appear by itself.
+    for (const dim of Object.keys(b.limits)) {
+      kv(box, DIM[dim] || dim, dimv(dim, (b.used || {})[dim]), dimv(dim, b.limits[dim]));
+    }
+    if (b.next_rung) {
+      box.append(el("div", "note", "próximo escalón: "
+        + Number(b.next_rung.at_percent).toFixed(0) + " %"
+        + (b.next_rung.action ? " · " + b.next_rung.action : "")));
+    }
+    if (b.exhausted_reason) {
+      box.append(el("div", "note", "agotado: " + b.exhausted_reason));
+    }
+  }
+  const t = sp.totals || {};
+  const shown = new Set();
+  const rows = [
+    ["uncached_input_tokens", "entrada nueva"],
+    ["cache_read_tokens", "leído de caché"],
+    ["cache_creation_tokens", "escrito en caché"],
+    ["output_tokens", "salida"],
+    ["reasoning_tokens", "de ella, razonamiento"],
+  ];
+  const any = rows.some(([k]) => t[k] != null);
+  if (any) box.append(el("div", "grp", "tokens"));
+  for (const [k, label] of rows) {
+    shown.add(k);
+    if (t[k] != null) kv(box, label, NUM.format(t[k]));
+  }
+  // `reasoning_tokens` is a SUBSET of `output_tokens` (jaato#1047) --
+  // labelled "de ella" above so nobody adds the two.
+  if (t.cost_usd != null) {
+    kv(box, "coste medido", dec(t.cost_usd, 4) + " $");
+    if (t.cost_source) box.append(el("div", "note", "coste según " + t.cost_source));
   }
 }
 
@@ -1344,11 +1493,18 @@ function onEvent(kind, data) {
     S.days = data.days || S.days;
     S.engines = data.engines || S.engines;
     S.wiki = data.wiki || S.wiki;
+    S.consumo = data.consumo || S.consumo;
     renderPills(); renderEngines(); renderCounts(); renderTabs(); renderPanel(); renderDays(); renderTranscript();
   } else if (kind === "entry") {
     updateEntry(data);
   } else if (kind === "counts") {
     S.counts = data; renderCounts();
+  } else if (kind === "consumo") {
+    // A reading we could not take is NOT a zero: the driver withholds a
+    // failed probe rather than publishing an empty one, and this keeps
+    // what is on screen if an empty one ever arrives anyway.  Blanking a
+    // populated panel mid-conversation reads as "nothing spent".
+    if (data && (data.window || data.spend)) { S.consumo = data; renderEngines(); }
   } else if (kind === "closing") {
     // A RESTART IS NOT A LOST CONNECTION.  `EventSource` reconnects by
     // itself and is answered with a fresh snapshot, so nothing is needed
@@ -1399,7 +1555,7 @@ let lost = null;
 function connect() {
   const es = new EventSource("/events");
   for (const kind of ["state", "entry", "counts", "items", "status", "alert",
-                      "days", "wiki", "closing"]) {
+                      "days", "wiki", "consumo", "closing"]) {
     es.addEventListener(kind, (m) => onEvent(kind, JSON.parse(m.data)));
   }
   es.onopen = () => {
@@ -1447,6 +1603,21 @@ function mockState() {
   return {
     session_at: d(0, 9, 12), archive_dir: "20261009_091200", playback: "navegador",
     status: { status: "listening", query: null },
+    // Deliberately PARTIAL: no cache_creation_tokens and no cost in the
+    // totals, so the mock exercises "absent is not zero" rather than a
+    // payload where every key happens to be present.
+    consumo: {
+      window: { percent_used: 43.2, tokens_remaining: 69760, context_limit: 128000,
+                effective_limit: 119808, reserved_output: 8192, turns: 12 },
+      spend: {
+        budget: { used: { usd: 1.428265, turns: 10, tool_calls: 19, seconds: 117.76 },
+                  limits: { usd: 10.0, turns: 120, tool_calls: 400, seconds: 3600 },
+                  fraction_used: 0.1428,
+                  next_rung: { at_percent: 80.0, action: "finalize" } },
+        totals: { uncached_input_tokens: 224423, cache_read_tokens: 51200,
+                  output_tokens: 18940, reasoning_tokens: 2100 },
+      },
+    },
     wiki: { state: "ok", rows: [
       { text: "Riego por goteo: patrones de montaje", url: "https://kb.darumalabs.ai/n/riego-goteo",
         content: "Nodo del wiki sobre montajes de riego.", tags: ["riego"], origin: "wiki" },

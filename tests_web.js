@@ -122,7 +122,7 @@ const blocks = [...html.matchAll(/<script>\n([\s\S]*?)\n<\/script>/g)].map((m) =
 if (!blocks.length) { console.log("  FAIL could not find the application script in web/index.html"); process.exit(1); }
 const ctx = vm.createContext(sandbox);
 vm.runInContext(blocks[blocks.length - 1] +
-  "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel};", ctx);
+  "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, renderEngines};", ctx);
 const T = sandbox.__test;
 
 // ------------------------------------------------ the page before the hub
@@ -192,6 +192,7 @@ check("today's entries are under today's local date", dayKeys[dayKeys.length - 1
 // name would hide the switch that explains the quiet.
 const engines = byId.get("engines");
 check("the block is drawn", engines.textContent.includes("Motor"), true);
+check("and is now a tab beside Contexto", engines.textContent.includes("Contexto"), true);
 check("both agents are named",
       ["escriba", "documentalista"].every((a) => engines.textContent.includes(a)), true);
 check("both of the escriba's tiers are shown",
@@ -200,6 +201,56 @@ check("the provider is text, not a tooltip",
       engines.textContent.includes("escriba · openrouter"), true);
 check("with their models",
       ["openai/gpt-audio", "openai/gpt-4o-mini"].every((m) => engines.textContent.includes(m)), true);
+
+// -------------------------------------------------------------- consumo
+// The second tab answers a DIFFERENT question from Motor: not who is
+// answering, but how full the window is and what has been spent.  The
+// mock payload is deliberately partial — no cache_creation_tokens, no
+// cost — because the rules worth guarding are about what is ABSENT.
+const showConsumo = () => { T.S.engTab = "contexto"; T.renderEngines();
+                            return engines.textContent; };
+const con = showConsumo();
+check("the window group is drawn", con.includes("ventana"), true);
+check("with the percentage, comma-decimal as Spanish writes it",
+      con.includes("43,2 %"), true);
+check("and the turns", con.includes("turnos"), true);
+
+// jaato#1444: `percent_used` and `tokens_remaining` are already net of
+// what each request reserves for its own output, so the reservation is
+// NAMED. Without it the reader sees 43% beside a window of 128 000 and
+// arithmetic that cannot be made to work.
+check("the output reservation is named", con.includes("reservado para la respuesta"), true);
+check("and why the figures already exclude it",
+      con.includes("ya descuentan esta reserva"), true);
+
+// The DECLARED dimensions decide what is shown, read off `limits` rather
+// than a list in the page, so one added to the profile later appears.
+check("every declared ceiling is shown",
+      ["coste", "turnos", "llamadas", "tiempo"].every((d) => con.includes(d)), true);
+check("money keeps its cents", con.includes("10,00 $"), true);
+check("spent against it", con.includes("1,43 $"), true);
+check("time reads as time, not as a token count", con.includes("1 m 58 s"), true);
+check("the next rung is the deadline that matters", con.includes("80 %"), true);
+
+// ABSENT IS NOT ZERO. The mock reports no cache WRITES and no cost: a
+// provider with no prompt cache must not read as a cache that never
+// hits, and a session with no pricing table must not read as free.
+check("a dimension nothing measured is omitted",
+      con.includes("escrito en caché"), false);
+check("and never drawn as a zero", /escrito en caché[^]*?0/.test(con), false);
+check("an unmeasured cost is not rendered as free", con.includes("coste medido"), false);
+check("but a measured one is shown", con.includes("leído de caché"), true);
+// jaato#1047: reasoning is a SUBSET of output, never added to it.
+check("reasoning is labelled as part of the output",
+      con.includes("de ella, razonamiento"), true);
+
+// An empty reading must not blank a populated panel: that reads as
+// "nothing spent", which is a lie a stale figure does not tell.
+T.onEvent("consumo", { window: null, spend: null });
+check("an empty reading is ignored, not applied",
+      showConsumo().includes("1,43 $"), true);
+
+T.S.engTab = "motor"; T.renderEngines();
 
 // ------------------------------------------------------------- autoplay
 // A reply sounds by itself, because a voice assistant that waits to be
