@@ -85,6 +85,16 @@ plugin_configs:
     # reach by design.  A workspace `.env` would reach it — and would put a
     # live key in every person's directory.
     #
+    #
+    # `jaato/` AND NOT `escriba/`, DELIBERATELY.  The host's provider keys
+    # are shared and centralised: one entry serves every tenant on the
+    # box, and this application is one of them rather than the owner of a
+    # key.  The alternative was a per-application entry, and the cost of
+    # not having one is known and accepted — rotating the shared key stops
+    # every tenant at once, and a spend anomaly on the provider's bill
+    # cannot be attributed to a tenant from the key alone.  Recorded here
+    # so the name does not get "tidied" into a per-app one by somebody
+    # reading this file without that context.
     # Create it once on the host:  pass insert jaato/openrouter/api-key
     api_key: pass://jaato/openrouter/api-key
     framework_overrides:
