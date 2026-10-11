@@ -815,6 +815,34 @@ first pass is never nudged and so is never enriched. That is a
 workaround at the prompt layer; the nudge carrying enrichment is
 upstream behaviour and is filed as such.
 
+**A reader that is less capable than the one downstream will throw away
+good references.** Moving the fetch into Python came with a claim that
+was mine and wrong: that a page this cannot read is a page the escriba
+could not read either, so dropping it is honest. True for a timeout or a
+403, false for a PDF — the framework's `web_fetch` converts PDF to
+markdown (it imports `pymupdf4llm` for that), so for one content type
+this reader was strictly weaker than the plugin that will open the page
+later, and IBM documentation, which is the authoritative kind most worth
+keeping, is mostly PDF. Observed in a live transcript on a 5.3 MB CICS
+Transaction Gateway manual, dropped for its content type alone.
+
+A PDF is now judged on its title and provenance, with nothing
+downloaded: the headers prove it exists and say what it is, which is the
+whole of what the judge is given, and the judge is told it exists and
+that the escriba can open it when it offers it. Deliberately not
+extracting the text: that would mean a 5.3 MB download and a declared
+dependency to keep four thousand characters of cover page and legal
+notices. The honesty is enforced at the two places that could launder
+it — the prompt says the text was not read, and the schema's `resumen`
+says to put that in words rather than pretend to have opened it.
+
+The same incident showed a second thing, about notes rather than
+fetching: the line said "3 could not be read" and named ONE of them, so
+two failures were invisible, and the one it printed happened to be the
+bug rather than the page's fault. A note that names a third of the
+evidence hides the rest; every unread candidate is named now, by host,
+with the count out of how many.
+
 **One unproductive tool call will be repeated until a ceiling stops
 it.** The judge used to open its own candidates — itself a fix, for
 accepting dead links off a snippet — and in the same minute it called

@@ -44,9 +44,20 @@ una página y de qué va se ve en sus primeras líneas. No pidas más —no hay
 más— y no des por hecho que lo que falta te habría hecho cambiar de
 opinión.
 
-Los candidatos que no se pudieron leer no te llegan: se quedaron fuera
-antes. Así que todo lo que tienes delante existe y se puede leer, y eso
-ya no es cosa tuya.
+Los candidatos que no se pudieron abrir no te llegan: se quedaron fuera
+antes. Así que todo lo que tienes delante existe, y eso ya no es cosa
+tuya.
+
+Alguno puede llegarte **sin texto**, diciendo que es un documento que
+aquí no se ha podido leer —un PDF, normalmente—. Eso no es un enlace
+roto: el servidor ha confirmado que está ahí, y el escriba sí sabe
+abrirlo cuando se lo ofrezca a alguien. Júzgalo por el título, por la URL
+y por de quién es: la documentación oficial de un producto, publicada por
+quien lo fabrica, vale aunque no la hayas leído. Si lo aceptas, dilo en
+el `resumen` con esas palabras —«PDF que no se ha leído aquí»— y resume
+lo que se sabe por el título. No finjas haberlo abierto: el escriba lee
+ese resumen para decidir si lo ofrece, y una frase inventada le haría
+ofrecer algo que nadie ha visto.
 
 Dos cosas salen de ese texto y las dos importan:
 

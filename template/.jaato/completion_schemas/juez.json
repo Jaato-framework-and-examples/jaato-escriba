@@ -40,7 +40,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 600,
-            "description": "Dos o tres frases de lo que DICE la página, sacadas de haberla abierto — no del fragmento del buscador. Es lo que el escriba leerá para decidir si vale la pena ofrecerla, así que di de qué trata y qué aporta, no si está bien escrita."
+            "description": "Dos o tres frases de lo que DICE la página, sacadas de haberla abierto — no del fragmento del buscador. Es lo que el escriba leerá para decidir si vale la pena ofrecerla, así que di de qué trata y qué aporta, no si está bien escrita. Si el candidato te ha llegado SIN texto porque es un documento que aquí no se ha podido leer — un PDF, normalmente — dilo con esas palabras y resume lo que se sabe por el título y la URL: no finjas haberlo abierto."
           }
         }
       }

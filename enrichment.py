@@ -53,11 +53,27 @@ FETCH_TIMEOUT = 15
 #: Identifies itself rather than impersonating a browser, exactly as the
 #: framework's own `web_fetch` does (`DEFAULT_USER_AGENT`, a JaatoBot
 #: string).  That matters beyond politeness: an accepted page is opened
-#: again later BY that plugin when the escriba offers it, so a page this
-#: cannot read is a page the escriba could not read either, and dropping
-#: it here is the honest outcome rather than a false negative.
+#: again later BY that plugin when the escriba offers it, so a site that
+#: refuses this one would refuse that one too, and dropping the candidate
+#: here is the honest outcome rather than a false negative.  That holds
+#: for a REFUSAL; it does not hold for a content type, which is what
+#: `DOCUMENTS` below is for.
 AGENT = ("Mozilla/5.0 (compatible; EscribaBot/1.0; "
          "+https://github.com/Jaato-framework-and-examples/jaato-escriba)")
+#: Content types this cannot read but the escriba CAN, so a candidate
+#: carrying one is judged on its title and provenance rather than
+#: dropped.  The set is exactly what the plugin that will open it later
+#: handles: `web_fetch` converts PDF to markdown (it imports
+#: `pymupdf4llm` for that, `web_fetch/plugin.py`), and nothing else here
+#: would be worth offering to somebody who is listening.
+#:
+#: The claim this corrects was mine, in this file and in the README: that
+#: a page this cannot read is a page the escriba could not read either.
+#: True for a timeout or a 403, false for a PDF — and IBM
+#: documentation, which is the authoritative kind most worth keeping, is
+#: mostly PDF.  Observed 2026-10-11 on a 5.3 MB CICS Transaction Gateway
+#: manual, dropped for its content type alone.
+DOCUMENTS = ("application/pdf",)
 
 
 def keys_from(args: Dict[str, Any]) -> List[str]:
@@ -83,6 +99,20 @@ def _search(query: str) -> List[Dict[str, str]]:
                         "title": (r.get("title") or "").strip(),
                         "snippet": (r.get("body") or "").strip()[:300]})
     return out
+
+
+class Unread(RuntimeError):
+    """A document that exists, can be named, and cannot be read here.
+
+    Not a failure: the server answered, the thing is there, and the
+    escriba's own `web_fetch` will open it when it offers it.  What is
+    missing is only the text, so the judge is told that and decides on
+    the title and the provenance.
+    """
+
+    def __init__(self, media_type: str) -> None:
+        super().__init__(f"{media_type}, not read here")
+        self.media_type = media_type
 
 
 def _public(url: str) -> None:
@@ -170,6 +200,12 @@ def _read(url: str) -> str:
     opener = urllib.request.build_opener(_PublicOnly())
     with opener.open(request, timeout=FETCH_TIMEOUT) as response:
         kind = response.headers.get_content_type()
+        if kind in DOCUMENTS:
+            # NOTHING IS DOWNLOADED.  The headers alone prove it exists
+            # and say what it is, which is the whole of what the judge
+            # will be given — and the manual that prompted this is
+            # 5.3 MB, read to keep four thousand characters of cover page.
+            raise Unread(kind)
         if kind not in ("text/html", "application/xhtml+xml", "text/plain"):
             raise ValueError(f"content-type {kind}")
         raw = response.read(PAGE_BYTES)
@@ -194,7 +230,11 @@ async def _pages(candidates: List[Dict[str, str]]) -> tuple:
         # reason hides two, which is how a content type we should be
         # handling stayed invisible: the PDF was the one it printed.
         host = urllib.parse.urlsplit(candidate["url"]).hostname or "?"
-        if isinstance(page, BaseException):
+        if isinstance(page, Unread):
+            # JUDGED, NOT DROPPED: no text, and the media type in its
+            # place so the prompt can say what it is.
+            read.append(dict(candidate, text="", media=page.media_type))
+        elif isinstance(page, BaseException):
             failed.append(f"{host}: {str(page)[:60] or type(page).__name__}")
         elif not page:
             failed.append(f"{host}: no readable text")
@@ -336,8 +376,22 @@ def _prompt(query: str, candidates: List[Dict[str, str]]) -> str:
     """
     lines = [f"CLAVES: {query}", "", "CANDIDATOS:"]
     for i, c in enumerate(candidates, 1):
+        lines += [f"{i}. {c['title']}", f"   {c['url']}", f"   {c['snippet']}"]
+        if c.get("media"):
+            # SAID, AND SAID TO BE DECIDABLE.  A candidate with no text
+            # and no explanation reads as a page that said nothing, which
+            # is a reason to discard; this one exists and will open for
+            # the escriba, so the judge is told what it is and what it
+            # may conclude from that.
+            lines += [
+                f"   --- no se ha podido leer aquí: es un "
+                f"{c['media']}. EXISTE — el servidor lo ha confirmado — y "
+                f"el escriba sí puede abrirlo cuando lo ofrezca. Júzgalo "
+                f"por el título, la URL y de quién es, y si lo aceptas di "
+                f"en `resumen` que es un documento que no se ha leído ---",
+            ]
+            continue
         lines += [
-            f"{i}. {c['title']}", f"   {c['url']}", f"   {c['snippet']}",
             # FENCED, AND DECLARED FOREIGN.  This is a page off the open
             # web arriving in a prompt.  The escriba's persona already
             # carries that rule for what IT reads; the judge reads now
