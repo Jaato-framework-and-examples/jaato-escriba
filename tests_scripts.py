@@ -18,6 +18,7 @@ Saying so here because a file with this name implies otherwise.
 import importlib.util
 import json
 import sys
+import yaml
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -211,6 +212,51 @@ check("a topic detailed as recent is not repeated as thin",
 rows = [l for l in out.splitlines() if l.startswith("    ") and "pieza" not in l]
 check("the table is newest first",
       rows[0].split()[0], "CICS_transaction_gateway")
+
+# ============================== every script a profile names is SHIPPED
+# A profile that names a script the deploy does not have is not a
+# degraded agent: `signal_completion` comes back "completion_processor
+# could not be located" on every single call, the turn can never close,
+# and the model is nudged until the loop gives up.  Measured 2026-10-11,
+# session 20261011_185946: five calls, five refusals, NudgeExhausted, a
+# greeting spoken four times.
+#
+# The file existed on the author's machine.  `.gitignore` carried a bare
+# `.jaato/`, which matches at every depth, so `template/.jaato/` was
+# ignored too; files already tracked kept working and only the NEW one
+# was dropped, without a word, by `git add -A`.  Existing on disk is
+# therefore not the property to assert — being COMMITTED is.
+import re
+import subprocess
+
+profiles = sorted((HERE / "template/.jaato/profiles").rglob("*.yaml"))
+check("there are profiles to check", bool(profiles), True)
+
+named = set()
+for profile in profiles:
+    body = yaml.safe_load(profile.read_text()) or {}
+    for entry in body.get("completion_processors") or []:
+        named.add(entry["script"])
+    schema = body.get("completion_payload_schema")
+    if schema:
+        named.add(schema)
+for persona in sorted((HERE / "template/.jaato/agents").glob("*.md")):
+    named.update(re.findall(r"\{\{!py\??:([^}]+)\}\}", persona.read_text()))
+
+check("the profiles name some scripts", bool(named), True)
+for rel in sorted(named):
+    check(f"{rel} exists", (HERE / "template/.jaato" / rel).is_file(), True)
+
+tracked = subprocess.run(["git", "ls-files", "-z", "template/.jaato"],
+                         cwd=HERE, capture_output=True, text=True)
+if tracked.returncode != 0:
+    print("  note  the committed check was NOT run: this is not a git "
+          "checkout, so whether a named script would reach a deploy is "
+          "unknown here")
+else:
+    files = set(tracked.stdout.split("\0"))
+    for rel in sorted(named):
+        check(f"{rel} is committed", f"template/.jaato/{rel}" in files, True)
 
 print("scripts OK" if not fail else f"{fail} failure(s)")
 sys.exit(1 if fail else 0)

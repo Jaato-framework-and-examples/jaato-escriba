@@ -18,21 +18,43 @@ __pycache__/
 # documents, recordings and session journals belong in
 # `<root>/<caller>/workspace`.  Kept as a safety net against committing
 # somebody's second brain if anyone runs `--workspace .`.
-.jaato/
-docs/
-audio/
+#
+# ANCHORED TO THE ROOT, and that slash is load-bearing.  Unanchored,
+# `.jaato/` matches at EVERY depth, so it also swallowed
+# `template/.jaato/` — the authored assets this repo exists to ship.
+# Files already tracked kept working, which is what made it invisible:
+# only a NEW file was dropped, silently, by `git add -A`.  Measured
+# 2026-10-11: `fuentes_reales.py` was written, referenced from
+# `_base_escriba.yaml`, committed as part of a change whose other files
+# were all tracked, deployed — and on the box the profile named a
+# processor that was not there, so EVERY `signal_completion` came back
+# "completion_processor could not be located" and no turn could close.
+/.jaato/
+/docs/
+/audio/
 
 # The template is COPIED INTO workspaces, so runtime state must never
 # accumulate in it: whatever is here is laid down in the next person's
 # workspace.  `workspace.py` skips these on copy as well — belt and
 # braces, because one leak is one person reading another's memories.
-template/.jaato/memory/
-template/.jaato/references/
-template/.jaato/sessions/
-template/.jaato/logs/
-template/.jaato/forgotten/
-template/.jaato/.artifact_tracker.json
-template/.jaato/discarded_references.json
+#
+# A KEEP-LIST, NOT A DENY-LIST, which is the direction the framework's
+# own generator argues for (`jaato-scaffold explain archetype
+# gitignore`): everything under `template/.jaato/` is ignored unless it
+# is named here, so a state directory or a `<provider>_auth.json` that a
+# later jaato release starts writing is never one `git add -A` from a
+# remote.  The cost is that a NEW authored subdirectory needs a line —
+# and it fails loudly, as a file that will not commit, which is the one
+# failure mode this list is allowed to have.
+#
+# The un-exclude comes FIRST because git cannot re-include anything
+# beneath an excluded directory.
+!template/.jaato/
+template/.jaato/*
+!template/.jaato/agents/
+!template/.jaato/completion_schemas/
+!template/.jaato/profiles/
+!template/.jaato/scripts/
 template/docs/
 template/audio/
 template/.env
