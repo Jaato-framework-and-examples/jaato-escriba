@@ -434,6 +434,17 @@ def main(argv=None) -> int:
                         "written, 0600 in a 0700 directory. NOT the "
                         "workspace: it holds a live bearer token, so put it "
                         "on tmpfs (/run/escriba). Needs --kbwiki-url")
+    # A PATTERN, NOT A HOST, because the route is kbwiki's business and
+    # not ours.  `https://kbwiki.darumalabs.ai/#/knowledge/{id}` is what
+    # that deployment serves (RIP-KB-EXTRACTOR#2, 14f7dd8); another one
+    # may serve something else, and an operator stating it is the
+    # difference between a contract and this repo guessing at a peer's
+    # URLs.  Without it a wiki page is shown as its id, which is the
+    # honest rendering of a thing that has no address.
+    p.add_argument("--kbwiki-page", metavar="PATTERN",
+                   help="how to link one wiki page, with {id} where the "
+                        "node id goes. Needs --kbwiki-url. Omitted, a wiki "
+                        "page is shown as its id instead of as a link")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8080)
     args = p.parse_args(argv)
@@ -449,7 +460,16 @@ def main(argv=None) -> int:
               "called, and a token directory with no wiki holds a credential "
               "for nothing", file=sys.stderr)
         return 2
-    CONFIG["wiki"] = ({"url": args.kbwiki_url, "dir": args.token_dir}
+    if args.kbwiki_page and not args.kbwiki_url:
+        print("escriba_web: --kbwiki-page needs --kbwiki-url: there is no "
+              "wiki to link pages of", file=sys.stderr)
+        return 2
+    if args.kbwiki_page and "{id}" not in args.kbwiki_page:
+        print("escriba_web: --kbwiki-page has no {id} in it, so every page "
+              "would get the same link", file=sys.stderr)
+        return 2
+    CONFIG["wiki"] = ({"url": args.kbwiki_url, "dir": args.token_dir,
+                       "page": args.kbwiki_page}
                       if args.kbwiki_url else None)
     if args.budget_file:
         try:

@@ -794,6 +794,7 @@ in every person's directory.
 | `tests_web_hub.py` | The fan-out, the board-to-event mapping and the two path guards — the half of the backend whose failures are silent. No server, no daemon, no session. |
 | `tests_staging.py` | A document the person stages: that a browser's filename can never name a file outside their workspace, that the catalogue entry is what the plugin will accept (checked by the framework's own validator where `jaato-server` is installed, and SAID where it is not), and that a missing file is never reported as an empty one. |
 | `tests_enrichment.py` | Reading a candidate page: that it happens once, in Python, that the SSRF guard the framework's `web_fetch` gave us is still in the path (asserted against a URL that would otherwise be served, so the leg cannot pass because nothing was listening), that an unreadable page is reported rather than guessed at, and that the text reaches the judge fenced and declared foreign. Two legs are reversion guards: a judge handed a fetch tool again would bring back the loop below with nothing failing. |
+| `tests_scripts.py` | The scripts that run INSIDE a session, against a fake ledger and a fake memory store: the `fuentes_reales` gate, which decides whether a link the person will click survives, and the inventory prefetch, which decides what the escriba wakes up knowing and therefore what the greeting can offer. `wrote_something`, the other gate on that payload, has no suite yet. |
 | `tests_web.js` | The web page's render paths, headless: it runs the page's own script against a DOM stub. `node tests_web.js`. It cannot say whether the page LOOKS right — that needs `?mock=1` and eyes. |
 | `tests_browser.py` | Where a CLICK goes, in a real browser: the real page served against a stub that records what arrives. `python tests_browser.py`, with `ESCRIBA_BROWSER=…` naming a browser if playwright's own chromium is not installed; the legs are SAID to be unrun rather than passing quietly. It exists because every other suite covered the upload path while the feature was dead — see below. |
 | `tests_render.py`, `tests_terminal.py`, `tests_workspace.py`, `tests_housekeeping.py`, `tests_board.py` | Every render path at four sizes; the terminal handover on a pty; provisioning and what must never leak between people; the two retention clocks and what the ceiling may never delete. All headless. |
@@ -860,6 +861,53 @@ now `enrichment._pages`, once per URL by construction, and the judge
 has no tools at all. Nothing in the framework bounds an identical call
 repeated N times — no profile key, no env var — so a budget is
 currently the only backstop.
+
+**"Never read a URL aloud" became "never tell them".** The persona
+forbids dictating an address, which is right — a URL read to somebody
+who is listening helps nobody. But speech was the only channel, so the
+rule quietly became a silence. Observed 2026-10-11: asked *"¿pero cuál
+es la URL exacta de esa referencia?"*, the escriba answered that there
+was no public URL and that the person should look inside the internal
+development environment. The page it had just opened ends with six, in
+its own `## Sources` section, each pinned to a commit — and it had read
+them, because it named the parts they belong to.
+
+A turn now carries `fuentes` in its completion payload, rendered under
+the `anotado` row as links: not read aloud, written down. The honesty is
+enforced where it could be laundered rather than asked for once. The
+`fuentes_reales` processor refuses any source whose URL does not appear
+VERBATIM in that turn's own tool ledger, and the refusal asks for the
+source to be REMOVED rather than corrected — a model told to fix a link
+it never had writes a better-looking one. A URL that is one character
+wrong looks identical to a right one from both sides; the person finds
+out by going there.
+
+**A wiki page had no address, and now has one because we asked.** A
+kbwiki node's identity is its id plus a repo-relative path; the URLs in
+its Sources are always upstream (Confluence, GitLab). Their dashboard
+could show a node but not link to one — the SPA's routes were
+`#/overview`, `#/knowledge`, … and a node was reached by `focusNode(id)`
+from an `onclick`, never an `href`. Filed as
+[RIP-KB-EXTRACTOR#2](https://github.com/Jaato-framework-and-examples/RIP-KB-EXTRACTOR/issues/2),
+shipped the same hour.
+
+`--kbwiki-page` takes the PATTERN, `{id}` where the node id goes, rather
+than a host: the route is kbwiki's business, and an operator stating it
+is the difference between a contract and this repo guessing at a peer's
+URLs. Without the flag a node is shown as its id, which is the honest
+rendering of a thing with no address — never as a link to nowhere.
+
+**The greeting offered the same stale topic every time, by design.** The
+inventory computed before the first turn listed every topic with its
+count, and then detailed — with actual memory descriptions, the only
+substance in it — the four THINNEST, oldest first, "por si quieres tirar
+de ahí". So the escriba woke up knowing something about a one-piece
+topic from days ago and nothing about the five pieces it had stored that
+afternoon, which appeared as a row in a table. Every greeting proposed
+the stale one. It now details what is RECENT as well, the table sorts
+newest first, and the thin section survives because proposing a gap
+worth filling is a thing a second brain is unusually good at and nothing
+else here does.
 
 **The wiki is reached as the person, never as the service.** kbwiki
 serves each identity only what it has been granted, keyed on the same

@@ -179,6 +179,13 @@ nav .note code{font-family:var(--mono)}
 .tag.neutral{background:var(--chip);color:var(--ink-2)}
 .anotado{display:flex;gap:var(--space-3);align-items:baseline;flex-wrap:wrap}
 .anotado .text{font-size:15px;line-height:1.45}
+.fuentes{display:flex;flex-direction:column;gap:4px;width:100%;margin-top:var(--space-2);font-size:13px}
+.fuentes .lbl{color:var(--muted);font-size:12px}
+.fuentes a{color:var(--accent-ink)}
+/* A wiki page has no address of its own, so its id is shown to be read
+   and copied rather than clicked: anything that LOOKED like a link and
+   went nowhere would be worse than plain text. */
+.fuentes .nodo{font-family:var(--mono);color:var(--ink-2);word-break:break-all}
 .note-row{display:flex;gap:var(--space-3);align-items:baseline;flex-wrap:wrap;font-family:var(--mono);font-size:13px;
           color:var(--muted)}
 .note-row .x{background:var(--wait-soft);color:var(--wait);padding:1px 8px;border-radius:999px;font-weight:500}
@@ -431,6 +438,10 @@ const S = {
   // still carries its `escuchar` button; what this stops is the
   // SECOND, automatic playing of something just heard.
   sounded: new Set(),
+  //: How to link one wiki page, `{id}` where the node id goes. The server
+  //: states it; a deployment whose wiki has no browsable page sends null
+  //: and a node is shown as its id, never as a link to nowhere.
+  wikiPage: null,
   theme: localStorage.getItem("escriba-theme") || "auto",
   showIds: localStorage.getItem("escriba-audit") === "1",
   micReason: null,
@@ -708,6 +719,12 @@ function playGlyph(playing, size) {
   return svg;
 }
 
+// A wiki page's address, or null when this deployment has none. The
+// pattern comes from the server, so nothing here knows a kbwiki route.
+function wikiHref(id) {
+  return S.wikiPage ? S.wikiPage.replace("{id}", encodeURIComponent(id)) : null;
+}
+
 function paint(e) {
   const r = rows.get(e.id);
   if (!r) return;
@@ -803,6 +820,38 @@ function paint(e) {
   if (e.kind === "anotado") {
     const w = el("div", "anotado");
     w.append(el("span", "tag accent", "anotado"), el("span", "text", e.text));
+    // WHERE IT CAME FROM, WRITTEN DOWN.  The escriba is forbidden to read
+    // a URL aloud — a dictated address helps nobody who is listening —
+    // and until this row existed that rule meant the person could not
+    // get at it at all: asked for the exact URL of a reference it had
+    // just opened, it answered that there was not one.
+    if ((e.links || []).length) {
+      const box = el("div", "fuentes");
+      box.append(el("span", "lbl", tx("entry.sources")));
+      for (const f of e.links) {
+        if (f.url) {
+          const a = el("a", null, f.nombre || f.url);
+          a.setAttribute("href", f.url);
+          a.setAttribute("target", "_blank");
+          a.setAttribute("rel", "noopener noreferrer");
+          a.setAttribute("title", f.url);
+          box.append(a);
+        } else if (f.nodo && S.wikiPage) {
+          const a = el("a", null, f.nombre || f.nodo);
+          a.setAttribute("href", wikiHref(f.nodo));
+          a.setAttribute("target", "_blank");
+          a.setAttribute("rel", "noopener noreferrer");
+          a.setAttribute("title", f.nodo);
+          box.append(a);
+        } else if (f.nodo) {
+          const line = el("div", null);
+          line.append(el("span", null, (f.nombre || "") + " "),
+                      el("span", "nodo", f.nodo));
+          box.append(line);
+        }
+      }
+      w.append(box);
+    }
     r.body.append(w);
     return;
   }
@@ -1151,6 +1200,23 @@ function detailOf(it) {
     const tags = el("div", "tags");
     for (const t of it.tags || []) tags.append(el("span", "tag neutral", t));
     d.append(tags, el("div", "note", tx("stage.hint")));
+  } else if (S.tab === "referencias" && it.origin === "wiki") {
+    // A WIKI PAGE HAS NO ADDRESS OF ITS OWN — its identity is the node
+    // id — so this is a link only where the deployment says one can be
+    // built, and the id itself otherwise. The id is not a placeholder
+    // for a URL: it is what the librarian cites and what `kb_get_node`
+    // takes, so it is worth showing either way.
+    const href = wikiHref(it.text);
+    if (href) {
+      const a = el("a", null, it.text);
+      a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer";
+      a.title = href;
+      a.style.fontSize = "14px"; a.style.wordBreak = "break-all";
+      d.append(a);
+    } else {
+      d.append(el("div", "mono", it.text));
+    }
+    d.append(el("div", "mono", it.at || ""));
   } else if (S.tab === "referencias") {
     const a = el("a", null, it.url);
     a.href = it.url; a.target = "_blank"; a.rel = "noopener noreferrer";
@@ -1783,6 +1849,7 @@ function onEvent(kind, data) {
     S.days = data.days || S.days;
     S.engines = data.engines || S.engines;
     S.wiki = data.wiki || S.wiki;
+    S.wikiPage = data.wiki_page || null;
     S.consumo = data.consumo || S.consumo;
     // The catalogue arrives WITH the snapshot, so the strings and the
     // data they label can never be a version apart.

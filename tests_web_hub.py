@@ -155,6 +155,22 @@ async def main():
     check("both entries are published", [r["kind"] for r in rows], ["spoke", "anotado"])
     check("the reply carries its audio", rows[0]["audio"], "att_0196475cd416e2b5")
     check("and they are different rows", rows[0]["id"] != rows[1]["id"], True)
+    check("a reply that named no source carries none", rows[1]["links"], [])
+
+    # WHERE IT CAME FROM RIDES THE ANNOTATION, not the speech: the
+    # escriba is forbidden to read a URL aloud, so this row is the only
+    # way the person gets one at all.  It has to reach the browser, and
+    # it has to reach the `anotado` row rather than the audio row.
+    drain(q)
+    board.spoke("Te cuento lo del pool de conexiones.", "Anotado el pool.",
+                audio="att_0196475cd416e2b6",
+                links=[{"nombre": "el repo", "url": "https://gitlab.x/a"},
+                       {"nombre": "la p\u00e1gina", "nodo": "mainframe-connection-pool"}])
+    rows = [d for k, d in drain(q) if k == "entry"]
+    check("the sources ride the annotation",
+          [f.get("url") or f.get("nodo") for f in rows[1]["links"]],
+          ["https://gitlab.x/a", "mainframe-connection-pool"])
+    check("and not the speech", rows[0]["links"], [])
 
     # A folded repeat is the same row: one `entry`, with a higher count,
     # so the page updates in place instead of drawing the line twice.

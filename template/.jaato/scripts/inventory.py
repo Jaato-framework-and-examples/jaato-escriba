@@ -29,7 +29,10 @@ from datetime import datetime, timezone
 #: How many thin topics get detailed with their descriptions.  Enough for
 #: the scribe to choose from, few enough not to flood its prompt.
 DETAILED_TOPICS = 4
-#: How many descriptions are shown per thin topic.
+#: How many RECENT topics get the same treatment.  Fewer, because what
+#: the person was last doing is one or two things, not four.
+RECENT_TOPICS = 3
+#: How many descriptions are shown per detailed topic.
 PIECES_PER_TOPIC = 3
 
 
@@ -84,6 +87,17 @@ def render(context, args) -> str:
     rows = sorted(((t, len(ms), newest(ms)) for t, ms in by_topic.items()),
                   key=lambda r: (r[1], -r[2][0]))
 
+    def pieces(topic: str) -> list:
+        """That topic's memories, newest first."""
+        return sorted(by_topic[topic],
+                      key=lambda m: _age(getattr(m, "timestamp", None))[0])
+
+    def detail(lines: list, chosen: list) -> None:
+        for topic, n, (_, when) in chosen:
+            lines.append(f"  · {topic} — {n} pieza(s), lo último {when}:")
+            for m in pieces(topic)[:PIECES_PER_TOPIC]:
+                lines.append(f"      «{getattr(m, 'description', '')}»")
+
     width = max(len(t) for t, _, _ in rows)
     lines = [f"{len(memories)} piezas validadas. Esto es todo lo que YA te "
              f"han contado: si un tema no sale aquí, no lo menciones como si "
@@ -91,15 +105,35 @@ def render(context, args) -> str:
              "No es una lista de temas permitidos. Es lo que ya sabes, no el "
              "límite de lo que puedes aprender: cuando te cuenten algo que no "
              "está aquí, eso es exactamente para lo que existes.", ""]
-    for topic, n, (_, when) in sorted(rows, key=lambda r: -r[1]):
+    # NEWEST FIRST, not biggest first.  The table used to lead with the
+    # topic holding the most pieces, which is the one least likely to be
+    # what the conversation was about an hour ago.
+    by_recency = sorted(rows, key=lambda r: r[2][0])
+    for topic, n, (_, when) in by_recency:
         lines.append(f"    {topic.ljust(width)}   {n:>3}   {when}")
 
-    thin = [r for r in rows if r[1] <= max(2, rows[0][1])][:DETAILED_TOPICS]
+    # WHAT YOU WERE DOING, detailed rather than listed.  The table above
+    # carries a name and a count, and a name is not enough to say "shall
+    # we carry on with X" and mean anything by it.  Measured 2026-10-11:
+    # every greeting offered the same thin topic from the day before,
+    # because the thin section was the only part of this inventory with
+    # any substance in it, and the day's own work -- several pieces stored
+    # that afternoon -- was a row in a table.
+    recent = by_recency[:RECENT_TOPICS]
+    if recent:
+        lines += ["", "Lo último que me contaste, que es por donde "
+                      "seguíais:", ""]
+        detail(lines, recent)
+
+    # AND WHAT IS MISSING, which is the other thing a second brain is for
+    # and nothing else here does.  Kept, but no longer the only thing it
+    # wakes up knowing anything about.  A topic already detailed above is
+    # not repeated.
+    named = {t for t, _, _ in recent}
+    thin = [r for r in rows
+            if r[1] <= max(2, rows[0][1]) and r[0] not in named][:DETAILED_TOPICS]
     if thin:
         lines += ["", "Lo más flojo, por si quieres tirar de ahí:", ""]
-        for topic, n, (_, when) in thin:
-            lines.append(f"  · {topic} — {n} pieza(s), lo último {when}:")
-            for m in by_topic[topic][:PIECES_PER_TOPIC]:
-                lines.append(f"      «{getattr(m, 'description', '')}»")
+        detail(lines, thin)
 
     return "\n".join(lines)

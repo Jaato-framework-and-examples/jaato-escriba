@@ -233,7 +233,13 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
     spoke_rec = mouth.recordings[-1] if getattr(mouth, "recordings", None) else None
     (tui or _LINES).spoke(words, (payload or {}).get("anotado", ""),
                           audio=(spoke_rec or {}).get("sha"),
-                          seconds=(spoke_rec or {}).get("seconds"))
+                          seconds=(spoke_rec or {}).get("seconds"),
+                          # Where it said this came from.  Checked by the
+                          # `fuentes_reales` processor against the turn's
+                          # own ledger before it ever gets here, so a row
+                          # the page renders as a link is one the escriba
+                          # really opened.
+                          links=(payload or {}).get("fuentes") or [])
     # One row per turn, written AFTER the turn closed so it records what
     # happened rather than what was attempted.  `said` carries the id we
     # minted for the utterance; `mouth.recordings` carries what we kept of

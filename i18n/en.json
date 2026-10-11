@@ -86,6 +86,7 @@
   "entry.playback_failed": "playback failed",
   "entry.muted": "the track is muted",
   "entry.ended": "the track ended",
+  "entry.sources": "where this came from",
   "reader.close": "Close",
   "alert.session.title": "Session ended",
   "alert.mic.title": "Microphone muted",
@@ -111,6 +112,6 @@
   "note.searching": "· «{query}»: already searched in this session",
   "note.no_text": "(no text)",
   "agent.speech": "British English. You speak as people speak in Britain.",
-  "agent.greeting": "[The session opens. The user is listening. Greet them, ask what they want to do, and close the turn right there with `nada_que_anotar: true`: a greeting is nothing to note down. Do not search for anything, do not open anything and do not retrieve memories yet — wait until they say what they want to talk about.]",
+  "agent.greeting": "[The session opens. The user is listening. Greet them, ask what they want to do — and if you offer to carry on with something, make it the most recent thing — and close the turn right there with `nada_que_anotar: true`: a greeting is nothing to note down. Do not search for anything, do not open anything and do not retrieve memories yet — wait until they say what they want to talk about.]",
   "note.close_failed": "· I could not close the previous session: {what}"
 }

@@ -186,7 +186,7 @@ if (!blocks.length) { console.log("  FAIL could not find the application script 
 const ctx = vm.createContext(sandbox);
 vm.runInContext(blocks[blocks.length - 1] +
   "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, " +
-  "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE};", ctx);
+  "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows};", ctx);
 const T = sandbox.__test;
 
 // ------------------------------------------------ the page before the hub
@@ -421,6 +421,33 @@ check("a connected wiki lists its rows under its own tab",
 check("and says when each page was opened", fromWiki.includes("09:18"), true);
 check("and never the word undefined", fromWiki.includes("undefined"), false);
 
+// OPENING ONE. A wiki page has no address of its own, so the link exists
+// only where the deployment told us how to build one, and the page knows
+// no kbwiki route -- it substitutes into the pattern the server sent.
+const openWiki = (id) => {
+  T.S.tab = "referencias"; T.S.refTab = "wiki";
+  T.S.sel = T.keyOf("referencias", { id, text: id, origin: "wiki" });
+  T.renderPanel();
+  const found = [];
+  (function walk(n) {
+    for (const c of n.children || []) { if (c.tagName === "A") found.push(c); walk(c); }
+  })(panel);
+  return found;
+};
+T.onEvent("wiki", { state: "ok", rows: [
+  { id: "riego-goteo-patrones", text: "riego-goteo-patrones", origin: "wiki",
+    at: "09:18", tags: [] }] });
+T.S.wikiPage = null;
+check("with no pattern, a page is not a link", openWiki("riego-goteo-patrones").length, 0);
+T.S.wikiPage = "https://kb.example/#/knowledge/{id}";
+const anchors = openWiki("riego-goteo-patrones");
+check("with one, it is", anchors.length, 1);
+check("built by substitution, not by knowing the route",
+      anchors[0].attrs.href || anchors[0].href,
+      "https://kb.example/#/knowledge/riego-goteo-patrones");
+T.S.wikiPage = null;
+T.S.sel = null;
+
 // The wiki tab carries its STATE where a count would go, and says it
 // again in place of the list: an empty list and a server that did not
 // answer look identical and mean opposite things.
@@ -627,6 +654,60 @@ T.onSpeech({ stream: "s3", rate: 24000, channels: 1, pcm: piece(12000) });
 check("nothing sounds while the microphone is open",
       audio.started.length, scheduled);
 T.S.recording = false;
+
+// ------------------------------------------- where the answer came from
+// The escriba may not read a URL aloud — a dictated address helps nobody
+// who is listening — so this row is the ONLY way the person gets one.
+// Asked for the exact URL of a page it had just opened, it answered that
+// there was not one; it had six, in that page's own Sources section.
+const GITLAB = "https://gitlab.averroes.lda/lda/x/-/tree/2f78f59af93b/y";
+const anotado = (id, links) => {
+  T.onEvent("entry", { id, kind: "anotado", at: new Date().toISOString(),
+                       text: "anotado algo", repeats: 1, links });
+  const el = T.rows.get(id);
+  const found = { anchors: [], nodes: [] };
+  (function walk(n) {
+    for (const c of n.children || []) {
+      if (c.tagName === "A") found.anchors.push(c);
+      if ((c.className || "").includes("nodo")) found.nodes.push(c);
+      walk(c);
+    }
+  })(el.body);
+  return found;
+};
+
+const link = anotado(910001, [{ nombre: "el repo", url: GITLAB }]);
+check("a source with a URL is a link", link.anchors.length, 1);
+check("pointing where it said", link.anchors[0].attrs.href, GITLAB);
+check("named as it would be said aloud", link.anchors[0].textContent, "el repo");
+// A new tab, and no window.opener for a page off the corporate network.
+check("opening elsewhere", link.anchors[0].attrs.target, "_blank");
+check("without handing it this page", link.anchors[0].attrs.rel, "noopener noreferrer");
+// The full address is not shown inline — it is a commit URL and would
+// take four lines — but it must be recoverable without clicking.
+check("the address is on the title", link.anchors[0].attrs.title, GITLAB);
+
+// A WIKI PAGE HAS NO ADDRESS. Its identity is the node id, so it is
+// shown to be read and copied; anything that looked like a link and went
+// nowhere would be worse than plain text.
+const node = anotado(910002, [{ nombre: "la página", nodo: "mainframe-connection-pool" }]);
+check("a wiki page is not rendered as a link", node.anchors.length, 0);
+check("its id is shown instead", node.nodes.length, 1);
+check("verbatim", node.nodes[0].textContent, "mainframe-connection-pool");
+
+// The same page, as a source of an answer: a link where the deployment
+// says one can be built, the bare id where it cannot.
+T.S.wikiPage = "https://kb.example/#/knowledge/{id}";
+const linked = anotado(910004, [{ nombre: "la página", nodo: "mainframe-connection-pool" }]);
+check("a wiki source becomes a link when there is one to make",
+      linked.anchors.length, 1);
+check("to the page the pattern names", linked.anchors[0].attrs.href,
+      "https://kb.example/#/knowledge/mainframe-connection-pool");
+T.S.wikiPage = null;
+
+const none = anotado(910003, []);
+check("a turn that named no source adds nothing", none.anchors.length, 0);
+check("and no empty box", none.nodes.length, 0);
 
 console.log(fail ? `${fail} failure(s)` : "web page renders OK");
 process.exit(fail ? 1 : 0);

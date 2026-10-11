@@ -54,6 +54,20 @@ completion_processors:
     # silence for a second brain to satisfy its own bookkeeping is worse
     # than a memory lost.
     on_exhausted: allow
+  # Refuses a source the turn did not actually read.  The person clicks
+  # these, so a link that is almost right is worse than no link: it looks
+  # identical to a working one from both sides and the person finds out by
+  # going there.  The refusal asks for the source to be REMOVED rather
+  # than corrected, because a model told to fix a link it never had
+  # invents a better-looking one.
+  - script: scripts/processors/fuentes_reales.py
+    name: fuentes_reales
+    on_error: fail_completion
+    max_refusals: 2
+    # Same bargain as above, and cheaper: what stands after two refusals
+    # is a turn whose `fuentes` may hold one bad link, not a conversation
+    # held up over a convenience.
+    on_exhausted: allow
 
 plugins:
   # Only TWO tools, and eagerly.

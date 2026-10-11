@@ -33,6 +33,36 @@
     "documento_encargado": {
       "type": "boolean",
       "description": "OBLIGATORIO en cada turno, y se comprueba contra lo que hiciste. true solo si has llamado de verdad a `spawn_subagent`; false si no. Es obligatorio porque omitirlo era la manera de decir que había un documento sin haber encargado ninguno: la persona se queda esperando un fichero que nadie escribe."
+    },
+    "fuentes": {
+      "type": "array",
+      "description": "De dónde salió lo que acabas de contar, para que la persona pueda ir a verlo. SÓLO lo que has abierto en ESTE turno y cuya procedencia has leído de verdad: se comprueba contra lo que devolvieron tus herramientas, y una fuente que no aparezca ahí se te devuelve para que la quites. Vacío es lo normal en un turno hablado; no busques nada para rellenarlo.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nombre"
+        ],
+        "properties": {
+          "nombre": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Cómo la nombrarías en voz alta: «la página de arquitectura de la capa de servicios», «el repo architecture-commons-libs»."
+          },
+          "url": {
+            "type": "string",
+            "minLength": 8,
+            "description": "La dirección, COPIADA TAL CUAL de lo que leíste: ni la retoques ni la acortes ni le quites el commit. Si la fuente es una página del propio wiki, no pongas `url` — las páginas del wiki no tienen dirección, van en `nodo`."
+          },
+          "nodo": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "El id de la página del wiki, cuando la fuente es el wiki mismo y no algo de fuera: `mainframe-connection-pool`. Es lo que el bibliotecario cita y lo que abre `kb_get_node`."
+          }
+        }
+      }
     }
   },
   "description": "El campo `agent` NO está aquí a propósito. Era un `const` que el modelo tenía que repetir, y repetir una constante que el framework ya conoce es papeleo: se olvidaba, `signal_completion` se rechazaba con \"'agent' is a required property\", y cada olvido gastaba un intento Y un nudge del presupuesto de la sesión. Medido: 22 rechazos por esa sola causa."

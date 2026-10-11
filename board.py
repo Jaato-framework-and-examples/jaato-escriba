@@ -68,6 +68,13 @@ class Entry:
     #: any.  A view that cannot tell them apart either spins forever or
     #: never says it is working.
     transcribing: bool = False
+    #: Where what was just said came from, when the escriba named it:
+    #: `[{"nombre", "url"} | {"nombre", "nodo"}]`.  On the `anotado` row,
+    #: because that is the row that belongs to the payload rather than to
+    #: the speech, and because a URL is read, never heard -- the persona
+    #: forbids dictating one, which left the person with no way to get at
+    #: it at all until this existed.
+    links: list = field(default_factory=list)
     #: Stable for the life of this entry, and the only safe way to say
     #: WHICH row changed.  Three things arrive after a row is first drawn
     #: — the rest of a streamed reply, the audio id once the provider has
@@ -160,7 +167,8 @@ class NullBoard:
     def heard(self, seconds: float, audio: Optional[str] = None) -> None: ...
     def spoke(self, words: str, anotado: str = "",
               audio: Optional[str] = None,
-              seconds: Optional[float] = None) -> None: ...
+              seconds: Optional[float] = None,
+              links: Optional[list] = None) -> None: ...
     # facts
     def memories(self, curated: int, raw: int) -> None: ...
     def catalogue(self, total: int) -> None: ...
@@ -213,12 +221,18 @@ class LineBoard(NullBoard):
 
     def spoke(self, words: str, anotado: str = "",
               audio: Optional[str] = None,
-              seconds: Optional[float] = None) -> None:
+              seconds: Optional[float] = None,
+              links: Optional[list] = None) -> None:
         # A turn can produce nothing at all, and the line says which
         # rather than printing an empty one.
         console.log(f"escriba: {words}" if words else "escriba: (sin texto)")
         if anotado:
             console.log(f"   ↳ {anotado}")
+        # PRINTED HERE, unlike in the TUI: a terminal is read, so a URL
+        # on a line is usable, and this is the only view a developer has.
+        for link in links or []:
+            console.log(f"     · {link.get('nombre', '?')}: "
+                        f"{link.get('url') or link.get('nodo') or '?'}")
 
     def memories(self, curated: int, raw: int) -> None:
         console.log(f"· waking with {curated} validated memories ({raw} raw)")
@@ -272,11 +286,12 @@ class StateBoard(NullBoard):
 
     def spoke(self, words: str, anotado: str = "",
               audio: Optional[str] = None,
-              seconds: Optional[float] = None) -> None:
+              seconds: Optional[float] = None,
+              links: Optional[list] = None) -> None:
         self.state.thinking = self.state.speaking = False
         self.state.add("spoke", words, audio=audio, seconds=seconds)
         if anotado:
-            self.state.add("anotado", anotado)
+            self.state.add("anotado", anotado, links=list(links or []))
         self._refreshed()
 
     def memories(self, curated: int, raw: int) -> None:

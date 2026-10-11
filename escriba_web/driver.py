@@ -62,7 +62,8 @@ def _iso(at: datetime) -> str:
 def entry_json(e) -> Dict[str, Any]:
     return {"id": e.id, "at": _iso(e.at), "kind": e.kind, "text": e.text,
             "seconds": e.seconds, "audio": e.audio, "repeats": e.repeats,
-            "silent": e.silent, "transcribing": e.transcribing}
+            "silent": e.silent, "transcribing": e.transcribing,
+            "links": list(getattr(e, "links", None) or [])}
 
 
 #: Which agents the page names.  The curator and the juez run too, but
@@ -1060,6 +1061,14 @@ class Person:
                                    playback="navegador", days=self.days(),
                                    engines=self.engines(),
                                    wiki=self.wiki_state(),
+                                   # How to link ONE wiki page, with
+                                   # `{id}` where the node id goes.  The
+                                   # page builds the href from it rather
+                                   # than knowing anything about kbwiki's
+                                   # routes; `None` and a node is shown
+                                   # as its id, which is the honest
+                                   # rendering of a thing with no address.
+                                   wiki_page=(self.wiki or {}).get("page"),
                                    # The upload ceiling travels to the
                                    # page so the refusal it shows and
                                    # the refusal the server makes are
