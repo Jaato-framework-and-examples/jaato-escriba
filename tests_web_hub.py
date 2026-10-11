@@ -302,6 +302,102 @@ async def main():
     check("every alert the server raises has copy in the page",
           sorted(published - spoken), [])
 
+    # ------------------------------------------------------------ kbwiki
+    # A LIVE BEARER TOKEN, so the things worth asserting are where it
+    # lands, who can read it, and that it is never written into anything
+    # that gets copied, committed or served.
+    import json as _json, os as _os, stat as _stat
+    from escriba_web import kbwiki
+
+    tdir = Path(tempfile.mkdtemp(prefix="escriba-tok-")) / "run"
+    # The principal is an authenticated claim, not a trusted one, and
+    # this one becomes a FILE NAME.
+    for hostile in ("../../etc/passwd", "/etc/shadow", "a/../../b", ".."):
+        got = kbwiki.env_path(tdir, hostile).resolve()
+        check(f"token file stays put: {hostile!r}", got.parent, tdir.resolve())
+
+    wsdir = Path(tempfile.mkdtemp(prefix="escriba-wsenv-"))
+    (wsdir / ".env").write_text("JAATO_PROFILE_SET=openrouter_gpt_audio\n")
+    # COMPOSED, NEVER REPLACED: without `JAATO_PROFILE_SET` the daemon
+    # cannot resolve the `escriba` profile and the session never opens,
+    # so a file holding only the token would trade the wiki for the
+    # conversation.
+    body = kbwiki.compose(wsdir / ".env", "tok-abc")
+    check("the workspace's own environment survives",
+          "JAATO_PROFILE_SET=openrouter_gpt_audio" in body, True)
+    check("and the token is added", f"{kbwiki.VAR}=tok-abc" in body, True)
+    check("no token, no line", kbwiki.VAR in kbwiki.compose(wsdir / ".env", None),
+          False)
+
+    tok = kbwiki.env_path(tdir, "ana@example.es")
+    kbwiki.write_env(tok, body)
+    check("the token file is private", _stat.S_IMODE(tok.stat().st_mode), 0o600)
+    check("in a private directory",
+          _stat.S_IMODE(tok.parent.stat().st_mode), 0o700)
+    check("and nothing half-written is left behind",
+          sorted(q.name for q in tdir.iterdir()), [tok.name])
+    kbwiki.write_env(tok, kbwiki.compose(wsdir / ".env", "tok-def"))
+    check("a rewrite replaces rather than appends",
+          tok.read_text().count(kbwiki.VAR), 1)
+
+    # The server entry names the var, never the value: the plugin
+    # resolves it at connect time, which is what lets a rotated token be
+    # picked up without a new session.
+    entry = kbwiki.server_entry("https://kbwiki.example/mcp")
+    check("the header reads a variable, not a token",
+          entry["mcpServers"]["kbwiki"]["headers"]["Authorization"],
+          "Bearer ${%s}" % kbwiki.VAR)
+    check("over streamable http", entry["mcpServers"]["kbwiki"]["type"], "http")
+    check("and no token can reach that file",
+          "tok-" in _json.dumps(entry), False)
+
+    # EVERY TOOL THE MODEL IS OFFERED IS A TOOL IT MAY RUN.  `plugins:`
+    # decides what it SEES and the permission whitelist decides what it
+    # may DO; with `defaultPolicy: deny` a tool in the first and not the
+    # second is offered and then silently refused, and a spoken turn has
+    # nowhere to show a refusal.
+    import yaml as _yaml
+    prof = _yaml.safe_load(
+        (Path(__file__).resolve().parent /
+         "template/.jaato/profiles/_base_escriba.yaml").read_text())
+    spec = [x for x in prof["plugins"] if x.startswith("mcp(")]
+    check("the escriba is given the mcp plugin", len(spec), 1)
+    offered = re.search(r"tools:\[([^\]]*)\]", spec[0]).group(1)
+    offered = [t.strip() for t in offered.split(",")]
+    allowed = prof["plugin_configs"]["permission"]["policy"]["whitelist"]["tools"]
+    check("every wiki tool offered may also be run",
+          sorted(set(offered) - set(allowed)), [])
+    check("and each is named the way the plugin names it",
+          [t for t in offered if not t.startswith("mcp__kbwiki__")], [])
+
+    # And the person who holds it: which file the session reads, and
+    # that a token arriving twice is written once.
+    wdir = Path(tempfile.mkdtemp(prefix="escriba-wiki-"))
+    (wdir / "root").mkdir()
+    who = Person("wiki-sub-77", root=wdir / "root", identity={"username": "ana"},
+                 wiki={"url": "https://kbwiki.example/mcp",
+                       "dir": str(wdir / "run")})
+    check("the session env is NOT the person's workspace",
+          who.ws in who.env_file.parents, False)
+    await who.credential("tok-1")
+    check("a token arriving writes the file", who.env_file.exists(), True)
+    stamp = who.env_file.stat().st_mtime_ns
+    await who.credential("tok-1")
+    check("the same token again writes nothing",
+          who.env_file.stat().st_mtime_ns, stamp)
+    await who.credential(None)
+    check("and no token at all writes nothing",
+          who.env_file.stat().st_mtime_ns, stamp)
+    who._wire_wiki()
+    wrote = _json.loads((who.ws / ".mcp.json").read_text())
+    check("the workspace gets the server entry, with the operator's url",
+          wrote["mcpServers"]["kbwiki"]["url"], "https://kbwiki.example/mcp")
+    check("and the token is not in it", "tok-1" in (who.ws / ".mcp.json").read_text(),
+          False)
+    # Unwired is the DEFAULT and must stay the old behaviour exactly.
+    check("with no wiki the session env is the workspace's own",
+          person.env_file, person.ws / ".env")
+
     # ------------------------------------------------------ path guards
     from escriba_web.app import ATT
     check("a real attachment id is accepted", bool(ATT.match("att_0123456789abcdef")), True)

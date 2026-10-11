@@ -757,6 +757,7 @@ in every person's directory.
 | `workspace.py` | One root, one directory per person, provisioned from `template/` on first authentication. |
 | `housekeeping.py` | Prunes each person's recordings to the disk ceiling without reaching inside the retention floor the profile declared. `python -m housekeeping --root … --budget-file …`. |
 | `transcribe.py` | What the person said, in text, from the mp3 already archived. Optional (`--extra stt`), off unless a model is named, and the transcript is stored beside the recording so the same retention clock governs both. |
+| `escriba_web/kbwiki.py` | What it takes for a person's escriba to reach the kbwiki AS THEM: where their access token is written so the MCP header can read it, and the `.mcp.json` entry that reads it. Off unless `--kbwiki-url` and `--token-dir` are both given. |
 | `escriba_web/` | The backend the page talks to: `hub.py` (one fan-out per person), `driver.py` (one workspace, session and archive per person; the turn itself is `run_escriba`'s, imported), `app.py` (routing). `python -m escriba_web --root … --dev-principal …`. |
 | `i18n.py`, `i18n/*.json` | Every user-facing string, one file per language, at key parity (`tests_i18n.py` is what enforces it). The page is handed the whole catalogue with each snapshot, so the strings and the data they label can never be a version apart. |
 | `web/index.html` | The web front end: one static page, no build step. Plain DOM like the peer's, with React loaded for one job — markdown a subagent wrote, rendered without raw HTML. `?mock=1` renders the design's fixtures and talks to no backend. |
@@ -766,6 +767,24 @@ in every person's directory.
 | `tests_web.js` | The web page's render paths, headless: it runs the page's own script against a DOM stub. `node tests_web.js`. It cannot say whether the page LOOKS right — that needs `?mock=1` and eyes. |
 | `tests_browser.py` | Where a CLICK goes, in a real browser: the real page served against a stub that records what arrives. `python tests_browser.py`, with `ESCRIBA_BROWSER=…` naming a browser if playwright's own chromium is not installed; the legs are SAID to be unrun rather than passing quietly. It exists because every other suite covered the upload path while the feature was dead — see below. |
 | `tests_render.py`, `tests_terminal.py`, `tests_workspace.py`, `tests_housekeeping.py`, `tests_board.py` | Every render path at four sizes; the terminal handover on a pty; provisioning and what must never leak between people; the two retention clocks and what the ceiling may never delete. All headless. |
+
+**The wiki is reached as the person, never as the service.** kbwiki
+serves each identity only what it has been granted, keyed on the same
+Keycloak `sub` that keys a workspace here, so the escriba's MCP
+connection carries the person's own access token. That token reaches
+the header through the session environment, and over IPC the session
+environment is the file named by `env_file` — `create_session` takes no
+env dict, and `session.reload_session_env` re-reads that same file.
+So the token reaches a file, and the only question is which: not the
+person's `workspace/.env`, which is the directory their own confined
+session runs in, but a 0600 file under `--token-dir`, which on the
+deployed host is tmpfs. The runner is still handed the environment —
+the header is resolved runner-side by design — so what the private
+file buys is that a live credential is not PERSISTED among the
+person's own data. Every request carries a fresh token and only a
+changed one is written, because oauth2-proxy renews the forwarded
+token when it handles a request and a held-open `/events` stream is one
+request it handles once.
 
 **A test can cover every line of a path that never runs.** The upload
 shipped dead: `web/index.html` declared `send` twice at the top level —

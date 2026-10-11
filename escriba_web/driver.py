@@ -49,6 +49,7 @@ import transcribe as _transcribe                                 # noqa: E402
 import workspace as _workspace                                   # noqa: E402
 from run_escriba import DRAIN, SessionGone, _reconcile, _turn   # noqa: E402
 
+from . import kbwiki                                             # noqa: E402
 from .hub import Hub                                             # noqa: E402
 
 
@@ -307,7 +308,8 @@ class Person:
 
     def __init__(self, principal: str, root: Path, limit: Optional[int] = None,
                  identity: Optional[dict] = None,
-                 scribe: Optional["_transcribe.Transcriber"] = None) -> None:
+                 scribe: Optional["_transcribe.Transcriber"] = None,
+                 wiki: Optional[dict] = None) -> None:
         #: Shared across everyone on this process: one loaded model, not
         #: one per person.  It is hundreds of megabytes.
         self.scribe = scribe
@@ -371,15 +373,64 @@ class Person:
         #: session can ask whether to reload the catalogue instead of
         #: raising AttributeError at the person.
         self._watcher = None
+        #: `{"url": ..., "dir": Path}` when the operator wired a kbwiki,
+        #: `None` when they did not.  ABSENT IS OFF, with nothing
+        #: defaulted: a URL this project invented would point the
+        #: person's own credential at a host nobody chose.
+        self.wiki = wiki
+        #: The token last written into this person's environment file.
+        #: Compared rather than re-written blindly, because every request
+        #: carries one and a `reload_session_env` per request would
+        #: reconnect the MCP server for no reason.
+        self._token: Optional[str] = None
         self._window: Optional[dict] = None
         self._spend: Optional[dict] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     # -- lifecycle -------------------------------------------------------
     @property
+    def env_file(self) -> Path:
+        """The file the daemon reads this session's environment from.
+
+        The workspace's own, until a kbwiki is wired -- then a private
+        one COMPOSED from it, because the person's access token has to
+        reach the MCP header and `session.reload_session_env` re-reads
+        this file and nothing else.  `kbwiki` says why it is not the
+        workspace's.
+        """
+        if self.wiki is None:
+            return self.ws / ".env"
+        return kbwiki.env_path(Path(self.wiki["dir"]), self.principal)
+
+    @property
     def conn(self) -> dict:
-        return dict(workspace_path=str(self.ws), env_file=str(self.ws / ".env"),
+        return dict(workspace_path=str(self.ws), env_file=str(self.env_file),
                     config_root=str(self.ws / ".jaato"), client_type=ClientType.API)
+
+    async def credential(self, token: Optional[str]) -> None:
+        """Take the access token this request arrived with, if it is new.
+
+        EVERY REQUEST, because a request is the ONLY thing that produces
+        a fresh one: oauth2-proxy renews the forwarded token when it
+        handles a request, and a held-open `/events` stream is one
+        request that it handles once.  So the token that matters is the
+        one on the turn's OWN request -- `/talk` carries it moments
+        before the escriba might call the wiki with it.
+
+        A RELOAD ONLY WHEN IT CHANGED.  `reload_session_env` reopens the
+        remote MCP servers whose headers read a var the reload touched,
+        so doing it per request would drop and remake the kbwiki
+        connection several times a turn.
+        """
+        if self.wiki is None or not token or token == self._token:
+            return
+        self._token = token
+        await asyncio.to_thread(
+            kbwiki.write_env, self.env_file,
+            kbwiki.compose(self.ws / ".env", token))
+        if self._scribe is None:
+            return                      # it will be read when the session opens
+        await self._scribe.client.reload_session_env()
 
     async def _consolidate(self) -> None:
         """Turn what was said into what will be remembered.
@@ -410,6 +461,21 @@ class Person:
         self.board.memories(held["curated"], held["raw"])
         self.board.note(self.say("note.consolidated"))
 
+    def _wire_wiki(self) -> None:
+        """This person's environment file and their workspace's `.mcp.json`.
+
+        The server entry is written by US rather than copied from the
+        template, because the URL is the operator's (`--kbwiki-url`) and
+        a production host hard-coded into this repository would be a
+        deployment nobody chose.  Rewritten every open so a changed flag
+        reaches an existing workspace, which a template copy would not.
+        """
+        kbwiki.write_env(self.env_file,
+                         kbwiki.compose(self.ws / ".env", self._token))
+        (self.ws / ".mcp.json").write_text(
+            json.dumps(kbwiki.server_entry(self.wiki["url"]), indent=2) + "\n",
+            encoding="utf-8")
+
     async def open(self) -> None:
         """Open the session and start the clock on this conversation.
 
@@ -418,6 +484,12 @@ class Person:
         the session is created, so this is the only moment that can get
         last time's memories into today's greeting.
         """
+        # BEFORE THE SESSION, both of them: the daemon reads `env_file`
+        # when it bootstraps and the MCP plugin reads `.mcp.json` when it
+        # loads, so a file written afterwards is a file this session
+        # never sees.
+        if self.wiki is not None:
+            await asyncio.to_thread(self._wire_wiki)
         await self._consolidate()
         held = memory.counts(self.ws)
         self.board.memories(held["curated"], held["raw"])

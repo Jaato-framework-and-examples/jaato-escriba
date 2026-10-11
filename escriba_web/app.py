@@ -134,9 +134,21 @@ async def person_of(request: Request) -> Person:
         identity = {"username": request.headers.get("x-forwarded-preferred-username"),
                     "email": request.headers.get("x-forwarded-email")}
         person = Person(who, root=Path(str(CONFIG["root"])), limit=CONFIG.get("limit"),
-                        identity=identity, scribe=CONFIG.get("scribe"))
+                        identity=identity, scribe=CONFIG.get("scribe"),
+                        wiki=CONFIG.get("wiki"))
         PEOPLE[who] = person
+        # BEFORE the session is opened, so the first one already has a
+        # token rather than reaching the wiki with none and learning it
+        # on a 401.
+        await person.credential(request.headers.get("x-forwarded-access-token"))
         asyncio.create_task(_open(person))
+        return person
+    # THE TOKEN IS TAKEN FROM EVERY REQUEST, because a request is the only
+    # thing that produces a fresh one: oauth2-proxy renews the forwarded
+    # token when it handles one, and the held-open `/events` stream is a
+    # single request it handles once.  `credential` returns immediately
+    # unless the value actually changed.
+    await person.credential(request.headers.get("x-forwarded-access-token"))
     return person
 
 
@@ -407,6 +419,21 @@ def main(argv=None) -> int:
                         "model: tiny (~75 MB), base (~145 MB), small (~480 MB), "
                         "downloaded on first use. Omitted, nothing is "
                         "transcribed and no model is loaded")
+    # ABSENT IS OFF, and nothing is defaulted.  A URL this project
+    # invented would point each person's own access token at a host
+    # nobody chose; a token directory it invented would put a live
+    # credential somewhere the operator did not agree to.  Both or
+    # neither.
+    p.add_argument("--kbwiki-url", metavar="URL",
+                   help="the kbwiki MCP endpoint each person's escriba may "
+                        "call AS THEM, with the access token the proxy "
+                        "forwards. Needs --token-dir. Omitted, no .mcp.json "
+                        "is written and the wiki panel stays unwired")
+    p.add_argument("--token-dir", metavar="DIR",
+                   help="where each person's session environment file is "
+                        "written, 0600 in a 0700 directory. NOT the "
+                        "workspace: it holds a live bearer token, so put it "
+                        "on tmpfs (/run/escriba). Needs --kbwiki-url")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8080)
     args = p.parse_args(argv)
@@ -416,6 +443,14 @@ def main(argv=None) -> int:
     CONFIG["limit"] = None
     CONFIG["scribe"] = (_transcribe.Transcriber(args.transcribe)
                         if args.transcribe else None)
+    if bool(args.kbwiki_url) != bool(args.token_dir):
+        print("escriba_web: --kbwiki-url and --token-dir are given together "
+              "or not at all: a wiki with nowhere to put the token cannot be "
+              "called, and a token directory with no wiki holds a credential "
+              "for nothing", file=sys.stderr)
+        return 2
+    CONFIG["wiki"] = ({"url": args.kbwiki_url, "dir": args.token_dir}
+                      if args.kbwiki_url else None)
     if args.budget_file:
         try:
             CONFIG["limit"] = _housekeeping.ceiling(Path(args.budget_file))

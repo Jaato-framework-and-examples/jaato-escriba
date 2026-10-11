@@ -122,6 +122,30 @@ plugins:
   # this.
   - "file_edit(mode:preload, tools:[readFile])"
 
+  # THE PERSON'S OWN WIKI, CALLED AS THEM.  kbwiki serves each identity
+  # only what it has been granted, keyed on the same Keycloak `sub` this
+  # application keys a workspace on, so the connection carries the
+  # person's own access token and never a service credential -- see
+  # `escriba_web/kbwiki.py` for where that token lives and why it is not
+  # in the workspace.
+  #
+  # SEVEN OF TWENTY-SEVEN.  Every tool name is a word the voice tier may
+  # read aloud, and a model choosing between 27 similar names by ear is
+  # choosing badly; these are the five that read and the two that
+  # contribute.  Nothing here can create a template or run a stage,
+  # which are the most expensive things a mishearing could reach.
+  #
+  # The names are the MCP plugin's, not kbwiki's: `_normalize_tool_name`
+  # funnels every tool through `mcp__<server>__<tool>` (mcp/plugin.py:629)
+  # and `<server>` is the key in `.mcp.json`, which this project writes
+  # as `kbwiki`.
+  #
+  # The server entry itself is NOT here and not in the template: it
+  # names a host, and the host is the operator's (`--kbwiki-url`).  With
+  # no `.mcp.json` in the workspace this plugin loads and offers
+  # nothing, which is the unwired state the dashboard already reports.
+  - "mcp(mode:preload, tools:[mcp__kbwiki__ask_librarian, mcp__kbwiki__kb_list_bundles, mcp__kbwiki__kb_list_nodes, mcp__kbwiki__kb_get_node, mcp__kbwiki__kb_get_node_content, mcp__kbwiki__kb_declare_source, mcp__kbwiki__request_upload])"
+
 # Drop the instruction layers the framework injects.  This agent
 # converses; the platform constants (task-completion, parallel batching,
 # turn summaries) describe work it does not do — and an audio model pays
@@ -286,6 +310,18 @@ plugin_configs:
           - web_fetch
           - spawn_subagent
           - list_active_subagents
+          # The kbwiki tools, named one by one.  `plugins:` decides what
+          # the model can SEE and this decides what it may RUN; with
+          # `defaultPolicy: deny` a tool missing from here is offered and
+          # then silently refused, and a spoken turn has nowhere to show
+          # the refusal.
+          - mcp__kbwiki__ask_librarian
+          - mcp__kbwiki__kb_list_bundles
+          - mcp__kbwiki__kb_list_nodes
+          - mcp__kbwiki__kb_get_node
+          - mcp__kbwiki__kb_get_node_content
+          - mcp__kbwiki__kb_declare_source
+          - mcp__kbwiki__request_upload
 
 # ---------------------------------------------------------------- isolation
 # Kernel-enforced confinement, per session.  OFF BY DEFAULT in the
