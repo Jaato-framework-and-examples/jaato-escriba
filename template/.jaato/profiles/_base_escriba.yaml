@@ -94,9 +94,33 @@ plugins:
   # Measured: documentalista writes fine as a direct session and not at
   # all as escriba's subagent, because the whitelist lived on the child's
   # profile and the plugin answering was the parent's.
-  # This grants escriba nothing: `file_edit` is not in its plugin list at
-  # all, so it has no write tool to approve. The subset stays the boundary.
+  # This grants escriba no WRITE tool: `file_edit` below is subset to
+  # `readFile`, so there is nothing of its to approve. The subset stays
+  # the boundary.
   - "permission(mode:preload)"
+  # To READ a document the person staged into the workspace.
+  #
+  # WITHOUT THIS A STAGED DOCUMENT IS UNREADABLE, and that is a property
+  # of the reference type rather than a preference: a `local` source is
+  # answered by `selectReferences` with a path and the instruction "Read
+  # this file using the CLI tool" (references/models.py:479), so an
+  # escriba with no reader can list the document, select it, and then
+  # have nothing to open it with. `inline` would need no tool — it hands
+  # back the text — but then every staged document enters the context
+  # whole, with no way to read it in pages.
+  #
+  # ONE TOOL, for the reason the whole plugin list is subset: every name
+  # in the schema is a word the voice tier can read out loud. `readFile`
+  # is also the one file_edit tool that is AUTO-APPROVED
+  # (file_edit/plugin.py:1378, with undoFileChange/restoreFile/
+  # listBackups), so the whitelist below needs no entry and a spoken
+  # read cannot stall waiting for an approval nobody can give.
+  #
+  # It reads more than text: images and PDFs come back as multimodal
+  # attachments rather than as decoded bytes (plugin.py:1669, :1703), so
+  # what the person can usefully stage is bounded by the MODEL, not by
+  # this.
+  - "file_edit(mode:preload, tools:[readFile])"
 
 # Drop the instruction layers the framework injects.  This agent
 # converses; the platform constants (task-completion, parallel batching,

@@ -297,10 +297,15 @@ class Observer:
             return
         self.found.extend(names)
         self._board.found(names)
-        await self._reload()
+        await self.reload()
 
-    async def _reload(self) -> None:
+    async def reload(self) -> None:
         """Let the plugin see what was just written, without another session.
+
+        PUBLIC, because a second writer needs it: `staging` writes an
+        entry when the person uploads a document, and that entry has to
+        reach the conversation already in progress — the same problem
+        this solved for the judge's finds, with the same answer.
 
         The catalogue is read at startup (`set_workspace_path` ->
         `_reload_catalog`, references/plugin.py:288) and then stays put: a

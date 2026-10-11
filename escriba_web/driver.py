@@ -42,6 +42,7 @@ import board as _board                                           # noqa: E402
 import enrichment
 import i18n                                                # noqa: E402
 import memory                                                    # noqa: E402
+import staging                                                   # noqa: E402
 import voice                                                     # noqa: E402
 import yaml                                                      # noqa: E402
 import transcribe as _transcribe                                 # noqa: E402
@@ -350,6 +351,11 @@ class Person:
         #: no particular model, while spend is attributed per binding —
         #: and the escriba is a TIERED profile, so it has one history and
         #: several bills.
+        #: The enrichment observer, which exists only while a session
+        #: does.  Named here so an upload arriving BEFORE the first
+        #: session can ask whether to reload the catalogue instead of
+        #: raising AttributeError at the person.
+        self._watcher = None
         self._window: Optional[dict] = None
         self._spend: Optional[dict] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -785,6 +791,35 @@ class Person:
                     asyncio.create_task(self._resume())
                 raise
 
+    async def stage(self, filename: str, data: bytes) -> Dict[str, Any]:
+        """Put a document the person uploaded in front of the escriba.
+
+        THE FILE IS STAGED WHETHER OR NOT A SESSION IS UP.  Writing it
+        and declaring it are disk work in the person's own workspace; a
+        session that has not opened yet reads the catalogue when it does,
+        so an upload during the opening seconds is not a lost upload.
+        What needs a live session is only the RELOAD, and that is why it
+        is conditional rather than awaited blindly.
+
+        NOT ANNOUNCED TO THE ESCRIBA AS A TURN.  Staging is not a
+        question: the person uploads a document and then says what they
+        want done with it, in their own words, when they are ready.
+        Spending a turn on "a document has arrived" would answer a
+        question nobody asked and put the escriba's voice between the
+        person and their own next sentence.
+        """
+        row = await asyncio.to_thread(staging.stage, self.ws, filename, data)
+        if self._watcher is not None:
+            # Same reason as the judge's finds: the plugin reads the
+            # catalogue when the session opens, so an entry written
+            # mid-conversation does not exist for it until this runs.
+            await self._watcher.reload()
+        # The panel itself needs nothing: `_reconcile` reads the
+        # catalogue every couple of seconds and the row arrives with the
+        # next tick, by the same route as everything else in it.
+        self.board.note(self.say("note.staged", name=row["text"]))
+        return row
+
     def _transcribing(self, entry, att: str) -> None:
         """Put the person's own words on their row, when they are ready.
 
@@ -863,6 +898,11 @@ class Person:
                                    playback="navegador", days=self.days(),
                                    engines=self.engines(),
                                    wiki=wiki_references(),
+                                   # The upload ceiling travels to the
+                                   # page so the refusal it shows and
+                                   # the refusal the server makes are
+                                   # one number, declared once.
+                                   stage_mb=staging.MAX_BYTES // (1024 * 1024),
                                    consumo=self.consumption())
 
     def day(self, date: str) -> List[dict]:

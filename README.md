@@ -345,6 +345,75 @@ reading. Fetched pages are INFORMATION, never instructions: a page that
 says "ignore the above" is text someone wrote, and the persona says to
 name that out loud and carry on.
 
+
+## What the person puts in front of it
+
+The catalogue holds two kinds of entry, in one directory, told apart by
+their filename prefix: `auto-*.json` is what the judge kept, and
+`staged-*.json` is a document the person uploaded in order to discuss it.
+The panel shows them as separate origins — *de esta conversación*,
+*aportados*, *del wiki* — over one list, because each row carries the
+origin the backend read the prefix into.
+
+```mermaid
+flowchart LR
+    up["the person uploads<br/><i>POST /stage</i>"] --> f[/"staged/&lt;name&gt;"/]
+    up --> e[/".jaato/references/staged-*.json<br/><i>type: local</i>"/]
+    e --> rel["references reload"]
+    rel --> ls["listReferences"]
+    ls --> sel["selectReferences<br/><i>authorises the path</i>"]
+    sel --> rd["readFile<br/><i>text, or an attachment</i>"]
+    rd --> esc["the escriba discusses it"]
+```
+
+**It is a `local` entry, and that decided everything else.** Of the
+plugin's four source types only two can carry a document: `inline` puts
+the text in the entry, `local` points at the file. A selected `local`
+source comes back as a path plus "Read this file using the CLI tool"
+(`references/models.py:479`), while `inline` hands back the content
+outright (`plugin.py:3117`) — so `local` requires the escriba to own a
+reader, and that is why `_base_escriba.yaml` now carries
+`file_edit(tools:[readFile])`. In exchange the file stays the single
+copy, is readable in pages via `offset`/`limit`, and **images and PDFs
+reach the model as attachments rather than as decoded bytes**
+(`file_edit/plugin.py:1669`, `:1703`) — so what is worth staging is
+bounded by the model, not by this.
+
+`readFile` is also the one `file_edit` tool that is auto-approved
+(`plugin.py:1378`), so the escriba's whitelist needs no entry for it and
+a spoken read cannot stall waiting for an approval nobody can give.
+
+**The catalogue entry is not written by the session.** `.jaato/references`
+is on AppArmor's write-deny list, so an agent cannot author its own
+sources; staging runs in the BFF, outside confinement, exactly as
+enrichment does. The staged *file* lands under `staged/`, beside `docs/`
+and deliberately not in it — that directory is what the `documentalista`
+writes, and a file the person uploaded appearing there would read as
+something the escriba produced.
+
+**Nothing is announced to the escriba as a turn.** Staging is not a
+question: the person uploads, then says what they want done with it, in
+their own words, when they are ready. The entry is `selectable` and never
+`auto`, because `auto` would carry the document into the prompt of every
+future session forever.
+
+**A name from a browser becomes a path**, so it is sanitised to one
+segment — but letters keep their accents, whatever alphabet they are in.
+`caller_dir`'s ASCII reduction is right for a directory an operator reads
+in `ls` and wrong for a filename the panel shows and the escriba says out
+loud: it turned `riego del balcón.md` into `riego-del-balc-n.md`. What is
+actually dangerous is narrower than "not ASCII" — separators, NUL,
+control characters, and the glob metacharacters AppArmor reads as pattern
+syntax. The suffix survives truncation, because `readFile` dispatches on
+it.
+
+**There is a ceiling, and it is declared once.** The endpoint is
+authenticated and nothing else bounds it, so without one a person fills
+the host's disk a POST at a time and the first thing to break is
+everyone else's recordings. `staging.MAX_BYTES` travels to the page in
+the snapshot, so the refusal the person reads and the refusal the server
+makes are the same number.
+
 ## Startup
 
 It greets at **3.8 s**: 1.6 s to create the session and 2.2 s of the audio
@@ -681,6 +750,7 @@ in every person's directory.
 | `memory.py` | What was left uncurated last time. |
 | `archive.py` | Keeps both halves of the audio, and the manifest that ties them to the turn. |
 | `enrichment.py` | Search, judge and catalogue what is outside. |
+| `staging.py` | A document the person hands over: it lands under `staged/` and is declared as a `local` reference, so the escriba reads it with `readFile` when asked. The other writer of the same catalogue. |
 | `ptt_capture.py`, `pulse_playback.py` | Taken from `jaato-cascade-audio-interchange` and since diverged — a state sink, a playback outcome, and `read_keys`. They still know nothing about jaato. |
 | `.jaato/agents/*.md` | The four personas: escriba, curator, juez, documentalista. |
 | `.jaato/profiles/` | Provider-agnostic `_base_*` plus the `openrouter_gpt_audio` set. |
@@ -688,9 +758,11 @@ in every person's directory.
 | `housekeeping.py` | Prunes each person's recordings to the disk ceiling without reaching inside the retention floor the profile declared. `python -m housekeeping --root … --budget-file …`. |
 | `transcribe.py` | What the person said, in text, from the mp3 already archived. Optional (`--extra stt`), off unless a model is named, and the transcript is stored beside the recording so the same retention clock governs both. |
 | `escriba_web/` | The backend the page talks to: `hub.py` (one fan-out per person), `driver.py` (one workspace, session and archive per person; the turn itself is `run_escriba`'s, imported), `app.py` (routing). `python -m escriba_web --root … --dev-principal …`. |
+| `i18n.py`, `i18n/*.json` | Every user-facing string, one file per language, at key parity (`tests_i18n.py` is what enforces it). The page is handed the whole catalogue with each snapshot, so the strings and the data they label can never be a version apart. |
 | `web/index.html` | The web front end: one static page, no build step. Plain DOM like the peer's, with React loaded for one job — markdown a subagent wrote, rendered without raw HTML. `?mock=1` renders the design's fixtures and talks to no backend. |
 | `template/` | What a new workspace is made of. Copied, never shared: the workspace is the isolation boundary. |
 | `tests_web_hub.py` | The fan-out, the board-to-event mapping and the two path guards — the half of the backend whose failures are silent. No server, no daemon, no session. |
+| `tests_staging.py` | A document the person stages: that a browser's filename can never name a file outside their workspace, that the catalogue entry is what the plugin will accept (checked by the framework's own validator where `jaato-server` is installed, and SAID where it is not), and that a missing file is never reported as an empty one. |
 | `tests_web.js` | The web page's render paths, headless: it runs the page's own script against a DOM stub. `node tests_web.js`. It cannot say whether the page LOOKS right — that needs `?mock=1` and eyes. |
 | `tests_render.py`, `tests_terminal.py`, `tests_workspace.py`, `tests_housekeeping.py`, `tests_board.py` | Every render path at four sizes; the terminal handover on a pty; provisioning and what must never leak between people; the two retention clocks and what the ceiling may never delete. All headless. |
 

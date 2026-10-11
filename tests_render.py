@@ -15,6 +15,21 @@ ITEMS = [{"text": f"item {i}", "id": f"id{i}", "at": "2026-09-11 13:30",
           "tags": ["a", "b"], "content": "cuerpo " * 30, "url": "https://x/y",
           "confidence": 0.9, "uses": 2} for i in range(30)]
 
+#: What a STAGED document looks like in a panel: the one row shape the
+#: fixtures above do not have — no url, no content, a size instead.  The
+#: detail popup is built from `field()`, which skips an empty value
+#: ("absent is absent, not —"), and nothing proved that until this row
+#: existed.
+STAGED = [{"text": "presupuesto riego.md", "id": "staged-3798125eb6",
+           "at": "2026-10-11T10:16:09", "tags": ["presupuesto", "riego"],
+           "origin": "staged", "size": 18432, "url": "",
+           "path": "staged/presupuesto riego.md"},
+          # And one whose file is gone: `size` is None, which is not zero.
+          {"text": "plano balcón.pdf", "id": "staged-aa01bb02cc",
+           "at": "2026-10-10T18:02:00", "tags": [], "origin": "staged",
+           "size": None, "url": "", "path": "staged/plano balcón.pdf"}]
+
+
 def states():
     """(label, setup) for every branch the renderer has."""
     def base(b):
@@ -30,6 +45,16 @@ def states():
     yield "list", lambda b: (base(b), b.open())
     yield "list+moved", lambda b: (base(b), b.open(), [b.move(1) for _ in range(9)])
     yield "detail", lambda b: (base(b), b.open(), b.move(3), b.open())
+    # The popup opens whichever panel has FOCUS, and that starts on
+    # `memoria` — so the move is what makes these about staged rows at
+    # all. Without it both fixtures rendered the memories again.
+    def refs(b):
+        base(b)
+        b.listing("referencias", STAGED)
+        b.move(1)                      # memoria -> referencias
+    yield "staged", refs
+    yield "staged list", lambda b: (refs(b), b.open())
+    yield "staged detail", lambda b: (refs(b), b.open(), b.open())
     yield "empty board", lambda b: None
     yield "empty list", lambda b: (b.listing("memoria", []), b.open())
 

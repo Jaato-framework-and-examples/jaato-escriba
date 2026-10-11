@@ -301,6 +301,9 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
 .md a{word-break:break-word}
 .md table{border-collapse:collapse;width:100%;font-size:15px}
 .md th,.md td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+.upload{padding:var(--space-3);border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:var(--space-2)}
+.upload .note{font-size:12px;color:var(--muted)}
+.upload .bad{font-size:12px;color:var(--bad)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 </style>
 </head>
@@ -393,6 +396,15 @@ const S = {
   //: fact here — a page that has spoken to nothing knows no name.
   who: "",
   tab: "memoria", refTab: "local", engTab: "motor", sel: null, reader: false,
+  //: The upload in flight, and whatever the last one said. Kept here
+  //: rather than in the DOM because the panel is rebuilt wholesale every
+  //: two seconds and a message written into it would vanish mid-read.
+  staging: { busy: false, msg: "" },
+  //: The upload ceiling, in MB, as the server declares it. Unknown until
+  //: the first snapshot: a number typed here would be a second copy of
+  //: `staging.MAX_BYTES`, free to drift from the one that does the
+  //: refusing.
+  stageMb: null,
   // The active catalogue, handed over with each snapshot.  Empty until
   // the first one arrives, which is why `tx` renders the KEY rather than
   // guessing: a Spanish default baked in here would be a second
@@ -943,7 +955,8 @@ function renderTabs() {
 // The detail survives the 2-second reconciliation by being keyed on the
 // item's own identity, not its position: the list is replaced wholesale
 // every tick, and an index would open a different memory each time.
-const keyOf = (tab, it) => tab === "memoria" ? it.id : tab === "referencias" ? it.url : it.path;
+const keyOf = (tab, it) => tab === "memoria" ? it.id
+                         : tab === "referencias" ? (it.id || it.url) : it.path;
 function renderPanel() {
   const box = $("panel");
   box.textContent = "";
@@ -962,18 +975,28 @@ function renderPanel() {
 }
 
 //: Which rows the panel is listing right now.  For references that is
-//: one of the two ORIGINS, which are different kinds of thing: found
-//: here by the judge, or granted to this person in the wiki.
+//: one of the three ORIGINS, which are different kinds of thing: found
+//: here by the judge, granted to this person in the wiki, or handed over
+//: by the person themselves.
+//
+//: The first and the third arrive in ONE list and are told apart by the
+//: `origin` the server put on each row — the same field the backend
+//: reads the catalogue's two filename prefixes into. A second transport
+//: for the third tab would be a second thing to keep in step.
 function shown() {
   if (S.tab !== "referencias") return S.items[S.tab] || [];
-  return S.refTab === "wiki" ? (S.wiki.rows || []) : (S.items.referencias || []);
+  if (S.refTab === "wiki") return S.wiki.rows || [];
+  return staged(S.refTab === "staged");
 }
+const staged = (want) => (S.items.referencias || [])
+  .filter((r) => (r.origin === "staged") === want);
 
 function subTabs(box) {
   const w = S.wiki || { state: "sin conectar", rows: [] };
   const sub = el("div", "tabs sub");
   for (const [key, label, n] of [
-        ["local", tx("refs.local"), String((S.items.referencias || []).length)],
+        ["local", tx("refs.local"), String(staged(false).length)],
+        ["staged", tx("refs.staged"), String(staged(true).length)],
         ["wiki", tx("refs.wiki"), w.state === "ok" ? String((w.rows || []).length) : w.state]]) {
     const b = el("button", key === S.refTab ? "on" : "");
     b.append(el("span", null, label), el("span", "n", n));
@@ -987,21 +1010,23 @@ function subTabs(box) {
 function row(it) {
   const b = el("button", "item");
   const meta = S.tab === "memoria" ? [it.at, (it.tags || []).join(", ")].filter(Boolean).join(" · ")
-             : S.tab === "referencias" ? host(it.url)
+             : S.tab === "referencias" ? (it.origin === "staged" ? weight(it) : host(it.url))
              : [it.at, it.path].filter(Boolean).join(" · ");
   b.append(el("span", "text", it.text), el("span", "meta", meta));
   b.onclick = () => { S.sel = keyOf(S.tab, it); renderPanel(); };
   return b;
 }
 
-// TWO ORIGINS, TWO TABS.  A reference found here — searched from a
-// memory's tags and kept by the judge — and one the person is granted
-// in the wiki are different kinds of thing, and which one you are
-// looking at should not need reading a row to tell.  The wiki tab also
-// carries its own STATE in place of a count, because an empty list and
-// a server that did not answer look identical and mean opposite things.
+// THREE ORIGINS, THREE TABS.  A reference found here — searched from a
+// memory's tags and kept by the judge — one the person is granted in the
+// wiki, and one the person handed over themselves are different kinds of
+// thing, and which one you are looking at should not need reading a row
+// to tell.  The wiki tab also carries its own STATE in place of a count,
+// because an empty list and a server that did not answer look identical
+// and mean opposite things.
 function references(box, rows) {
   const w = S.wiki || { state: "sin conectar", rows: [], detail: "" };
+  if (S.refTab === "staged") box.append(uploader());
   if (S.refTab === "wiki" && w.state !== "ok") {
     box.append(el("div", "empty", w.detail || w.state));
     return;
@@ -1015,6 +1040,60 @@ function references(box, rows) {
   for (const it of rows) box.append(row(it));
 }
 function host(url) { try { return new URL(url).host; } catch (e) { return url; } }
+
+// How big a staged document is, or that it is GONE.  A missing file is
+// said rather than drawn as zero bytes: the catalogue still offers the
+// document, and "0 B" would read as an empty one.
+function weight(it) {
+  if (it.size == null) return tx("stage.missing");
+  const kb = it.size / 1024;
+  return kb < 1 ? it.size + " B"
+       : kb < 1024 ? dec(kb, 1) + " KB"
+       : dec(kb / 1024, 1) + " MB";
+}
+
+// WHAT PUTS A DOCUMENT IN FRONT OF THE ESCRIBA.  One control, on the one
+// tab whose rows it creates: an upload button anywhere else would offer
+// to add to a list the person cannot add to.
+function uploader() {
+  const box = el("div", "upload");
+  const input = el("input");
+  input.type = "file";
+  input.id = "stage-file";
+  input.hidden = true;
+  input.onchange = () => { if (input.files && input.files[0]) send(input.files[0]); };
+  const b = el("button", "primary", S.staging.busy ? tx("stage.busy") : tx("stage.add"));
+  b.id = "stage-btn";
+  b.disabled = S.staging.busy;
+  b.onclick = () => input.click();
+  box.append(input, b, el("div", "note", tx("stage.hint")));
+  if (S.staging.msg) box.append(el("div", "bad", S.staging.msg));
+  return box;
+}
+
+// The upload itself.  The ROW is not added here: the panel reads the
+// catalogue on its own tick and the row arrives by the same route as
+// every other reference, so there is one writer of that list and no
+// chance of a row the server does not have.
+async function send(file) {
+  S.staging.busy = true; S.staging.msg = ""; renderPanel();
+  try {
+    if (MOCK) { await new Promise((r) => setTimeout(r, 300)); return; }
+    const body = new FormData();
+    body.append("document", file, file.name);
+    const res = await fetch("/stage", { method: "POST", body });
+    if (res.status === 413) {
+      S.staging.msg = tx("stage.too_large", { mb: S.stageMb });
+    } else if (!res.ok) {
+      S.staging.msg = tx("stage.failed");
+    }
+  } catch (e) {
+    S.staging.msg = tx("stage.failed");
+  } finally {
+    S.staging.busy = false;
+    renderPanel();
+  }
+}
 
 function detailOf(it) {
   const d = el("div", "detail");
@@ -1038,6 +1117,11 @@ function detailOf(it) {
     b.append(el("div", "k", "usos"), el("div", "v", String(it.uses ?? "—")));
     two.append(a, b);
     d.append(two, el("div", "mono", [it.id, it.at].filter(Boolean).join(" · ")));
+  } else if (S.tab === "referencias" && it.origin === "staged") {
+    d.append(el("div", "mono", [it.path, weight(it)].filter(Boolean).join(" · ")));
+    const tags = el("div", "tags");
+    for (const t of it.tags || []) tags.append(el("span", "tag neutral", t));
+    d.append(tags, el("div", "note", tx("stage.hint")));
   } else if (S.tab === "referencias") {
     const a = el("a", null, it.url);
     a.href = it.url; a.target = "_blank"; a.rel = "noopener noreferrer";
@@ -1567,6 +1651,7 @@ function onEvent(kind, data) {
     S.archive_dir = data.archive_dir || null;
     S.playback = data.playback || S.playback;
     S.who = data.who || S.who;
+    S.stageMb = data.stage_mb != null ? data.stage_mb : S.stageMb;
     S.days = data.days || S.days;
     S.engines = data.engines || S.engines;
     S.wiki = data.wiki || S.wiki;
@@ -1684,7 +1769,7 @@ function mockState() {
   const E = (at, kind, rest) => Object.assign({ id: ++n, at, kind, text: "", repeats: 1 }, rest);
   return {
     session_at: d(0, 9, 12), archive_dir: "20261009_091200", playback: "navegador",
-    who: "ana.ruiz@ejemplo.es",
+    who: "ana.ruiz@ejemplo.es", stage_mb: 25,
     status: { status: "listening", query: null },
     // Deliberately PARTIAL: no cache_creation_tokens and no cost in the
     // totals, so the mock exercises "absent is not zero" rather than a
@@ -1743,9 +1828,16 @@ function mockState() {
         { id: "mem_0417", text: "No hay grifo en el balcón; la toma más cercana es la cocina", at: "8 oct 21:42", tags: ["huerto", "riego", "casa"], content: "Sin toma de agua exterior. La cocina está a unos 6 metros del balcón.", confidence: 0.88, uses: 2 },
         { id: "mem_0412", text: "El balcón da al oeste, sol directo desde las 15:00", at: "6 oct 19:04", tags: ["huerto", "balcón"], content: "Orientación oeste. En agosto la evaporación es alta por la tarde; regar al amanecer.", confidence: 0.92, uses: 4 },
       ],
+      // `origin` on EVERY row, as the backend sends it: the three
+      // reference tabs are a filter over one list, so a row without it
+      // is a row the filter has to guess about.  The last one is
+      // deliberately a staged document whose file is GONE, so the mock
+      // exercises "absent is not zero" here too.
       referencias: [
-        { text: "Riego por gravedad con depósito elevado para terrazas", url: "https://www.infojardin.com/foro/riego-gravedad-deposito" },
-        { text: "Cálculo de necesidades hídricas del tomate en maceta", url: "https://www.agroes.es/cultivos-agricultura/tomate-riego" },
+        { id: "auto-1f2e3d4c5b", text: "Riego por gravedad con depósito elevado para terrazas", url: "https://www.infojardin.com/foro/riego-gravedad-deposito", origin: "local" },
+        { id: "auto-6a7b8c9d0e", text: "Cálculo de necesidades hídricas del tomate en maceta", url: "https://www.agroes.es/cultivos-agricultura/tomate-riego", origin: "local" },
+        { id: "staged-3798125eb6", text: "presupuesto-riego.md", url: "", at: "2026-10-09T09:20:00", size: 18432, tags: ["presupuesto", "riego"], origin: "staged", path: "staged/presupuesto-riego.md" },
+        { id: "staged-aa01bb02cc", text: "plano-balcon.pdf", url: "", at: "2026-10-08T18:02:00", size: null, tags: ["plano", "balcon"], origin: "staged", path: "staged/plano-balcon.pdf" },
       ],
       documentos: [
         { text: "Riego por goteo en un balcón sin grifo", path: "docs/riego-por-goteo-balcon.md", at: "9 oct 09:16" },

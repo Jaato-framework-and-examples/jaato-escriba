@@ -37,6 +37,7 @@ import i18n                                                      # noqa: E402
 import archive as _archive                                         # noqa: E402
 import housekeeping as _housekeeping                               # noqa: E402
 import transcribe as _transcribe                                   # noqa: E402
+import staging as _staging                                        # noqa: E402
 import workspace as _workspace                                     # noqa: E402
 
 from .driver import NotReady, Person                               # noqa: E402
@@ -245,6 +246,29 @@ async def talk(request: Request, audio: UploadFile) -> StreamingResponse:
             yield frame("status", person.board.status())
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/stage")
+async def stage(request: Request, document: UploadFile):
+    """Take a document the person wants to discuss, and declare it.
+
+    A PLAIN JSON REPLY, not a stream: unlike `/talk` there is no turn to
+    narrate — the file is written, the catalogue entry beside it, and the
+    panel picks the row up on its next tick.  What the browser needs back
+    is whether the upload was accepted.
+
+    THE CEILING IS REPORTED, NOT ENFORCED SILENTLY.  A refused upload is
+    the one failure a person can do something about (export it smaller,
+    split it), so it answers 413 with the ceiling in it rather than
+    truncating the file to fit — a document discussed as if whole, when
+    half of it was dropped, is worse than a refusal.
+    """
+    person = await person_of(request)
+    blob = await document.read()
+    try:
+        return await person.stage(document.filename or "", blob)
+    except _staging.TooLarge as exc:
+        raise HTTPException(413, f"{exc}") from exc
 
 
 @app.get("/audio/{att_id}")

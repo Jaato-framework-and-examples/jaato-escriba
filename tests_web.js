@@ -135,7 +135,7 @@ const blocks = [...html.matchAll(/<script>\n([\s\S]*?)\n<\/script>/g)].map((m) =
 if (!blocks.length) { console.log("  FAIL could not find the application script in web/index.html"); process.exit(1); }
 const ctx = vm.createContext(sandbox);
 vm.runInContext(blocks[blocks.length - 1] +
-  "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, renderEngines};", ctx);
+  "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, renderEngines, keyOf};", ctx);
 const T = sandbox.__test;
 
 // ------------------------------------------------ the page before the hub
@@ -379,7 +379,41 @@ check("an unwired wiki says so", showWiki().includes("no hay ninguna fuente MCP"
 check("switching back shows what was found here",
       (() => { T.S.refTab = "local"; T.renderPanel();
                return panel.textContent.includes("no hay ninguna fuente MCP"); })(), false);
-T.S.tab = "memoria"; T.renderPanel();
+
+// ------------------------------------------- and a third: what the
+// person staged themselves.  The three tabs are a FILTER over one list
+// (each row carries its `origin`), so what must hold is that a tab
+// shows only its own rows — and that a staged row can be told apart at
+// all: keyed on `url`, as references were, every staged row is the same
+// row, because a staged document has no URL.
+const showStaged = () => { T.S.tab = "referencias"; T.S.refTab = "staged"; T.S.sel = null;
+                           T.renderPanel(); return panel.textContent; };
+T.S.refTab = "local";
+refs = showRefs();
+check("the staged origin is offered too", refs.includes(ES["refs.staged"]), true);
+check("and its rows are not among the judge's finds",
+      refs.includes("presupuesto-riego.md"), false);
+let mine = showStaged();
+check("the staged tab lists the staged document",
+      mine.includes("presupuesto-riego.md"), true);
+check("and not the judge's finds", mine.includes("Riego por gravedad"), false);
+check("a staged document shows its size", mine.includes("18,0 KB"), true);
+// Its file is gone: the catalogue still offers the document, so the row
+// says so rather than drawing a zero that reads as an empty document.
+check("a missing file is said", mine.includes(ES["stage.missing"]), true);
+check("and never drawn as zero bytes", mine.includes("0 B"), false);
+check("the panel offers a way to add one", mine.includes(ES["stage.add"]), true);
+check("and no other tab does",
+      (() => { T.S.refTab = "local"; return showRefs(); })().includes(ES["stage.add"]), false);
+check("the ceiling is the server's, not the page's", T.S.stageMb, 25);
+check("a staged row is identified by its id",
+      T.keyOf("referencias", { id: "staged-3798125eb6", url: "" }), "staged-3798125eb6");
+T.S.refTab = "staged"; T.S.sel = "staged-3798125eb6"; T.renderPanel();
+check("its detail names the file in the workspace",
+      panel.textContent.includes("staged/presupuesto-riego.md"), true);
+T.S.sel = null;
+
+T.S.tab = "memoria"; T.S.refTab = "local"; T.renderPanel();
 
 // ------------------------------------------------ a turn that ends badly
 // The page sets "pensando…" itself when the upload starts, and only a

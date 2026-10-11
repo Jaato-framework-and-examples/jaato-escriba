@@ -59,6 +59,7 @@ import board as _board
 import keys as _keys
 import console
 import enrichment
+import staging
 import housekeeping as _housekeeping
 import memory
 import ptt_capture
@@ -321,13 +322,23 @@ async def _reconcile(view, ws: Path, stop: asyncio.Event) -> None:
             held = memory.counts(ws)
             view.memories(held["curated"], held["raw"])
             cat = ws / enrichment.CATALOGUE
-            view.catalogue(len(list(cat.glob("auto-*.json"))) if cat.is_dir() else 0)
+            # EVERY ENTRY, not just the judge's. The count answers "what
+            # does the catalogue hold", and the plugin loads every JSON
+            # in this directory — so once a person stages a document,
+            # counting `auto-*` alone makes the panel disagree with what
+            # the escriba can actually offer.
+            view.catalogue(len(list(cat.glob("*.json"))) if cat.is_dir() else 0)
             # The lists behind the panels.  Read here rather than kept from
             # events because the writers are elsewhere: the curator has its
             # own session, the documenter is a subagent, and everything
             # from previous days was written before this process existed.
             view.listing("memoria", memory.recent(ws))
-            view.listing("referencias", enrichment.catalogue_entries(ws))
+            # ONE PANEL, TWO ORIGINS. Both lists read the same catalogue
+            # directory and are told apart by their prefix, so the panel
+            # that shows references shows all of them and each row says
+            # where it came from.
+            view.listing("referencias",
+                         enrichment.catalogue_entries(ws) + staging.entries(ws))
             docs = ws / "docs"
             view.listing("documentos", [
                 # The absolute path travels WITH the row rather than being

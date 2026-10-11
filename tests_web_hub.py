@@ -18,10 +18,17 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import staging                                          # noqa: E402
+from fastapi import Request                              # noqa: E402
 from escriba_web.hub import Hub, frame                   # noqa: E402
 from escriba_web.driver import WebBoard, entry_json      # noqa: E402
 
 fail = 0
+
+
+async def _done(value):
+    """The stub for an async dependency: same shape, no request."""
+    return value
 
 
 def check(label, got, want):
@@ -201,6 +208,61 @@ async def main():
                    identity={"username": "ana", "email": "ana@ejemplo.es"})
     check("a first-ever session already knows the name", first.who, "ana")
     check("and the page is told it", first.snapshot()["who"], "ana")
+
+    # ------------------------------------------- staging a document
+    # The upload must work BEFORE the first session: opening one takes
+    # seconds (a prefetch and a greeting turn) and the person can drop a
+    # document in meanwhile. Nothing here needs the session except the
+    # catalogue reload, which is why it is conditional — and this is the
+    # case where `_watcher` does not exist yet, which used to be an
+    # AttributeError thrown at the person.
+    staged_root = Path(tempfile.mkdtemp(prefix="escriba-stage-ws-"))
+    person = Person("stager-sub-01", root=staged_root, identity={"username": "ana"})
+    row = await person.stage("riego del balcón.md", b"# Riego\n")
+    check("a document stages with no session open", row["origin"], "staged")
+    check("and lands inside the person's workspace",
+          (person.ws / row["path"]).is_file(), True)
+    check("the person is told it arrived",
+          any("riego-del-balcón.md" in e.text for e in person.board.state.entries), True)
+    # The ceiling the page shows and the ceiling the server enforces are
+    # ONE number: a figure typed into the page would be free to drift
+    # from the one that does the refusing.
+    check("the snapshot carries the ceiling the server enforces",
+          person.snapshot()["stage_mb"], staging.MAX_BYTES // (1024 * 1024))
+
+    # The ENDPOINT, without an HTTP client: what is worth asserting here
+    # is the part that spans two files and fails silently. The page posts
+    # a FormData field and the route declares a parameter; a mismatch is
+    # a 422 the person sees as "the document could not be contributed",
+    # with both halves looking correct on their own.
+    from fastapi import HTTPException
+    from starlette.datastructures import UploadFile as Upload
+    import inspect, io, re as _re
+    from escriba_web import app as _app
+
+    field = [n for n, prm in inspect.signature(_app.stage).parameters.items()
+             if prm.annotation is not Request][-1]
+    page = (Path(__file__).resolve().parent / "web" / "index.html").read_text()
+    posted = _re.search(r'body\.append\("([^"]+)", file', page)
+    check("the page posts the field the route declares",
+          posted and posted.group(1), field)
+
+    _app.person_of = lambda request: _done(person)      # the route's only input
+    sent = Upload(filename="plano del balcón.pdf", file=io.BytesIO(b"%PDF-1.4 x"))
+    got = await _app.stage(None, sent)
+    check("the route stages what was posted", got["text"], "plano-del-balcón.pdf")
+
+    # An oversized upload is REPORTED, not truncated: a document
+    # discussed as if whole when half was dropped is worse than a
+    # refusal, and the ceiling is the one thing the person can act on.
+    big = Upload(filename="enorme.bin",
+                 file=io.BytesIO(b"x" * (staging.MAX_BYTES + 1)))
+    try:
+        await _app.stage(None, big)
+        check("an oversized upload is refused by the route", "accepted", "refused")
+    except HTTPException as exc:
+        check("with 413 and the ceiling in it", exc.status_code, 413)
+        check("naming the limit", str(staging.MAX_BYTES) in str(exc.detail), True)
 
     # ------------------------------------------------------ path guards
     from escriba_web.app import ATT
