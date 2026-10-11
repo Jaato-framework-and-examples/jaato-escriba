@@ -53,6 +53,7 @@ from run_escriba import DRAIN, SessionGone, _reconcile, _turn   # noqa: E402
 from . import kbwiki                                             # noqa: E402
 from . import wiki as _wiki                                      # noqa: E402
 from .hub import Hub                                             # noqa: E402
+from .guests import token as _token
 
 
 def _iso(at: datetime) -> str:
@@ -63,7 +64,8 @@ def entry_json(e) -> Dict[str, Any]:
     return {"id": e.id, "at": _iso(e.at), "kind": e.kind, "text": e.text,
             "seconds": e.seconds, "audio": e.audio, "repeats": e.repeats,
             "silent": e.silent, "transcribing": e.transcribing,
-            "links": list(getattr(e, "links", None) or [])}
+            "links": list(getattr(e, "links", None) or []),
+            "by": getattr(e, "by", "") or ""}
 
 
 #: Which agents the page names.  The curator and the juez run too, but
@@ -156,7 +158,7 @@ class WebBoard(_board.StateBoard):
     def _draws(e) -> tuple:
         """What a row shows.  Anything else changing is not news."""
         return (e.id, e.text, e.audio, e.repeats, e.seconds, e.silent,
-                e.transcribing)
+                e.transcribing, getattr(e, "by", ""))
 
     def _refreshed(self) -> None:
         s = self.state
@@ -426,6 +428,32 @@ class Person:
         #: session can ask whether to reload the catalogue instead of
         #: raising AttributeError at the person.
         self._watcher = None
+        #: WHAT THE ESCRIBA HAS NOT BEEN TOLD YET.
+        #:
+        #: A guest arriving or leaving is something the model has to know
+        #: — it is about to hear a second voice, and later to stop
+        #: hearing it — and `board.note` does not tell it: that publishes
+        #: to the TRANSCRIPT, which is what the two people read.
+        #:
+        #: NOT ANNOUNCED AS A TURN OF ITS OWN, for the reason `stage`
+        #: gives for not announcing a document: a turn spent saying
+        #: "somebody arrived" answers a question nobody asked and puts
+        #: the escriba's voice between the host and their own next
+        #: sentence. So it waits here and rides the next real turn,
+        #: whichever side takes it, which is exactly when it starts
+        #: mattering.
+        self._notices: List[str] = []
+        #: WHO ELSE IS IN THE ROOM, while somebody is.
+        #:
+        #: Read for one purpose: every turn taken while this is set gets
+        #: a row of its own in the manifest. The escriba reads the wiki
+        #: with THIS person's grants whichever voice asked the question —
+        #: the session holds one token and swapping it per turn would
+        #: force an MCP reconnect mid-conversation — so that consequence
+        #: cannot be enforced away. What can be done is make it
+        #: ANSWERABLE afterwards: which reads happened while somebody
+        #: else was in the room, and which of the two was speaking.
+        self._guest: Optional[str] = None
         #: `{"url": ..., "dir": Path}` when the operator wired a kbwiki,
         #: `None` when they did not.  ABSENT IS OFF, with nothing
         #: defaulted: a URL this project invented would point the
@@ -857,9 +885,64 @@ class Person:
         # With the conversation closed and nobody waiting, the curator.
         await self._consolidate()
 
+    def _room(self, stage: str, who: str, note: str, tell: str = "",
+              **fields) -> None:
+        """One change in who is in the room: recorded, shown, and told.
+
+        THREE AUDIENCES, ONE CALL, because they must never be able to
+        disagree about who was here. The MANIFEST gets a durable row —
+        the transcript is a 400-entry window that a restart does not
+        keep, so it cannot answer "who was in this conversation?" a month
+        later and the manifest can. The TRANSCRIPT gets a line, because
+        the host has to see it while it is happening. And the ESCRIBA
+        gets told on its next turn, because it is about to hear a second
+        voice.
+
+        `source` names what asserted this, the way the playback claim
+        does: an invitation is the host naming somebody and the proxy
+        confirming who turned up, not something this process observed.
+        """
+        self.archive.turn(stage=stage, guest=who, source="invitation", **fields)
+        self.board.note(self.say(note, who=who))
+        if tell:
+            self._notices.append(self.say(tell, who=who))
+
+    def invited(self, email: str) -> None:
+        """The host named somebody.  Nobody is here yet."""
+        self._room("guest-invited", email, "note.inviting")
+
+    def guest_here(self, who: str, who_id: str = "") -> None:
+        """Somebody else is in the room, until they are not.
+
+        ONE CALL PER TRANSITION, and that is the whole point of the
+        method existing: being in the room and being recorded as being
+        in the room were two calls, and a caller that made one without
+        the other would leave the manifest saying the opposite of the
+        truth. A test found exactly that before a person could.
+        """
+        self._guest = who
+        self._room("guest-joined", who, "note.guest_here",
+                   "agent.guest_joined", who_id=who_id)
+
+    def guest_gone(self, who: str = "", stage: str = "guest-left") -> None:
+        """They are not here any more, whichever way it ended."""
+        who = who or self._guest or ""
+        self._guest = None
+        if who:
+            self._room(stage, who, "note.guest_left", "agent.guest_left")
+
     # -- a turn ----------------------------------------------------------
-    async def talk(self, blob: bytes) -> None:
+    async def talk(self, blob: bytes, by: str = "") -> None:
         """One spoken turn, from the browser's recording.
+
+        `by` NAMES SOMEBODY WHO IS NOT THE OWNER of this escriba — a
+        guest the host invited in to supply a detail. It reaches the
+        model as the turn's only text, beside the audio, because an
+        escriba told nothing would answer a second voice as if the
+        person it knows had changed their mind mid-interview. It reaches
+        the transcript for the same reason in reverse: both windows, and
+        the manifest afterwards, have to be able to say which voice was
+        which.
 
         TRANSCODED HERE, to the format the model path already takes: the
         browser hands us webm/opus from `MediaRecorder` and the attachment
@@ -895,7 +978,8 @@ class Person:
             # Popped the way the terminal driver pops it: `seconds` is for
             # the view and the manifest, and an unknown key on an
             # attachment is not something to send to the daemon.
-            self.board.heard(said.pop("seconds"), said.get(ATTACHMENT_ID_KEY))
+            self.board.heard(said.pop("seconds"), said.get(ATTACHMENT_ID_KEY),
+                             by=by)
             said["seconds"] = seconds
             # Started BEFORE the turn and never waited for: the model is
             # about to take several seconds and the transcriber takes a
@@ -904,8 +988,32 @@ class Person:
             self._transcribing(self.board.state.entries[-1],
                                said[ATTACHMENT_ID_KEY])
             try:
+                # THE ONLY TEXT A SPOKEN TURN CARRIES, and until there
+                # could be two voices in one conversation there was none:
+                # who is speaking, and whatever has happened in the room
+                # that the escriba has not been told about yet. Drained
+                # here rather than accumulated, so a notice is delivered
+                # once and the next turn is clean again.
+                # THE TRACE FOR THE ONE THING NOT ENFORCED. A guest's
+                # question reaches kbwiki with the HOST's grants, and
+                # the host's question does too while a guest is
+                # listening to the answer. Neither can be prevented
+                # without reconnecting MCP between turns, so both are
+                # recorded: the manifest is append-only and in order, so
+                # a row here sits immediately before the turn's own and
+                # says who was present and who spoke.
+                if self._guest is not None:
+                    self.archive.turn(stage="guest-present",
+                                      guest=self._guest,
+                                      speaker=by or "host",
+                                      grants="host", source="invitation")
+                lines = self._notices
+                self._notices = []
+                if by:
+                    lines = lines + [self.say("agent.guest_speaks", who=by)]
                 await asyncio.wait_for(
-                    _turn(self._scribe, "", said, self._relay(),
+                    _turn(self._scribe, "\n".join(lines),
+                          said, self._relay(),
                           log=self.archive.turn, tui=self.board),
                     timeout=TURN_TIMEOUT)
                 self._settle()
@@ -954,7 +1062,8 @@ class Person:
                     asyncio.create_task(self._resume())
                 raise
 
-    async def stage(self, filename: str, data: bytes) -> Dict[str, Any]:
+    async def stage(self, filename: str, data: bytes,
+                    by: str = "") -> Dict[str, Any]:
         """Put a document the person uploaded in front of the escriba.
 
         THE FILE IS STAGED WHETHER OR NOT A SESSION IS UP.  Writing it
@@ -980,7 +1089,8 @@ class Person:
         # The panel itself needs nothing: `_reconcile` reads the
         # catalogue every couple of seconds and the row arrives with the
         # next tick, by the same route as everything else in it.
-        self.board.note(self.say("note.staged", name=row["text"]))
+        self.board.note(self.say("note.staged_by", name=row["text"], who=by)
+                        if by else self.say("note.staged", name=row["text"]))
         return row
 
     def _transcribing(self, entry, att: str) -> None:
@@ -1074,7 +1184,74 @@ class Person:
                                    # the refusal the server makes are
                                    # one number, declared once.
                                    stage_mb=staging.MAX_BYTES // (1024 * 1024),
+                                   # WHICH VOICE IS ITS OWN.  Live
+                                   # microphone frames carry the speaker,
+                                   # so a browser can decline to play its
+                                   # owner back at them; comparing names
+                                   # would mute one person to another
+                                   # whenever two are called the same
+                                   # thing, and sending principals would
+                                   # hand each party the other's
+                                   # identifier for nothing.
+                                   self_id=_token(self.principal),
                                    consumo=self.consumption())
+
+    def guest_snapshot(self, principal: str, name: str) -> dict:
+        """What a guest's browser is told, which is deliberately little.
+
+        BUILT NARROW RATHER THAN RENDERED NARROW.  The host's own
+        snapshot carries the whole conversation and the contents of the
+        memory, references and documents panels — their second brain,
+        which is the most private thing this application holds. A guest
+        page that received all that and merely declined to draw it would
+        have it anyway, sitting in a browser on somebody else's desk.
+        So the keys are listed here, by hand, and the ones that are not
+        listed never leave this process.
+
+        NOTHING FROM BEFORE THEY ARRIVED.  `entries` is empty, not
+        trimmed: a host arms the door to ask one question, and that is a
+        decision about the next five minutes rather than about
+        everything already said. What the guest needs to know, the host
+        can say out loud — which is what anybody does when they bring
+        somebody into a meeting.
+        """
+        return {"entries": [], "counts": {}, "items": {}, "days": [],
+                "engines": [],
+                # The pills still have to work: a guest watching an
+                # escriba think needs to see that it is thinking.
+                "status": self.board.status(),
+                "guest": True, "host": self.who, "who": name,
+                "self_id": _token(principal),
+                # The host's language, not the guest's: the conversation
+                # is in it, the escriba speaks it, and the guest has no
+                # session here whose preference could be read.
+                "locale": self.locale,
+                "strings": i18n.catalogue(self.locale),
+                # No picker. A guest changes nothing about the host's
+                # session, and the language is the host's.
+                "locales": [],
+                "playback": "navegador",
+                "stage_mb": staging.MAX_BYTES // (1024 * 1024)}
+
+    def voice(self, stream: str, pcm: bytes, rate: int, channels: int,
+              by: str, by_id: str) -> None:
+        """One piece of a live microphone, on its way to everybody else.
+
+        The same frame the escriba's own voice travels in — `Relay._send`
+        publishes exactly this shape — so the page decodes both with one
+        scheduler and a second playback path never has to exist. What is
+        added is who is speaking: `by` to show, `by_id` so a browser can
+        recognise its own voice and decline to play it.
+        """
+        self.hub.publish("speech", {
+            "stream": stream, "rate": rate, "channels": channels,
+            "pcm": base64.b64encode(pcm).decode("ascii"),
+            "by": by, "by_id": by_id})
+
+    def voice_end(self, stream: str, by_id: str) -> None:
+        """That microphone stopped.  Ends the stream the pieces built."""
+        self.hub.publish("speech", {"stream": stream, "final": True,
+                                    "by_id": by_id})
 
     def day(self, date: str) -> List[dict]:
         """A past day's conversation, read back out of the manifest.

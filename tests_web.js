@@ -186,7 +186,8 @@ if (!blocks.length) { console.log("  FAIL could not find the application script 
 const ctx = vm.createContext(sandbox);
 vm.runInContext(blocks[blocks.length - 1] +
   "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, " +
-  "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows};", ctx);
+  "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows, api, " +
+  "renderGuest, renderTranscript};", ctx);
 const T = sandbox.__test;
 
 // ------------------------------------------------ the page before the hub
@@ -654,6 +655,120 @@ T.onSpeech({ stream: "s3", rate: 24000, channels: 1, pcm: piece(12000) });
 check("nothing sounds while the microphone is open",
       audio.started.length, scheduled);
 T.S.recording = false;
+
+// --------------------------------------------------- somebody else's room
+//
+// A host invites a colleague in for a few minutes to supply a detail.
+// What is asserted here is the half of that which lives in the page: that
+// every call it makes goes to the right session, that neither party hears
+// their own voice back, and that the transcript says who spoke.
+
+// ONE PLACE DECIDES WHOSE SESSION A CALL IS ABOUT. Spread over four call
+// sites, this is how a guest ends up posting an utterance into their own
+// escriba while watching somebody else's transcript — both halves looking
+// correct, and the turn landing in the wrong life.
+T.S.room = null;
+check("with no room, a call is about its owner", T.api("/talk"), "/talk");
+check("and so is a recording", T.api("/audio/att_1"), "/audio/att_1");
+T.S.room = "r00m1d";
+check("in a room, the call goes to the guest twin",
+      T.api("/talk"), "/invitado/talk?room=r00m1d");
+check("a path that already has a query keeps it",
+      T.api("/voz?stream=abcd"), "/invitado/voz?stream=abcd&room=r00m1d");
+check("and a recording is read from the host's archive",
+      T.api("/audio/att_1"), "/invitado/audio/att_1?room=r00m1d");
+T.S.room = null;
+
+// NEVER YOUR OWN VOICE BACK AT YOU. While the key is down nothing plays
+// at all, but the last pieces of an utterance arrive after it comes up.
+T.S.selfId = "mine0000";
+T.S.hushOther = false;
+let heardSoFar = audio.started.length;
+T.onSpeech({ stream: "m1", rate: 48000, channels: 1, pcm: piece(1000),
+             by: "yo", by_id: "mine0000" });
+check("a browser does not play its owner back at them",
+      audio.started.length, heardSoFar);
+T.onSpeech({ stream: "m2", rate: 48000, channels: 1, pcm: piece(1000),
+             by: "marta.ruiz", by_id: "theirs00" });
+check("but it does play the other person",
+      audio.started.length, heardSoFar + 1);
+
+// AND NOT EVEN THEM, if they are already audible some other way: the two
+// are usually on a call together while this happens, so each hears the
+// other through it and this page would be a second, later copy.
+T.S.hushOther = true;
+heardSoFar = audio.started.length;
+T.onSpeech({ stream: "m3", rate: 48000, channels: 1, pcm: piece(1000),
+             by: "marta.ruiz", by_id: "theirs00" });
+check("the other voice can be silenced", audio.started.length, heardSoFar);
+// THE ESCRIBA IS NOT SILENCED WITH THEM. Its frames carry no speaker,
+// and it is the one voice a guest cannot get any other way.
+T.onSpeech({ stream: "m4", rate: 24000, channels: 1, pcm: piece(1000) });
+check("the escriba is still heard", audio.started.length, heardSoFar + 1);
+T.S.hushOther = false;
+
+// WHOSE VOICE THIS WAS. A `said` row starts with no text — the words
+// arrive later, from the transcriber — so without a name the transcript
+// is a flat run of identical rows in which neither window can say who
+// spoke. Each side sees the other named and itself bare.
+T.onEvent("entry", { id: 9101, kind: "said", at: new Date().toISOString(),
+                     text: "", seconds: 2, audio: "att_aaaaaaaaaaaaaaaa",
+                     repeats: 1, by: "" });
+T.onEvent("entry", { id: 9102, kind: "said", at: new Date().toISOString(),
+                     text: "", seconds: 3, audio: "att_bbbbbbbbbbbbbbbb",
+                     repeats: 1, by: "marta.ruiz" });
+const saidRows = byId.get("scroll").walk()
+  .filter((n) => n.className === "said");
+const labels = saidRows.map((w) => w.children[0].textContent);
+check("your own utterance is still just yours", labels.includes("tú"), true);
+check("and the guest's carries their name",
+      labels.includes("marta.ruiz"), true);
+
+// WHAT THE HOST CANNOT MISS. A second brain somebody can join silently is
+// a trust problem, so the band is not dismissible: it is there for as
+// long as somebody else can hear the conversation.
+T.S.guest = false; T.S.waiting = null; T.S.inviting = false;
+T.renderGuest();
+const band = () => byId.get("guest-band");
+const offer = () => byId.get("guest-offer");
+check("nothing is said when nobody else is here", band().hidden, true);
+T.S.waiting = { email: "marta@ejemplo.es", here: false, name: null };
+T.renderGuest();
+check("an invitation standing open is shown", band().hidden, false);
+check("with the address as the host typed it",
+      band().textContent.includes("marta@ejemplo.es"), true);
+T.S.waiting = { email: "marta@ejemplo.es", here: true, name: "marta.ruiz" };
+T.renderGuest();
+check("and when they arrive, that they are here",
+      band().textContent.includes("marta.ruiz"), true);
+// THE CONSEQUENCE THE HOST AGREED TO, said while it is true rather than
+// once at the moment of inviting.
+check("that they can hear the escriba",
+      band().textContent.includes("oye al escriba"), true);
+check("and that the wiki is being read with the host's permissions",
+      band().textContent.includes("con tus permisos"), true);
+
+// THE GUEST'S OWN REMINDER of where they are, and that they are seeing
+// this conversation from the moment they walked in.
+T.S.waiting = null; T.S.guest = true; T.S.host = "dani";
+T.renderGuest();
+check("the guest is told whose session this is",
+      band().textContent.includes("dani"), true);
+check("and that there is a before they cannot see",
+      band().textContent.includes("antes de entrar"), true);
+check("the invite button is not theirs to press", byId.get("guest-btn").hidden, true);
+
+// An offer is shown INSTEAD of opening their own session: `/invitacion`
+// resolved no person, so nothing has been started for them yet.
+T.S.guest = false; T.S.host = ""; T.S.invited = [{ room: "r1", host: "dani" }];
+T.renderGuest();
+check("somebody invited somewhere is told so", offer().hidden, false);
+check("and by whom", offer().textContent.includes("dani"), true);
+T.S.invited = [];
+T.renderGuest();
+check("and nothing is offered to somebody invited nowhere",
+      offer().hidden, true);
+T.S.guest = false;
 
 // ------------------------------------------- where the answer came from
 // The escriba may not read a URL aloud — a dictated address helps nobody

@@ -27,7 +27,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -42,6 +42,7 @@ import staging as _staging                                        # noqa: E402
 import workspace as _workspace                                     # noqa: E402
 
 from .driver import NothingHeard, NotReady, Person                 # noqa: E402
+from .guests import ROOM, Invitation, label, token  # noqa: E402
 from .hub import frame                                             # noqa: E402
 
 #: WHY THIS EXISTS.  Both `except` branches below answer the browser with
@@ -172,6 +173,10 @@ async def _open(person: Person) -> None:
         log.exception("opening a session for %s failed", person.principal)
         FAILED[person.principal] = time.monotonic()
         PEOPLE.pop(person.principal, None)
+        # AND THE ROOM WITH IT.  An invitation into a session that does
+        # not exist is an invitation into nothing, and a guest holding
+        # one would be told the host is simply quiet.
+        ROOM.forget(person.principal)
         person.hub.publish("alert", {"kind": "connection",
                                      "detail": f"{type(exc).__name__}: {exc}"[:200]})
 
@@ -181,10 +186,22 @@ async def page() -> FileResponse:
     return FileResponse(PAGE, media_type="text/html")
 
 
-@app.get("/events")
-async def events(request: Request) -> StreamingResponse:
-    person = await person_of(request)
-    queue = person.hub.subscribe()
+def _sse(request: Request, hub, queue: asyncio.Queue,
+         closed: Optional[dict] = None) -> StreamingResponse:
+    """The event stream, for the owner of a hub and for a guest alike.
+
+    LIFTED OUT RATHER THAN COPIED.  Everything in here is load-bearing
+    and was learnt the hard way — the single carried getter, the
+    keepalive through a buffering proxy, the `closing` frame that keeps a
+    restart from being reported as a network fault. A second route with
+    its own paraphrase of it would drift from this one, and the drift
+    would show up as a page that hangs.
+
+    `closed` is the frame to send when the queue yields the sentinel:
+    somebody else ended this subscription, and only the far end knows
+    why. The owner's own stream passes none, because nothing ends it
+    but the person closing the page or the service going down.
+    """
 
     async def stream():
         waiting = asyncio.ensure_future(CLOSING.wait())
@@ -204,7 +221,17 @@ async def events(request: Request) -> StreamingResponse:
                                              timeout=20,
                                              return_when=asyncio.FIRST_COMPLETED)
                 if nxt in done:
-                    yield nxt.result()
+                    item = nxt.result()
+                    if item is None:
+                        # THE SENTINEL, not an event. A host withdrawing
+                        # an invitation has to end a request that is
+                        # sitting on `queue.get()`, and the only thing
+                        # that both wakes it and lets it say why is a
+                        # value it can recognise.
+                        if closed is not None:
+                            yield frame("closed", closed)
+                        break
+                    yield item
                     nxt = asyncio.ensure_future(queue.get())
                 else:
                     if CLOSING.is_set():
@@ -217,7 +244,7 @@ async def events(request: Request) -> StreamingResponse:
         finally:
             waiting.cancel()
             nxt.cancel()
-            person.hub.drop(queue)
+            hub.drop(queue)
             # Told, not dropped.  `EventSource` reconnects by itself and
             # is answered with a fresh snapshot, so the page recovers
             # without a reload — but a stream that simply stops looks
@@ -229,6 +256,12 @@ async def events(request: Request) -> StreamingResponse:
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
                                       "X-Accel-Buffering": "no"})
+
+
+@app.get("/events")
+async def events(request: Request) -> StreamingResponse:
+    person = await person_of(request)
+    return _sse(request, person.hub, person.hub.subscribe())
 
 
 @app.post("/talk")
@@ -300,9 +333,14 @@ async def stage(request: Request, document: UploadFile):
         raise HTTPException(413, f"{exc}") from exc
 
 
-@app.get("/audio/{att_id}")
-async def audio_file(request: Request, att_id: str) -> FileResponse:
-    person = await person_of(request)
+def _recording(person: Person, att_id: str) -> FileResponse:
+    """One archived recording of one conversation.
+
+    The id is matched against its shape rather than sanitised: a
+    filename is built from it, and the only safe treatment of a path
+    fragment that came from a browser is to refuse anything that is not
+    exactly what it should be.
+    """
     if not ATT.match(att_id):
         raise HTTPException(400, "not an attachment id")
     root = person.ws / _archive.ROOT
@@ -312,6 +350,11 @@ async def audio_file(request: Request, att_id: str) -> FileResponse:
         for found in root.glob(pattern):
             return FileResponse(found, media_type=media)
     raise HTTPException(404, "no recording with that id")
+
+
+@app.get("/audio/{att_id}")
+async def audio_file(request: Request, att_id: str) -> FileResponse:
+    return _recording(await person_of(request), att_id)
 
 
 @app.get("/doc")
@@ -395,9 +438,259 @@ async def heard(request: Request) -> Response:
     return Response(status_code=204)
 
 
+# ---------------------------------------------------------------- guests
+#
+# WHAT THIS IS FOR, because it reads like multi-user and is not. Somebody
+# is working with their own escriba and needs a detail only a colleague
+# has: they invite that colleague in for a few minutes, the colleague
+# listens, says the thing, maybe drops a document in, and leaves. The
+# host is present throughout and the whole visit is on the host's bill,
+# in the host's workspace, under the host's wiki grants. Nothing here
+# makes a session shared, and nothing here gives a guest a second brain
+# that is not their own.
+
+
+def _name_of(request: Request) -> str:
+    """How a guest is shown, from what the proxy asserted about them."""
+    return label(request.headers.get("x-forwarded-preferred-username")
+                 or request.headers.get("x-forwarded-email") or "")
+
+
+def _invited(request: Request) -> Tuple[Person, Invitation, str]:
+    """The HOST's person, for a guest who was named and is who they say.
+
+    NEVER THROUGH `person_of`, and that is not tidiness. `person_of`
+    builds a Person for whoever is calling AND takes the forwarded
+    access token from every request — deliberately, because the proxy
+    renews it on each one. A guest routed through it would have their own
+    kbwiki token written over the host's on their first frame, and the
+    host's escriba would spend the rest of the conversation reading the
+    wiki as somebody else. So this resolver finds the host and never
+    touches a credential.
+
+    EVERY REQUEST RE-CHECKS, rather than the entry being checked once:
+    the host withdrawing an invitation has to take effect on the next
+    thing the guest does, not whenever something expires.
+    """
+    principal = principal_of(request)                 # the proxy authenticated
+    email = request.headers.get("x-forwarded-email")
+    if not email:
+        # SAID, NOT WORKED AROUND. Matching on the principal instead
+        # would be inventing an identity for somebody, and a guess about
+        # who is at the door is the one thing this must not make.
+        raise HTTPException(403, "the proxy in front of this deployment is "
+                                 "not forwarding an email address, so there "
+                                 "is nothing to match an invitation against")
+    inv = ROOM.by_token(request.query_params.get("room", ""))
+    # ONE REFUSAL FOR EVERY CAUSE. No room, the wrong address, somebody
+    # else already in it: an uninvited caller learns nothing about which,
+    # and therefore nothing about whose session exists.
+    if (inv is None or inv.email != email.strip().lower()
+            or ROOM.claim(inv.host, principal, _name_of(request)) is None):
+        raise HTTPException(403, "no open invitation for you")
+    host = PEOPLE.get(inv.host)
+    if host is None:
+        raise HTTPException(409, "the session you were invited to is not open")
+    return host, inv, inv.name
+
+
+@app.post("/invitar")
+async def invitar(request: Request) -> dict:
+    """Open the door to one named colleague, and say so on the transcript.
+
+    THE HOST SEES IT STANDING OPEN. The address is shown back as it was
+    typed, next to a cancel: a wrong one then sits there visibly wrong
+    rather than failing silently, which is the one failure mode of
+    naming somebody in advance instead of admitting them on arrival.
+    """
+    person = await person_of(request)
+    body = await request.json()
+    email = str((body or {}).get("email") or "").strip()
+    if "@" not in email:
+        raise HTTPException(400, "an email address")
+    inv = ROOM.invite(person.principal, email)
+    person.invited(inv.email)
+    return {"room": token(person.principal), **inv.json()}
+
+
+@app.delete("/invitar")
+async def desinvitar(request: Request) -> dict:
+    """Withdraw it, and end whatever the guest still had open."""
+    person = await person_of(request)
+    inv = ROOM.cancel(person.principal)
+    if inv is not None:
+        person.guest_gone(inv.name or inv.email, stage="guest-revoked")
+    return {"room": None}
+
+
+@app.get("/invitacion")
+async def invitacion(request: Request):
+    """Who, if anyone, is expecting this person.
+
+    RESOLVES NO PERSON OF THEIR OWN, which is the whole reason the page
+    can ask this on load: `person_of` would open a session, a prefetched
+    inventory and a greeting turn — seconds of model time — for somebody
+    who is about to go and sit in someone else's conversation instead.
+    """
+    principal = principal_of(request)                 # authenticated first
+    email = request.headers.get("x-forwarded-email")
+    rooms = [{"room": token(i.host), "host": PEOPLE[i.host].who,
+              "since": i.since.isoformat(timespec="seconds")}
+             for i in ROOM.waiting_for(email or "")
+             # An invitation whose host has no live session is not an
+             # invitation anywhere, and offering it would send the guest
+             # to a 409 they can do nothing about. One already claimed by
+             # somebody else is not theirs to see at all.
+             if i.host in PEOPLE and i.guest in (None, principal)]
+    return {"rooms": rooms, "email": email}
+
+
+@app.get("/invitado/events")
+async def guest_events(request: Request) -> StreamingResponse:
+    host, inv, name = _invited(request)
+    queue = host.hub.subscribe(
+        lambda: host.guest_snapshot(principal_of(request), name))
+    # HELD SO THE HOST CAN END IT. Every other guest route re-checks the
+    # invitation when it is called; this one is a single request that
+    # lasts the whole visit, so withdrawing has to reach in from the
+    # other side.
+    inv.queues.append(queue)
+    host.guest_here(name, who_id=token(principal_of(request)))
+    return _sse(request, host.hub, queue,
+                closed={"reason": "la sesión se ha cerrado"})
+
+
+@app.post("/invitado/talk")
+async def guest_talk(request: Request, audio: UploadFile) -> StreamingResponse:
+    """A guest's utterance, into the host's conversation.
+
+    THE SAME TURN THE HOST WOULD HAVE TAKEN, on the host's session and
+    the host's budget, with the speaker named so the escriba is not left
+    to infer that the person it knows has changed their voice.
+    """
+    host, _inv, name = _invited(request)
+    blob = await audio.read()
+
+    async def stream():
+        try:
+            if CLOSING.is_set():
+                yield frame("alert", {"kind": "session",
+                                      "detail": "el escriba se está reiniciando; "
+                                                "inténtalo de nuevo en un momento"})
+                return
+            await host.talk(blob, by=name)
+        except NotReady as exc:
+            yield frame("alert", {"kind": "waking", "detail": str(exc)})
+        except NothingHeard:
+            yield frame("alert", {"kind": "silence"})
+        except Exception as exc:                      # noqa: BLE001
+            log.exception("a guest turn in %s failed", host.principal)
+            yield frame("alert", {"kind": "connection", "detail": str(exc)[:200]})
+        finally:
+            yield frame("status", host.board.status())
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/invitado/stage")
+async def guest_stage(request: Request, document: UploadFile) -> dict:
+    """A document the guest brought, staged in the host's workspace.
+
+    Which is the point of inviting them: the detail the host is missing
+    is often a file. `Person.stage` is called unchanged — the filename
+    guard that keeps a browser from naming a path belongs to it and now
+    covers a second browser for free — and the note says who brought it,
+    because a document that appears in your own workspace with no
+    provenance is a document you cannot account for later.
+    """
+    host, _inv, name = _invited(request)
+    blob = await document.read()
+    try:
+        row = await host.stage(document.filename or "", blob, by=name)
+        # THE PROVENANCE OF A FILE IN SOMEBODY ELSE'S WORKSPACE. The
+        # staging catalogue records what the document is; this records
+        # that it was not the owner who brought it, which is the question
+        # anybody auditing their own workspace will have.
+        host.archive.turn(stage="guest-staged", guest=name,
+                          document=row.get("text"), source="invitation")
+        return row
+    except _staging.TooLarge as exc:
+        raise HTTPException(413, f"{exc}") from exc
+
+
+@app.get("/invitado/audio/{att_id}")
+async def guest_audio(request: Request, att_id: str) -> FileResponse:
+    """One recording of this conversation, for somebody who is in it.
+
+    A guest sees no row from before they arrived, so the only ids they
+    can hold are ones they watched go past — but the id is checked
+    against the shape and the file is looked up under the HOST's archive
+    either way, because what a browser sends back is never the thing
+    that decides which file is read.
+    """
+    host, _inv, _name = _invited(request)
+    return _recording(host, att_id)
+
+
+@app.post("/invitado/voz")
+async def guest_voice(request: Request) -> Response:
+    host, _inv, name = _invited(request)
+    return await _voice(request, host, name, principal_of(request))
+
+
+@app.post("/voz")
+async def voz(request: Request) -> Response:
+    """The host's own microphone, live, while the press is still going on.
+
+    SEPARATE FROM `/talk` ON PURPOSE. `/talk` carries the one blob the
+    model is fed and the archive keeps, and it has to stay exactly that:
+    this is a second tap on the same microphone, and a piece of it going
+    missing costs the guest a fragment of audio rather than corrupting a
+    turn.
+    """
+    person = await person_of(request)
+    return await _voice(request, person, person.who, person.principal)
+
+
+async def _voice(request: Request, person: Person, name: str,
+                 principal: str) -> Response:
+    """One piece of somebody's live microphone, fanned out to the room.
+
+    RAW `s16le` IN THE BODY, with the shape in the query: the frame the
+    page already decodes for the escriba's voice is PCM, so sending PCM
+    means one scheduler in the browser instead of two and no container
+    to reassemble. A press that produces nothing worth sending sends
+    nothing — there is no empty frame to publish.
+    """
+    stream = request.query_params.get("stream", "")
+    if not re.fullmatch(r"[a-z0-9]{4,32}", stream):
+        raise HTTPException(400, "not a stream id")
+    if request.query_params.get("final") == "1":
+        person.voice_end(stream, token(principal))
+        return Response(status_code=204)
+    try:
+        rate = int(request.query_params.get("rate", ""))
+        channels = int(request.query_params.get("channels", ""))
+    except ValueError as exc:
+        raise HTTPException(400, "rate and channels are integers") from exc
+    if not (8000 <= rate <= 192000) or channels not in (1, 2):
+        raise HTTPException(400, "not an audio shape this plays")
+    pcm = await request.body()
+    frame_bytes = channels * 2
+    # WHOLE SAMPLES ONLY. The page reads the payload as one `Int16Array`,
+    # so a trailing half sample would shift every value after it by a
+    # byte and play as noise.
+    if len(pcm) % frame_bytes:
+        raise HTTPException(400, "a partial sample")
+    if pcm:
+        person.voice(stream, pcm, rate, channels, name, token(principal))
+    return Response(status_code=204)
+
+
 @app.on_event("shutdown")
 async def shutdown() -> None:
     for person in list(PEOPLE.values()):
+        ROOM.forget(person.principal)
         await person.close()
 
 

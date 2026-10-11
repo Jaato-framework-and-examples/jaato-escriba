@@ -313,6 +313,22 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
 .upload .bad{font-size:12px;color:var(--bad)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 </style>
+<style>
+/* The band is a statement, not a decoration: it says somebody else is
+   here, and it stays until they are not. */
+#guest-band { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 8px 14px; background: var(--accent-soft, #2d2a12);
+  border-bottom: 1px solid var(--line, #333); font-size: 13px; }
+#guest-band .nm { font-weight: 600; }
+#guest-band .warn { opacity: .8; }
+#guest-band button { margin-left: auto; }
+#guest-offer { padding: 14px; display: flex; gap: 10px; align-items: center;
+  flex-wrap: wrap; border-bottom: 1px solid var(--line, #333); }
+#guest-offer .nm { font-weight: 600; }
+.invite { display: flex; gap: 6px; align-items: center; }
+.invite input { width: 15em; }
+.said .who.other { opacity: 1; font-weight: 600; }
+</style>
 </head>
 <body>
 <div class="page">
@@ -325,10 +341,22 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
     <div class="hright" id="hright" title="">
       <span class="k" id="audio-in"></span><span class="v" id="playback-where"></span>
       <span class="langs" id="langs"></span>
+      <button class="hbtn" id="guest-btn" aria-pressed="false"></button>
       <button class="hbtn" id="audit-btn" aria-pressed="false">ids</button>
       <button class="hbtn" id="theme-btn"></button>
     </div>
   </header>
+
+  <!-- WHO ELSE IS IN THE ROOM, said where the host cannot miss it. A
+       second brain somebody can join silently is a trust problem, so
+       this band is not dismissible: it is present for exactly as long
+       as somebody else can hear the conversation. -->
+  <div id="guest-band" hidden></div>
+  <!-- The offer, for a person who was invited somewhere. Shown INSTEAD
+       of opening their own session: `/invitacion` resolves no person, so
+       nothing has been started for them yet and nothing is wasted if
+       they go in. -->
+  <div id="guest-offer" hidden></div>
 
   <div id="alert-slot"></div>
 
@@ -438,6 +466,28 @@ const S = {
   // still carries its `escuchar` button; what this stops is the
   // SECOND, automatic playing of something just heard.
   sounded: new Set(),
+  //: GUEST MODE. Set when the person at this browser was invited into
+  //: somebody else's session instead of opening their own: a host
+  //: working with their escriba can call a colleague in for a few
+  //: minutes to supply a detail, and the colleague hears the
+  //: conversation, can speak into it and can bring a document.
+  //:
+  //: `room` is the OPAQUE id of that session, and it is what turns every
+  //: call on this page from "mine" into "theirs" — see `api`. Null here
+  //: means this page is about its owner's own escriba, which is what it
+  //: is for everybody who was invited nowhere.
+  guest: false, room: null, host: "",
+  //: Which voice is this browser's own, so it never plays its owner back
+  //: at them. An opaque id rather than a name: two people called the
+  //: same thing would otherwise mute each other.
+  selfId: "",
+  //: Rooms this person has been offered, and the invitation this person
+  //: has issued.
+  invited: [], waiting: null, inviting: false,
+  //: The other voice, silenced. A host and a guest are often already on
+  //: a call together, in which case each hears the other through it and
+  //: this page would be a second, delayed copy.
+  hushOther: false,
   //: How to link one wiki page, `{id}` where the node id goes. The server
   //: states it; a deployment whose wiki has no browsable page sends null
   //: and a node is shown as its id, never as a link to nowhere.
@@ -593,6 +643,10 @@ const ALERTS = {
   insecure: () => [tx("alert.insecure.title"),
     tx("alert.insecure.body")],
   waking: (d) => ["Un momento", d.detail || tx("alert.waking")],
+  // Not a failure of anything: a visit ended. Said because the page is
+  // about to change under the reader — their own escriba comes back —
+  // and a transcript replacing itself with no explanation reads as a bug.
+  guest: (d) => [tx("alert.guest.title"), d.reason || tx("guest.closed")],
   // A recording with no audio in it.  Its own kind, because it used to
   // arrive as `connection` and send the person to look at their network
   // for a press that was simply too short to carry anything.
@@ -734,7 +788,13 @@ function paint(e) {
 
   if (e.kind === "said") {
     const w = el("div", "said");
-    w.append(el("span", "who", tx("entry.you")));
+    // WHOSE VOICE THIS WAS. Two people can press into one conversation,
+    // and a `said` row starts with no text, so without this the
+    // transcript is a flat run of identical rows in which neither window
+    // can say who spoke. Each side sees the other named and itself bare,
+    // which is how every conversation anybody has ever read works.
+    w.append(e.by ? el("span", "who other", e.by)
+                  : el("span", "who", tx("entry.you")));
     const b = el("button", "bar");
     // The width IS the duration: a column of identical pills says nothing
     // about which utterance was the long one.
@@ -1159,7 +1219,7 @@ async function stageDocument(file) {
     if (MOCK) { await new Promise((r) => setTimeout(r, 300)); return; }
     const body = new FormData();
     body.append("document", file, file.name);
-    const res = await fetch("/stage", { method: "POST", body });
+    const res = await fetch(api("/stage"), { method: "POST", body });
     if (res.status === 413) {
       S.staging.msg = tx("stage.too_large", { mb: S.stageMb });
     } else if (!res.ok) {
@@ -1526,6 +1586,145 @@ function hush() {
   VOICE.at = 0;
 }
 
+// WHOSE SESSION A CALL IS ABOUT, decided in one place.
+//
+// Every endpoint this page talks to has a guest twin, and the twin takes
+// the room as a query. Spreading that decision over four call sites is
+// how a guest ends up posting an utterance into their OWN escriba while
+// watching somebody else's transcript — both halves looking correct, and
+// the turn landing in the wrong life.
+// ----------------------------------------------------------------- guests
+//
+// The host arms the door for one named colleague; the colleague is
+// offered the room when they next open the page, goes in, speaks, and
+// leaves. Nothing here is a login: everybody reaching this page came
+// through the proxy already, so what travels is a NAME the host typed
+// and an identity the proxy asserted.
+
+async function invite(field) {
+  const email = ((field && field.value) || "").trim();
+  if (!email.includes("@")) return;
+  const res = await fetch("/invitar", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }) });
+  if (!res.ok) return;
+  S.waiting = await res.json();
+  S.inviting = false;
+  renderGuest();
+}
+
+async function uninvite() {
+  await fetch("/invitar", { method: "DELETE" }).catch(() => {});
+  S.waiting = null;
+  renderGuest();
+}
+
+async function enterRoom(room) {
+  S.room = room;
+  S.invited = [];
+  // The transcript of their own escriba, if they had one open, is not
+  // theirs to carry into somebody else's room.
+  S.order = []; S.byId.clear(); S.items = {}; S.counts = {}; S.days = [];
+  renderAll();
+  connect();
+}
+
+function leaveRoom() {
+  S.room = null; S.guest = false; S.host = "";
+  S.order = []; S.byId.clear();
+  renderAll();
+  connect();
+}
+
+// WHAT THE HOST CANNOT MISS, and the guest's own reminder of where they
+// are. Not dismissible on either side: it is true for exactly as long as
+// somebody else can hear the conversation, and a band you can close is a
+// band you forget.
+function renderGuest() {
+  const band = $("guest-band"), offer = $("guest-offer"), btn = $("guest-btn");
+  band.textContent = ""; offer.textContent = "";
+  btn.textContent = tx("guest.invite");
+  btn.hidden = S.guest || !S.loaded;
+
+  if (S.guest) {
+    band.hidden = false;
+    band.append(el("span", "nm", tx("guest.inside", { who: S.host })),
+                el("span", "warn", tx("guest.nothing_before")));
+    const hush = el("button", "hbtn", tx("guest.hush"));
+    hush.setAttribute("aria-pressed", String(S.hushOther));
+    hush.onclick = () => { S.hushOther = !S.hushOther; renderGuest(); };
+    const out = el("button", "hbtn", tx("guest.leave"));
+    out.onclick = leaveRoom;
+    const wrap = el("span", "");
+    wrap.append(hush, out);
+    band.append(wrap);
+  } else if (S.waiting) {
+    band.hidden = false;
+    band.append(el("span", "nm", S.waiting.here
+                     ? tx("guest.here", { who: S.waiting.name || S.waiting.email })
+                     : tx("guest.waiting", { who: S.waiting.email })));
+    if (S.waiting.here) {
+      // THE CONSEQUENCE THE HOST AGREED TO, said while it is true rather
+      // than at the moment of inviting: their escriba reads the wiki with
+      // THEIR grants for as long as somebody else is asking it questions.
+      band.append(el("span", "warn", tx("guest.hears")),
+                  el("span", "warn", tx("guest.grants")));
+    }
+    const hush = el("button", "hbtn", tx("guest.hush"));
+    hush.setAttribute("aria-pressed", String(S.hushOther));
+    hush.onclick = () => { S.hushOther = !S.hushOther; renderGuest(); };
+    const stop = el("button", "hbtn", tx("guest.cancel"));
+    stop.onclick = uninvite;
+    const wrap = el("span", "");
+    wrap.append(hush, stop);
+    band.append(wrap);
+  } else if (S.inviting) {
+    // The field, in the band rather than in a dialog: the host is in the
+    // middle of a conversation and a modal would take the page away from
+    // them to type one address.
+    band.hidden = false;
+    const form = el("span", "invite");
+    const field = el("input", "");
+    field.type = "email";
+    field.placeholder = tx("guest.email");
+    field.onkeydown = (ev) => { if (ev.key === "Enter") invite(field); };
+    const go = el("button", "hbtn", tx("guest.invite"));
+    go.onclick = () => invite(field);
+    const no = el("button", "hbtn", tx("guest.cancel"));
+    no.onclick = () => { S.inviting = false; renderGuest(); };
+    form.append(field, go, no);
+    band.append(form);
+    field.focus();
+  } else {
+    band.hidden = true;
+  }
+
+  // The offer, for somebody who was invited. Shown whether or not their
+  // own session is up: going in costs them nothing, and `/invitacion`
+  // started nothing on their behalf.
+  if (!S.guest && S.invited.length) {
+    offer.hidden = false;
+    for (const r of S.invited) {
+      const line = el("div", "");
+      line.append(el("span", "nm", tx("guest.invited_by", { who: r.host })));
+      const go = el("button", "hbtn", tx("guest.enter"));
+      go.onclick = () => enterRoom(r.room);
+      const no = el("button", "hbtn", tx("guest.mine"));
+      no.onclick = () => { S.invited = []; renderGuest(); connect(); };
+      line.append(go, no);
+      offer.append(line);
+    }
+  } else {
+    offer.hidden = true;
+  }
+}
+
+function api(path) {
+  if (!S.room) return path;
+  return "/invitado" + path +
+         (path.includes("?") ? "&" : "?") + "room=" + encodeURIComponent(S.room);
+}
+
 function samples(b64) {
   const bin = atob(b64);
   const raw = new Uint8Array(bin.length);
@@ -1544,6 +1743,15 @@ function onSpeech(f) {
     VOICE.stream = null;
     return;
   }
+  // NEVER YOUR OWN VOICE BACK AT YOU. While the press is on, nothing
+  // plays at all — but the last pieces of an utterance arrive after the
+  // key is up, and without this you would hear your own tail.
+  if (f.by_id && f.by_id === S.selfId) return;
+  // AND NOT THE OTHER PERSON'S, if they are already audible some other
+  // way. A host and a guest are usually on a call together while this
+  // happens, so their voices reach each other through it and this page
+  // would be a second, later copy of the same words.
+  if (f.by_id && S.hushOther) return;
   if (S.recording || !VOICE.ctx || VOICE.ctx.state !== "running") return;
   if (f.stream !== VOICE.stream) { hush(); VOICE.stream = f.stream; }
   const ctx = VOICE.ctx;
@@ -1577,7 +1785,7 @@ function start(e, auto) {
   S.playing = e.id;
   S.progSec = 0;
   if (MOCK) { mockPlay(e); return; }
-  player.src = "/audio/" + e.audio;
+  player.src = api("/audio/" + e.audio);
   player.play().catch(() => {
     if (!auto) { fail(e); return; }
     // A BLOCKED AUTOPLAY IS NOT A FAILURE.  The browser withholding
@@ -1657,6 +1865,10 @@ player.addEventListener("error", () => {
 // and the two are not the same kind of fact.
 function heard(e, event) {
   if (MOCK || !e.audio) return;
+  // NOT FROM A GUEST. The claim is written into the HOST's archive as a
+  // fact about what sounded, and a guest's speakers are not an account
+  // of the host's conversation. The row still plays; nothing is recorded.
+  if (S.guest) return;
   fetch("/heard", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ audio: e.audio, event, at: new Date().toISOString() }),
@@ -1711,6 +1923,111 @@ async function mic() {
   return stream;
 }
 
+// A SECOND TAP ON THE SAME MICROPHONE, and deliberately not a change to
+// the first.
+//
+// `MediaRecorder` keeps doing exactly what it did: one blob on release,
+// transcoded server-side into the attachment the model is fed and the
+// file the archive keeps. That path produces the record of the
+// conversation and it is the last thing that should grow a new failure
+// mode. So the live voice the other person hears comes off a SEPARATE
+// consumer of the same `MediaStream`, and a piece of it going missing
+// costs them a fragment of audio rather than corrupting a turn.
+//
+// PCM RATHER THAN THE RECORDER'S CHUNKS, which is what makes the far end
+// cheap: `MediaRecorder` timeslices are webm, only the first carries a
+// header, and playing them needs a MediaSource pipeline. Raw samples are
+// what `onSpeech` already schedules for the escriba's own voice, so both
+// voices arrive through one decoder and a second playback path never has
+// to exist.
+const TAP = { ctx: null, node: null, src: null, stream: null, busy: null };
+
+// 128 frames at a time is what the platform hands a worklet; this
+// gathers them into the same half second the escriba's relay coalesces
+// to, so both voices travel at one cadence.
+const TAP_WORKLET = `
+class Tap extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = []; this.n = 0;
+                  this.target = Math.round(sampleRate * 0.5); }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (ch) {
+      this.buf.push(new Float32Array(ch)); this.n += ch.length;
+      if (this.n >= this.target) {
+        const out = new Int16Array(this.n);
+        let i = 0;
+        for (const b of this.buf) for (let k = 0; k < b.length; k++) {
+          const v = Math.max(-1, Math.min(1, b[k]));
+          out[i++] = v < 0 ? v * 32768 : v * 32767;
+        }
+        this.port.postMessage(out, [out.buffer]);
+        this.buf = []; this.n = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("tap", Tap);
+`;
+
+function tapId() {
+  return Math.random().toString(36).slice(2, 12).replace(/[^a-z0-9]/g, "x");
+}
+
+// ONE UPLOAD IN FLIGHT, AND THE NEXT ONE AFTER IT. Separate POSTs can
+// arrive out of order, and half a second of voice in the wrong place is
+// audible as garble. Chaining them keeps the order by construction,
+// which is cheaper and more honest than a sequence number and a reorder
+// buffer on the far side.
+function tapSend(pcm) {
+  if (!TAP.stream) return;
+  const q = TAP.busy || Promise.resolve();
+  TAP.busy = q.then(() => {
+    if (!TAP.stream) return;
+    return fetch(api("/voz?stream=" + TAP.stream + "&rate=" + TAP.rate +
+                     "&channels=1"),
+                 { method: "POST", body: pcm,
+                   headers: { "Content-Type": "application/octet-stream" } })
+      .catch(() => {});
+  });
+}
+
+async function tapStart() {
+  if (!navigator.mediaDevices || !window.AudioWorkletNode) return;
+  const s = await mic();
+  if (!TAP.ctx) {
+    TAP.ctx = new AudioContext();
+    const url = URL.createObjectURL(new Blob([TAP_WORKLET],
+                                             { type: "application/javascript" }));
+    await TAP.ctx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+  }
+  if (TAP.ctx.state === "suspended") await TAP.ctx.resume();
+  TAP.rate = TAP.ctx.sampleRate;
+  TAP.stream = tapId();
+  TAP.src = TAP.ctx.createMediaStreamSource(s);
+  TAP.node = new AudioWorkletNode(TAP.ctx, "tap");
+  TAP.node.port.onmessage = (ev) => tapSend(ev.data);
+  // NOT CONNECTED TO THE SPEAKERS. The node's output goes nowhere: this
+  // reads the microphone, and routing it to `destination` would play the
+  // person's own voice back at them with the hardware's latency on it.
+  TAP.src.connect(TAP.node);
+}
+
+function tapStop() {
+  const stream = TAP.stream;
+  TAP.stream = null;
+  if (TAP.src) { try { TAP.src.disconnect(); } catch (e) {} TAP.src = null; }
+  if (TAP.node) { try { TAP.node.disconnect(); } catch (e) {} TAP.node = null; }
+  // AFTER whatever is still going up, so the end marker cannot overtake
+  // the last piece of the utterance it ends.
+  if (stream) {
+    (TAP.busy || Promise.resolve()).then(
+      () => fetch(api("/voz?stream=" + stream + "&final=1"), { method: "POST" })
+              .catch(() => {}));
+  }
+}
+
 async function startRec() {
   if (S.recording || S.micReason) return;
   if (!player.paused) player.pause();         // talking over the reply stops it
@@ -1723,6 +2040,11 @@ async function startRec() {
     recorder.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
     recorder.onstop = sendUtterance;
     recorder.start();
+    // STARTED BESIDE THE RECORDER AND NEVER AWAITED BY IT: the blob the
+    // model gets must not wait on the live tap coming up, and a tap that
+    // fails to start costs the other person the audio of this one
+    // utterance and nothing else.
+    tapStart().catch(() => {});
   } catch (err) {
     S.micReason = err && err.name === "NotAllowedError" ? "permiso denegado" : "no se pudo abrir";
     raise("mic");
@@ -1745,6 +2067,10 @@ function stopRec() {
   if (!S.recording) return;
   clearInterval(ticker);
   S.recording = false;
+  // BEFORE EVERY OTHER BRANCH BELOW, including the too-short one: the
+  // tap is running from the moment of the press, so whatever happens to
+  // the recording, the microphone stops being broadcast here.
+  tapStop();
   const held = MOCK ? S.rec * 1000 : performance.now() - startedAt;
   if (MOCK) { pttFace(); mockTurn(Math.max(1, Math.round(S.rec))); return; }
   if (held < 300) {
@@ -1774,7 +2100,7 @@ async function sendUtterance() {
   const fd = new FormData();
   fd.append("audio", blob, "utterance.webm");
   try {
-    const res = await fetch("/talk", { method: "POST", body: fd });
+    const res = await fetch(api("/talk"), { method: "POST", body: fd });
     if (!res.ok) throw new Error(res.status);
     // The `said` entry comes back over the stream, not optimistically: the
     // id is the digest of the bytes the daemon received, and only the
@@ -1856,6 +2182,13 @@ function onEvent(kind, data) {
     S.strings = data.strings || S.strings;
     S.locale = data.locale || S.locale;
     S.locales = data.locales || S.locales;
+    // WHO THIS PAGE IS, which decides what it may draw. A guest's
+    // snapshot is BUILT narrow — no transcript from before they came in,
+    // no memory, no references, no documents — so there is nothing here
+    // to hide; this is what stops the page asking for any of it.
+    S.guest = !!data.guest;
+    S.host = data.host || "";
+    S.selfId = data.self_id || "";
     renderAll();
   } else if (kind === "entry") {
     updateEntry(data);
@@ -1888,6 +2221,15 @@ function onEvent(kind, data) {
     S.days = data; renderDays();
   } else if (kind === "speech") {
     onSpeech(data);
+  } else if (kind === "closed") {
+    // THE ROOM ENDED FROM THE OTHER SIDE: the host withdrew the
+    // invitation or their session went away. Said in the server's own
+    // words and then this page becomes its owner's own escriba again,
+    // which is where somebody whose visit is over belongs.
+    S.room = null; S.guest = false; S.host = "";
+    raise("guest", { reason: data.reason || tx("guest.closed") });
+    renderAll();
+    connect();
   }
 }
 
@@ -1916,10 +2258,16 @@ async function readStream(res, sink) {
 }
 
 let lost = null;
+//: The live stream, held so it can be CLOSED. Entering or leaving a room
+//: reconnects to a different hub, and an EventSource that was merely
+//: dropped keeps delivering — two streams patching rows by id into one
+//: transcript, which reads as the escriba answering itself.
+let source = null;
 function connect() {
-  const es = new EventSource("/events");
+  if (source) { try { source.close(); } catch (e) {} }
+  const es = source = new EventSource(api("/events"));
   for (const kind of ["state", "entry", "counts", "items", "status", "alert",
-                      "days", "wiki", "consumo", "closing", "speech"]) {
+                      "days", "wiki", "consumo", "closing", "speech", "closed"]) {
     es.addEventListener(kind, (m) => onEvent(kind, JSON.parse(m.data)));
   }
   es.onopen = () => {
@@ -2110,8 +2458,10 @@ function renderAll() {
   applyTheme();                 // its label is a string like any other
   renderLangs(); renderPills(); renderCounts(); renderTabs(); renderPanel();
   renderDays(); renderTranscript(); renderEngines(); pttFace();
+  renderGuest();
   // The static markup carries no Spanish any more, so the parts of the
   // chrome that are not redrawn by a renderer are set here.
+  $("guest-btn").onclick = () => { S.inviting = !S.inviting; renderGuest(); };
   $("audit-btn").title = tx("header.ids.title");
   $("audit-btn").textContent = tx("header.ids");
   $("nav-head").textContent = tx("nav.days");
@@ -2145,7 +2495,21 @@ function boot() {
       .then((r) => r.json())
       .then((st) => onEvent("state", Object.assign(mockState(), { strings: st, locale: want })))
       .catch(() => onEvent("state", mockState()));
-  } else connect();
+  } else {
+    fetch("/invitacion")
+      .then((r) => (r.ok ? r.json() : { rooms: [] }))
+      .catch(() => ({ rooms: [] }))
+      .then((d) => {
+        S.invited = (d && d.rooms) || [];
+        renderGuest();
+        // NOT CONNECTED YET IF THEY WERE INVITED SOMEWHERE. `/events` is
+        // what opens a person's own session — a consolidation pass, an
+        // inventory prefetch and a greeting turn — and somebody standing
+        // at another conversation's door has not asked for theirs. They
+        // choose, and whichever they choose is the only one paid for.
+        if (!S.invited.length) connect();
+      });
+  }
 }
 
 const wanted = MOCK ? (new URLSearchParams(location.search).get("lang") || "es")

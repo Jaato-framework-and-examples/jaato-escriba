@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 #: How far behind a reader may fall before it is dropped.  Generous
 #: enough that a slow network is not an eviction, small enough that a
@@ -65,7 +65,9 @@ class Hub:
         #: can only answer "what was true once", which is the defect.
         self._snapshot = snapshot
 
-    def subscribe(self) -> asyncio.Queue:
+    def subscribe(self,
+                  snapshot: Optional[Callable[[], Dict[str, Any]]] = None
+                  ) -> asyncio.Queue:
         """A queue, with the current state already in front of it.
 
         Both halves happen with no `await` between them, which is what
@@ -74,10 +76,21 @@ class Hub:
         never a delta that the snapshot already contains and never one
         it missed.  A delta that does arrive twice is harmless anyway —
         the page patches rows by id.
+
+        `snapshot` OVERRIDES what this reader is told it is joining, and
+        exists for the one reader who is not the owner: a guest the host
+        invited in sees the conversation from the moment they enter, and
+        the panels beside it are the host's own memory and references.
+        Rendering those away in the guest's browser would not withhold
+        them — they would already BE in that browser.  So the narrower
+        view is BUILT, here, and the data never leaves this process.
+        The override is a function for the same reason the default is:
+        it is called at the moment of subscribing, inside the same gap,
+        so a guest cannot be handed something stale either.
         """
         q: asyncio.Queue = asyncio.Queue(maxsize=BACKLOG)
         self._subs.append(q)
-        q.put_nowait(frame("state", self._snapshot()))
+        q.put_nowait(frame("state", (snapshot or self._snapshot)()))
         return q
 
     def drop(self, q: asyncio.Queue) -> None:

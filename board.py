@@ -75,6 +75,14 @@ class Entry:
     #: forbids dictating one, which left the person with no way to get at
     #: it at all until this existed.
     links: list = field(default_factory=list)
+    #: WHO SPOKE, when that is not simply "the person whose escriba this
+    #: is".  Empty on every row of an ordinary session, and the guest's
+    #: name on a `said` row they produced: a host can invite somebody in
+    #: to supply a detail, and both of them then press the same button
+    #: into the same conversation.  Without this the transcript is a flat
+    #: run of `said` rows in which neither window -- nor the manifest
+    #: months later -- can say which voice was which.
+    by: str = ""
     #: Stable for the life of this entry, and the only safe way to say
     #: WHICH row changed.  Three things arrive after a row is first drawn
     #: — the rest of a streamed reply, the audio id once the provider has
@@ -145,7 +153,14 @@ class Conversation:
         to learn that the repetition IS the signal.
         """
         prev = self.entries[-1] if self.entries else None
-        if prev is not None and prev.kind == kind and prev.text == text:
+        # THE SPEAKER IS PART OF WHAT MAKES TWO ROWS THE SAME ROW.  A
+        # `said` row starts with no text -- the words arrive later, from
+        # the transcriber -- so two people talking into one conversation
+        # produce two rows that are identical at the moment they are
+        # added, and folding them would show one utterance where there
+        # were two and hand the second one's words to the first.
+        if (prev is not None and prev.kind == kind and prev.text == text
+                and prev.by == kw.get("by", "")):
             prev.repeats += 1
             return
         self.last_id += 1
@@ -164,7 +179,8 @@ class NullBoard:
     def thinking(self, on: bool) -> None: ...
     def speaking(self) -> None: ...
     def listening(self, on: bool) -> None: ...
-    def heard(self, seconds: float, audio: Optional[str] = None) -> None: ...
+    def heard(self, seconds: float, audio: Optional[str] = None,
+              by: str = "") -> None: ...
     def spoke(self, words: str, anotado: str = "",
               audio: Optional[str] = None,
               seconds: Optional[float] = None,
@@ -216,8 +232,9 @@ class LineBoard(NullBoard):
     def speaking(self) -> None:
         console.log("· speaking…")
 
-    def heard(self, seconds: float, audio: Optional[str] = None) -> None:
-        console.log(f"· heard {seconds:.1f}s")
+    def heard(self, seconds: float, audio: Optional[str] = None,
+              by: str = "") -> None:
+        console.log(f"· heard {seconds:.1f}s" + (f" from {by}" if by else ""))
 
     def spoke(self, words: str, anotado: str = "",
               audio: Optional[str] = None,
@@ -279,9 +296,10 @@ class StateBoard(NullBoard):
         self.state.listening = on
         self._refreshed()
 
-    def heard(self, seconds: float, audio: Optional[str] = None) -> None:
+    def heard(self, seconds: float, audio: Optional[str] = None,
+              by: str = "") -> None:
         self.state.thinking = False
-        self.state.add("said", "", seconds=seconds, audio=audio)
+        self.state.add("said", "", seconds=seconds, audio=audio, by=by)
         self._refreshed()
 
     def spoke(self, words: str, anotado: str = "",
