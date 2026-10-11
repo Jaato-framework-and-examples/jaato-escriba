@@ -787,6 +787,19 @@ changed one is written, because oauth2-proxy renews the forwarded
 token when it handles a request and a held-open `/events` stream is one
 request it handles once.
 
+**One unusable MCP tool takes down every turn, not just that call.**
+Every tool's schema is sent to the provider on every request, so a
+schema the provider refuses fails the whole turn — `kb_declare_source`
+carries a top-level `oneOf`, OpenAI rejects a function parameter
+schema with `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not` at the top
+level, and the escriba died four times in four minutes without
+speaking once, greeting included. Nothing between jaato and the
+provider validates a third-party MCP schema against what the provider
+will accept, and the failure names a hashed function id
+(`t_d3b93b33` = `sha256(tool_name)[:8]`) rather than the tool. So
+widening the tool scope here is a change to test against a live
+provider, not only against `validate`.
+
 **The `del wiki` tab is not a listing of the wiki.** That is a
 measurement, not a preference: `kb_list_nodes` with no filter answers
 with counts alone, and a real kbwiki held 829 nodes across three runs.
