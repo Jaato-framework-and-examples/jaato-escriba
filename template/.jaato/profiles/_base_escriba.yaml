@@ -129,11 +129,21 @@ plugins:
   # `escriba_web/kbwiki.py` for where that token lives and why it is not
   # in the workspace.
   #
-  # SEVEN OF TWENTY-SEVEN.  Every tool name is a word the voice tier may
+  # SIX OF TWENTY-SEVEN.  Every tool name is a word the voice tier may
   # read aloud, and a model choosing between 27 similar names by ear is
-  # choosing badly; these are the five that read and the two that
-  # contribute.  Nothing here can create a template or run a stage,
-  # which are the most expensive things a mishearing could reach.
+  # choosing badly; these are the five that read and the one that
+  # contributes.  Nothing here can create a template, promote a run or
+  # run a stage, which are the most expensive things a mishearing could
+  # reach.
+  #
+  # NAMED AGAINST THE SERVER, not against a plausible list.  A tool
+  # named here that the server does not serve is simply absent, with
+  # nothing said anywhere -- which is how `request_upload` nearly
+  # shipped: it exists on another kbwiki and not on this one.  The
+  # authoritative list is that deployment's `mcp.yaml` `tools:`, which
+  # its startup line ("serving 27 tool(s)") agrees with, and
+  # `execute_command("mcp", ["list"])` reads it back from a live
+  # session.  Check there before adding one.
   #
   # The names are the MCP plugin's, not kbwiki's: `_normalize_tool_name`
   # funnels every tool through `mcp__<server>__<tool>` (mcp/plugin.py:629)
@@ -144,7 +154,7 @@ plugins:
   # names a host, and the host is the operator's (`--kbwiki-url`).  With
   # no `.mcp.json` in the workspace this plugin loads and offers
   # nothing, which is the unwired state the dashboard already reports.
-  - "mcp(mode:preload, tools:[mcp__kbwiki__ask_librarian, mcp__kbwiki__kb_list_bundles, mcp__kbwiki__kb_list_nodes, mcp__kbwiki__kb_get_node, mcp__kbwiki__kb_get_node_content, mcp__kbwiki__kb_declare_source, mcp__kbwiki__request_upload])"
+  - "mcp(mode:preload, tools:[mcp__kbwiki__ask_librarian, mcp__kbwiki__kb_list_bundles, mcp__kbwiki__kb_list_nodes, mcp__kbwiki__kb_get_node, mcp__kbwiki__kb_get_node_content, mcp__kbwiki__kb_declare_source])"
 
 # Drop the instruction layers the framework injects.  This agent
 # converses; the platform constants (task-completion, parallel batching,
@@ -321,7 +331,6 @@ plugin_configs:
           - mcp__kbwiki__kb_get_node
           - mcp__kbwiki__kb_get_node_content
           - mcp__kbwiki__kb_declare_source
-          - mcp__kbwiki__request_upload
 
 # ---------------------------------------------------------------- isolation
 # Kernel-enforced confinement, per session.  OFF BY DEFAULT in the
