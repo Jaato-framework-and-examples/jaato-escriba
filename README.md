@@ -624,6 +624,34 @@ recomputable from nothing. The manifest therefore carries the client id and
 the session id that qualify it, and this repo hashes the reassembled audio
 itself so the outbound half can be verified the same way as the inbound.
 
+**The file is the record; the frames are the voice.** Both exist, and
+the difference is why. `out_<sha>.wav` is named after the digest of the
+WHOLE utterance — which is what makes it verifiable, and also means it
+cannot be named until the reply is over. The page used to wait for that
+name, so it showed "hablando" and stayed silent for as long as the reply
+lasted. So the same headerless PCM the terminal feeds to PulseAudio is
+now published to the person's own hub as it arrives, in half-second
+pieces, and the page plays it through Web Audio: raw samples, no
+container, every piece independently playable, and nothing depending on
+how a browser treats a media file whose length it does not yet know.
+
+Three things that keeps straight. Pieces are coalesced to half a second
+because one frame per provider chunk would put hundreds through a hub
+that drops a reader 256 behind. Every piece holds whole samples, because
+the page reads the frame as an `Int16Array` and a stray byte throws
+there. And the final frame names the recording the voice WAS — the
+digest — because that is the only name both halves can agree on: the
+live frames carry a stream id and the transcript row carries the sha, and
+without the link the page would play the file again a moment after the
+person heard it.
+
+A context may only be created where a browser counts it as the person's
+own doing, so the first reply of a session — the greeting, before
+anybody has pressed anything — is still heard from the file, exactly as
+before. What is NOT marked as heard in that case is the point: the row's
+autoplay is still the remedy, and marking it heard would have left
+silence with nothing to press.
+
 **It lives at the workspace root, not under `.jaato/`.** That directory is
 the framework's namespace — profiles, agents, schemas, the memory store,
 the session journals. Recordings are not framework assets: they are

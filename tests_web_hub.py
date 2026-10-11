@@ -462,6 +462,81 @@ async def main():
         inside = docs in target.parents and target.is_file()
         check(f"doc {path!r}", inside, allowed)
 
+    # ------------------------------------------- the voice, piece by piece
+    # The file the row plays is named after the digest of the WHOLE
+    # utterance, so it cannot be named until the utterance is over.  These
+    # frames are how the reply is heard while it is still being said, and
+    # what they must not do is flood the hub or hand the page half a
+    # sample.
+    import base64 as _b64
+    from escriba_web.driver import Relay, SPEECH_SECONDS
+
+    PCM = "audio/pcm;rate=24000;channels=1;encoding=s16le"
+    sent = []
+
+    class _Spy:
+        def publish(self, kind, data):
+            sent.append((kind, data))
+
+    class _Chunk:
+        def __init__(self, data: bytes, final=False, mime=PCM):
+            self.data_b64 = _b64.b64encode(data).decode()
+            self.mime_type = mime
+            self.stream_id = "st-1"
+            self.final = final
+            self.chunk = ""
+
+    # 24000 samples a second, two bytes each: half a second is 24000 bytes.
+    piece = int(24000 * SPEECH_SECONDS) * 2
+    relay = Relay(hub=_Spy())
+    for _ in range(5):
+        relay.speak(_Chunk(b"\x01\x00" * 2000))      # 4000 bytes each
+    check("nothing goes out until there is a piece to hear", len(sent), 0)
+    relay.speak(_Chunk(b"\x01\x00" * 2000))          # 24000 bytes in all
+    check("then one frame carries it", len(sent), 1)
+    check("and it is exactly one piece", len(_b64.b64decode(sent[0][1]["pcm"])), piece)
+    check("carrying the rate the page has to play it at", sent[0][1]["rate"], 24000)
+    check("and the channel count", sent[0][1]["channels"], 1)
+
+    # AN ODD NUMBER OF BYTES IS HALF A SAMPLE, and the page reads the
+    # frame as an Int16Array: a stray byte would throw there.
+    sent.clear()
+    relay = Relay(hub=_Spy())
+    relay.speak(_Chunk(b"\x02\x00" * 10 + b"\x03", final=True))
+    check("the last piece is whole samples only",
+          len(_b64.b64decode(sent[0][1]["pcm"])) % 2, 0)
+
+    # NOT PCM IS NOT PLAYABLE by the page's decoder, and saying nothing is
+    # right: the archive still writes the file and the row still plays it,
+    # which is the behaviour this replaced.
+    sent.clear()
+    relay = Relay(hub=_Spy())
+    relay.speak(_Chunk(b"\x00" * piece, mime="audio/mpeg"))
+    check("a format the page cannot decode is not streamed", sent, [])
+
+    # THE FINAL MARKER NAMES THE RECORDING, which is the only thing the
+    # two halves can agree on: the live frames carry a stream id and the
+    # transcript row carries the digest.
+    sent.clear()
+
+    class _Keeps:
+        def speaking(self, *a):
+            pass
+
+        def spoke(self, stream_id):
+            return {"sha": "att_deadbeefdeadbeef", "file": "out.wav"}
+
+    relay = Relay(archive=_Keeps(), hub=_Spy())
+    relay.speak(_Chunk(b"\x00" * 8, final=True))
+    check("the end names the file the voice was",
+          [d.get("audio") for k, d in sent if d.get("final")],
+          ["att_deadbeefdeadbeef"])
+
+    # NO HUB, NO FRAMES.  The terminal driver builds its own relay.
+    relay = Relay()
+    relay.speak(_Chunk(b"\x00" * piece))
+    check("a relay with no hub publishes nothing", True, True)
+
     print("web backend OK" if not fail else f"{fail} failure(s)")
     return 1 if fail else 0
 

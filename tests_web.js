@@ -92,6 +92,10 @@ player.play = () => { played.push(player.src); return Promise.resolve(); };
 player.pause = () => {};
 
 const store = new Map();
+//: The context the page created, captured so the legs below can see what
+//: was scheduled on it.
+let audio = null;
+
 const sandbox = {
   console,
   document: {
@@ -116,6 +120,30 @@ const sandbox = {
       : null;
     const done = (v) => ({ then: (f) => done(f ? f(v) : v), catch: () => done(v) });
     return done({ ok: true, json: () => body, text: () => "" });
+  },
+  // The voice arrives base64'd in an SSE frame and is decoded to samples
+  // in the page; Node's vm context has the typed arrays but not this.
+  atob: (b64) => Buffer.from(b64, "base64").toString("binary"),
+  AudioContext: class {
+    constructor() {
+      this.state = "running";
+      this.currentTime = 0;
+      this.destination = {};
+      this.started = [];
+      audio = this;
+    }
+    resume() { this.state = "running"; }
+    createBuffer(channels, length, rate) {
+      const data = Array.from({ length: channels }, () => new Float32Array(length));
+      return { numberOfChannels: channels, length, sampleRate: rate,
+               duration: length / rate, getChannelData: (c) => data[c] };
+    }
+    createBufferSource() {
+      const ctx = this;
+      return { buffer: null, connect() {},
+               start(at) { ctx.started.push({ at, buffer: this.buffer }); },
+               stop() {} };
+    }
   },
   setTimeout, clearTimeout, setInterval, clearInterval,
   URLSearchParams,
@@ -157,7 +185,8 @@ if (!blocks.length) { console.log("  FAIL could not find the application script 
 
 const ctx = vm.createContext(sandbox);
 vm.runInContext(blocks[blocks.length - 1] +
-  "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, renderEngines, keyOf};", ctx);
+  "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, " +
+  "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE};", ctx);
 const T = sandbox.__test;
 
 // ------------------------------------------------ the page before the hub
@@ -554,6 +583,50 @@ check("and is held by id", T.S.byId.get(999999).text, "nuevo");
 check("status is still the hub's", T.S.status.status, "listening");
 check("still exactly one pill active",
       pills.children.filter((p) => p.className.includes(" on-")).length, 1);
+
+// ---------------------------------------- the voice, while it is arriving
+// Half a second of silence, as the server sends it: 12000 stereo-free
+// samples at 24 kHz, two bytes each.
+const piece = (n) => Buffer.alloc(n * 2).toString("base64");
+
+// BEFORE ANY INTERACTION there is no context, because a browser would not
+// have allowed one. Nothing plays, and — the part that matters — nothing
+// is recorded as heard, so the row's own autoplay is still the remedy.
+T.onSpeech({ stream: "s1", rate: 24000, channels: 1, pcm: piece(12000) });
+check("no voice sounds before the person has touched the page", audio, null);
+T.onSpeech({ stream: "s1", final: true, audio: "sha-early" });
+check("and it is not counted as heard", T.S.sounded.has("sha-early"), false);
+
+T.wake();
+check("a press creates the context", audio !== null, true);
+T.onSpeech({ stream: "s2", rate: 24000, channels: 1, pcm: piece(12000) });
+T.onSpeech({ stream: "s2", rate: 24000, channels: 1, pcm: piece(12000) });
+check("both pieces are scheduled", audio.started.length, 2);
+check("the first at once", audio.started[0].at, 0);
+check("the second where the first ends", audio.started[1].at, 0.5);
+check("at the stream's own rate", audio.started[0].buffer.sampleRate, 24000);
+check("whole samples, one channel", audio.started[0].buffer.length, 12000);
+
+T.onSpeech({ stream: "s2", final: true, audio: "sha-heard" });
+check("what sounded is recorded as heard", T.S.sounded.has("sha-heard"), true);
+
+// AND THEREFORE NOT PLAYED AGAIN. The file arrives named a moment later;
+// playing it then would repeat the reply the person just heard.
+T.S.playing = null;
+T.S.live = true;
+T.maybeAutoplay({ id: "e-heard", kind: "spoke", audio: "sha-heard" });
+check("the file is not autoplayed after the live voice", T.S.playing, null);
+T.maybeAutoplay({ id: "e-unheard", kind: "spoke", audio: "sha-other" });
+check("one that was not heard live still is", T.S.playing, "e-unheard");
+
+// NEVER OVER THE PERSON: the escriba talking while the microphone is open
+// would be recording itself.
+T.S.recording = true;
+const scheduled = audio.started.length;
+T.onSpeech({ stream: "s3", rate: 24000, channels: 1, pcm: piece(12000) });
+check("nothing sounds while the microphone is open",
+      audio.started.length, scheduled);
+T.S.recording = false;
 
 console.log(fail ? `${fail} failure(s)` : "web page renders OK");
 process.exit(fail ? 1 : 0);

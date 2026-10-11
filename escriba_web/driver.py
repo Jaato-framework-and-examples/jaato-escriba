@@ -42,6 +42,7 @@ import board as _board                                           # noqa: E402
 import enrichment
 import i18n                                                # noqa: E402
 import memory                                                    # noqa: E402
+from pulse_playback import _pcm_params                           # noqa: E402
 import staging                                                   # noqa: E402
 import voice                                                     # noqa: E402
 import yaml                                                      # noqa: E402
@@ -231,24 +232,49 @@ class NothingHeard(RuntimeError):
 TURN_TIMEOUT = 180.0
 
 
-class Relay:
-    """`voice.Tongue` with the speaker taken out.
+#: How much speech is gathered before a piece of it goes out, in seconds.
+#: The provider streams in pieces far smaller than this, and one SSE
+#: frame each would put hundreds of frames through a hub that drops a
+#: reader 256 behind (`hub.BACKLOG`) — while half a second is under the
+#: delay a person hears as a delay.
+SPEECH_SECONDS = 0.5
 
-    The player is the only thing removed: the archive still accumulates
-    every chunk and still writes one file per utterance, because model
-    media is client-audience and this process is the client.  What the
-    browser plays is that file, fetched afterwards by its id.
+
+class Relay:
+    """`voice.Tongue` with PulseAudio replaced by the browser.
+
+    THE FILE IS THE RECORD AND THE FRAMES ARE THE VOICE, and the
+    difference is why both exist.  The archive still accumulates every
+    chunk and still writes one file per utterance — model media is
+    client-audience and this process is the client — but that file is
+    named after the DIGEST OF THE WHOLE utterance, so its name cannot
+    exist until the utterance is over.  A page that waits for it waits
+    for the reply to finish before the reply starts, which is seconds of
+    silence under a "hablando" pill and the one thing a voice assistant
+    must not do.
+
+    So the same headerless PCM the terminal feeds to PulseAudio is
+    published to the person's own hub as it arrives, in `SPEECH_SECONDS`
+    pieces, and the file stays exactly what it was: what the row replays,
+    and what the manifest can verify.
     """
 
-    def __init__(self, archive: Optional[_archive.Archive] = None) -> None:
+    def __init__(self, archive: Optional[_archive.Archive] = None,
+                 hub: Optional[Hub] = None) -> None:
         self._archive = archive
+        self._hub = hub
         self.recordings: List[dict] = []
         self.spoken: List[str] = []
+        #: Per stream, the bytes gathered but not yet published.
+        self._pending: Dict[str, bytes] = {}
 
     def speak(self, ev) -> None:
         payload = base64.b64decode(ev.data_b64)
         if self._archive is not None:
             self._archive.speaking(ev.stream_id, ev.mime_type, payload)
+        # BEFORE the final marker below, which announces an utterance
+        # that has already gone out in full.
+        self._stream(ev, payload)
         if ev.final:
             if getattr(ev, "chunk", ""):
                 self.spoken.append(ev.chunk)
@@ -256,6 +282,51 @@ class Relay:
                 kept = self._archive.spoke(ev.stream_id)
                 if kept is not None:
                     self.recordings.append(kept)
+                    if self._hub is not None:
+                        # NAMES THE RECORDING THE LIVE VOICE WAS.  The
+                        # page suppresses the autoplay of a file it has
+                        # just heard, and the digest is the only name
+                        # both halves can agree on: the live frames carry
+                        # a stream id, the transcript row carries the sha.
+                        self._hub.publish("speech", {
+                            "stream": ev.stream_id, "final": True,
+                            "audio": kept["sha"]})
+
+    def _stream(self, ev, payload: bytes) -> None:
+        """Publish this utterance's voice in `SPEECH_SECONDS` pieces.
+
+        ONLY 16-BIT PCM, and not as a precaution: the page decodes
+        `Int16Array` straight out of the frame, so a stream the mime
+        describes as anything else is one it cannot play.  Saying nothing
+        then is right — the archive's file is still written, the row
+        still plays it, and that is precisely the behaviour this
+        replaced.
+        """
+        if self._hub is None:
+            return
+        params = _pcm_params(ev.mime_type)
+        if params is None or params["encoding"] != "s16le":
+            return
+        rate, channels = int(params["rate"]), int(params["channels"])
+        frame = channels * 2
+        #: A multiple of `frame` by construction, so every piece sent
+        #: holds whole samples and the page can read it as one array.
+        target = int(rate * SPEECH_SECONDS) * frame
+        buffered = self._pending.pop(ev.stream_id, b"") + payload
+        while len(buffered) >= target:
+            self._send(ev.stream_id, buffered[:target], rate, channels)
+            buffered = buffered[target:]
+        if not ev.final:
+            self._pending[ev.stream_id] = buffered
+            return
+        whole = len(buffered) - (len(buffered) % frame)
+        if whole:
+            self._send(ev.stream_id, buffered[:whole], rate, channels)
+
+    def _send(self, stream_id: str, pcm: bytes, rate: int, channels: int) -> None:
+        self._hub.publish("speech", {
+            "stream": stream_id, "rate": rate, "channels": channels,
+            "pcm": base64.b64encode(pcm).decode("ascii")})
 
     def last(self) -> str:
         text = " ".join(t.strip() for t in self.spoken if t.strip())
@@ -773,7 +844,7 @@ class Person:
             return
 
     def _relay(self) -> Relay:
-        return Relay(archive=self.archive)
+        return Relay(archive=self.archive, hub=self.hub)
 
     async def close(self) -> None:
         self._stop.set()

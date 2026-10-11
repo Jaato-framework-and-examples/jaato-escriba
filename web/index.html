@@ -427,6 +427,10 @@ const S = {
   //: and a reconnect re-sends the world.  Without this, any of the three
   //: would sound the answer again.
   autoplayed: new Set(), live: false,
+  // Recordings whose voice was already heard live, by sha. The row
+  // still carries its `escuchar` button; what this stops is the
+  // SECOND, automatic playing of something just heard.
+  sounded: new Set(),
   theme: localStorage.getItem("escriba-theme") || "auto",
   showIds: localStorage.getItem("escriba-audit") === "1",
   micReason: null,
@@ -1422,6 +1426,82 @@ window.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeReade
 // backend reports `navegador`, because shipping a selector whose other
 // value cannot work is worse than shipping one value.
 const player = $("player");
+
+// ---- THE VOICE, WHILE IT IS STILL ARRIVING ---------------------------
+//
+// The file the row plays is a RECORD; this is the reply sounding. The
+// server publishes the model's voice in half-second pieces of headerless
+// PCM — the same bytes the terminal feeds to PulseAudio — because the
+// file is named after the digest of the WHOLE utterance and so cannot be
+// named until it is over. Waiting for it meant seconds of silence under
+// a "hablando" pill.
+//
+// Web Audio and not an <audio> element, deliberately: these are raw
+// samples with no container, every piece independently playable, and
+// nothing here depends on how a browser treats a media file whose length
+// it does not yet know.
+const VOICE = { ctx: null, at: 0, stream: null, sources: [], played: false };
+
+// A CONTEXT IS ONLY ALLOWED WHERE THE PERSON ASKED FOR SOUND. Browsers
+// refuse to start audio before an interaction, which is a policy and not
+// a fault — the same policy the row's autoplay already lives with. So the
+// context is created on the first press of anything, and a reply that
+// arrives before that one is heard from the file instead, exactly as it
+// was before any of this existed.
+function wake() {
+  if (!VOICE.ctx) VOICE.ctx = new AudioContext();
+  if (VOICE.ctx.state === "suspended") VOICE.ctx.resume();
+}
+for (const ev of ["pointerdown", "keydown"]) window.addEventListener(ev, wake);
+
+function hush() {
+  for (const src of VOICE.sources) { try { src.stop(); } catch (e) {} }
+  VOICE.sources = [];
+  VOICE.at = 0;
+}
+
+function samples(b64) {
+  const bin = atob(b64);
+  const raw = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) raw[i] = bin.charCodeAt(i);
+  return new Int16Array(raw.buffer);     // whole samples, by construction
+}
+
+function onSpeech(f) {
+  if (f.final) {
+    // ONLY WHAT WAS ACTUALLY HEARD is suppressed later. A context the
+    // browser never let run played nothing, and calling that heard would
+    // take the row's autoplay away too and leave the person with silence
+    // and no remedy.
+    if (f.audio && VOICE.played) S.sounded.add(f.audio);
+    VOICE.played = false;
+    VOICE.stream = null;
+    return;
+  }
+  if (S.recording || !VOICE.ctx || VOICE.ctx.state !== "running") return;
+  if (f.stream !== VOICE.stream) { hush(); VOICE.stream = f.stream; }
+  const ctx = VOICE.ctx;
+  const pcm = samples(f.pcm);
+  // The buffer keeps the stream's own rate; a context running at another
+  // one resamples it on playback, which is the spec's job and not ours.
+  const buf = ctx.createBuffer(f.channels, pcm.length / f.channels, f.rate);
+  for (let c = 0; c < f.channels; c++) {
+    const out = buf.getChannelData(c);
+    for (let i = 0; i < out.length; i++) out[i] = pcm[i * f.channels + c] / 32768;
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+  // NEVER IN THE PAST. If the network fell behind, the cursor moves up to
+  // now rather than scheduling a piece whose moment has gone — the
+  // browser drops that one without a word, and the reply loses a word.
+  VOICE.at = Math.max(VOICE.at, ctx.currentTime);
+  src.start(VOICE.at);
+  VOICE.at += buf.duration;
+  VOICE.sources.push(src);
+  VOICE.played = true;
+}
+
 function toggle(e) { start(e, false); }
 
 function start(e, auto) {
@@ -1457,6 +1537,9 @@ function maybeAutoplay(e) {
   if (!S.live || e.kind !== "spoke" || !e.audio || S.autoplayed.has(e.id)) return;
   S.autoplayed.add(e.id);
   if (S.recording) return;
+  //   - and never twice: a voice heard live as it arrived must not be
+  //     played again the moment its file is named.
+  if (S.sounded.has(e.audio)) return;
   start(e, true);
 }
 function fail(e) {
@@ -1565,6 +1648,7 @@ async function mic() {
 async function startRec() {
   if (S.recording || S.micReason) return;
   if (!player.paused) player.pause();         // talking over the reply stops it
+  hush();   // and so does talking over one that is still arriving
   if (MOCK) { S.recording = true; S.rec = 0; tick(); return; }
   try {
     const s = await mic();
@@ -1735,6 +1819,8 @@ function onEvent(kind, data) {
     raise(data.kind, data);
   } else if (kind === "days") {
     S.days = data; renderDays();
+  } else if (kind === "speech") {
+    onSpeech(data);
   }
 }
 
@@ -1766,7 +1852,7 @@ let lost = null;
 function connect() {
   const es = new EventSource("/events");
   for (const kind of ["state", "entry", "counts", "items", "status", "alert",
-                      "days", "wiki", "consumo", "closing"]) {
+                      "days", "wiki", "consumo", "closing", "speech"]) {
     es.addEventListener(kind, (m) => onEvent(kind, JSON.parse(m.data)));
   }
   es.onopen = () => {
