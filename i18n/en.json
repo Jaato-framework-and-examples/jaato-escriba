@@ -111,6 +111,6 @@
   "note.searching": "· «{query}»: already searched in this session",
   "note.no_text": "(no text)",
   "agent.speech": "British English. You speak as people speak in Britain.",
-  "agent.greeting": "[The session opens. The user is listening.]",
+  "agent.greeting": "[The session opens. The user is listening. Greet them, ask what they want to do, and close the turn right there with `nada_que_anotar: true`: a greeting is nothing to note down. Do not search for anything, do not open anything and do not retrieve memories yet — wait until they say what they want to talk about.]",
   "note.close_failed": "· I could not close the previous session: {what}"
 }

@@ -765,9 +765,45 @@ in every person's directory.
 | `template/` | What a new workspace is made of. Copied, never shared: the workspace is the isolation boundary. |
 | `tests_web_hub.py` | The fan-out, the board-to-event mapping and the two path guards — the half of the backend whose failures are silent. No server, no daemon, no session. |
 | `tests_staging.py` | A document the person stages: that a browser's filename can never name a file outside their workspace, that the catalogue entry is what the plugin will accept (checked by the framework's own validator where `jaato-server` is installed, and SAID where it is not), and that a missing file is never reported as an empty one. |
+| `tests_enrichment.py` | Reading a candidate page: that it happens once, in Python, that the SSRF guard the framework's `web_fetch` gave us is still in the path (asserted against a URL that would otherwise be served, so the leg cannot pass because nothing was listening), that an unreadable page is reported rather than guessed at, and that the text reaches the judge fenced and declared foreign. Two legs are reversion guards: a judge handed a fetch tool again would bring back the loop below with nothing failing. |
 | `tests_web.js` | The web page's render paths, headless: it runs the page's own script against a DOM stub. `node tests_web.js`. It cannot say whether the page LOOKS right — that needs `?mock=1` and eyes. |
 | `tests_browser.py` | Where a CLICK goes, in a real browser: the real page served against a stub that records what arrives. `python tests_browser.py`, with `ESCRIBA_BROWSER=…` naming a browser if playwright's own chromium is not installed; the legs are SAID to be unrun rather than passing quietly. It exists because every other suite covered the upload path while the feature was dead — see below. |
 | `tests_render.py`, `tests_terminal.py`, `tests_workspace.py`, `tests_housekeeping.py`, `tests_board.py` | Every render path at four sizes; the terminal handover on a pty; provisioning and what must never leak between people; the two retention clocks and what the ceiling may never delete. All headless. |
+
+**A completion nudge is not a neutral reminder.** The escriba never
+calls `signal_completion` unprompted — it finishes speaking and
+considers the turn done — so nudge 1 of 3 fires on almost every turn.
+Measured 2026-10-11, session `20261011_163722`: the greeting was
+correct on the first pass ("Hello! Ready to dive in again. ¿Te
+gustaría enseñarme algo nuevo…"), and the injected nudge turn arrived
+carrying the references prompt-enrichment block — six catalogued
+sources with "use `selectReferences`", matched against the escriba's
+own greeting sentence. It took the hint: `retrieve_memories`,
+`selectReferences` on an id that was not in the catalogue, a
+`web_fetch`, a `store_memory`. A person who signed in to be greeted got
+a research session. The greeting prompt now tells it to close the turn
+there with `nada_que_anotar: true`, because a turn that closes on the
+first pass is never nudged and so is never enriched. That is a
+workaround at the prompt layer; the nudge carrying enrichment is
+upstream behaviour and is filed as such.
+
+**One unproductive tool call will be repeated until a ceiling stops
+it.** The judge used to open its own candidates — itself a fix, for
+accepting dead links off a snippet — and in the same minute it called
+`web_fetch` on one GitHub page 60 times in a row, every result marked
+`"truncated": true`, until the session died of its tool-call ceiling
+having judged nothing: three minutes of "buscando" and 95% of its
+budget for zero verdicts, and the `finalize` rung at 80% did not stop
+it. The loop could not have ended any other way, which is the part
+worth keeping: `web_fetch` takes no offset or continuation parameter
+(`jaato-scaffold explain plugin web_fetch`), so every repeat returned
+the identical bytes. A model that reads "truncated" and tries again is
+being reasonable; asking it to fetch at all was the mistake, because
+fetching is mechanical and only the judging needs a model. The fetch is
+now `enrichment._pages`, once per URL by construction, and the judge
+has no tools at all. Nothing in the framework bounds an identical call
+repeated N times — no profile key, no env var — so a budget is
+currently the only backstop.
 
 **The wiki is reached as the person, never as the service.** kbwiki
 serves each identity only what it has been granted, keyed on the same

@@ -3,24 +3,33 @@ name: _base_juez
 description: >
   Decides whether some search results are about the topic. One turn, one
   verdict, and it is done.
-plugins:
-  # ONE tool, eagerly.  The judge used to decide from the title and the
-  # snippet alone, having opened nothing — so a dead link or a page that
-  # is not what its snippet claims got catalogued and then offered to a
-  # person mid-conversation.  Fetching what it is about to accept both
-  # verifies the page exists and lets it say what is actually in it.
-  #
-  # `tools:[web_fetch]` drops the plugin's other surface; the judge has no
-  # business doing anything else.
-  - "web_fetch(mode:preload, tools:[web_fetch])"
-# One turn by design: fetch a handful of URLs, accept or discard. The
-# ceiling is deliberately tight — anything more means it is re-judging.
+# NO TOOLS AT ALL, and that is the fix for a real outage rather than
+# minimalism for its own sake.  The judge used to hold `web_fetch` and
+# open its own candidates — which was itself a fix, for accepting dead
+# links off a snippet — and on 2026-10-11 it called it on one GitHub page
+# 60 TIMES IN A ROW, every result marked `"truncated": true`, until the
+# session died of this ceiling having judged nothing: three minutes of
+# "buscando" and 95% of the budget for zero verdicts.  The plugin takes no
+# offset parameter (`jaato-scaffold explain plugin web_fetch`), so every
+# repeat returned the identical bytes and the loop could never have ended
+# any other way.
+#
+# `enrichment._pages` now reads every candidate once, in Python, and the
+# text rides the prompt.  The verification survives — a page that cannot
+# be read never reaches the judge — and the loop cannot recur, because
+# there is nothing left to call.  Whitelisting is moot with an empty
+# plugin list and stays anyway: the two must not be able to disagree.
+plugins: []
+# One turn by design: read, accept or discard.  The ceilings are what that
+# costs plus slack for the `all_judged` refusals, and no more: the old
+# ones were sized for fetching, and 60 tool calls was room for a loop to
+# live in.
 budget_control:
   limits:
     usd: 0.30
-    turns: 25
-    tool_calls: 60
-    seconds: 240
+    turns: 8
+    tool_calls: 8
+    seconds: 120
   degrade:
     - at: 80
       action: finalize
@@ -57,12 +66,7 @@ plugin_configs:
   permission:
     policy:
       defaultPolicy: deny
-      whitelist: {tools: [web_fetch]}
-  web_fetch:
-    # A summary needs the top of the page, not the whole of it: the judge
-    # reads several of these in one turn and the context is not free.
-    max_length: 6000
-    timeout: 15
+      whitelist: {tools: []}
 
 completion_processors:
   # Reconciles the verdict against the candidates it was handed: every URL
