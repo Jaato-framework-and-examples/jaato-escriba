@@ -508,6 +508,13 @@ async def invitar(request: Request) -> dict:
     email = str((body or {}).get("email") or "").strip()
     if "@" not in email:
         raise HTTPException(400, "an email address")
+    # WHOEVER WAS HERE IS LEAVING, and all three audiences are told
+    # before the new name replaces them: the stream is closed by
+    # `invite`, and this is what puts the departure on the transcript,
+    # in the manifest and in front of the escriba.
+    going = ROOM.of_host(person.principal)
+    if going is not None and going.guest is not None:
+        person.guest_gone(going.name or going.email, stage="guest-replaced")
     inv = ROOM.invite(person.principal, email)
     person.invited(inv.email)
     return {"room": token(person.principal), **inv.json()}

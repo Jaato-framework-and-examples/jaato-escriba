@@ -53,6 +53,20 @@ GUEST = "guest-sub-0002"
 OTHER = "other-sub-0003"
 
 
+def closed_with(q) -> object:
+    """What a queue was told to end with, or why we cannot say it was.
+
+    A leg that CRASHES does not report: an empty queue is precisely the
+    failure being looked for here -- a guest nobody evicted -- and
+    `get_nowait` raising would take the whole summary with it instead of
+    printing one line.
+    """
+    try:
+        return q.get_nowait()
+    except asyncio.QueueEmpty:
+        return "nothing was sent: the stream was left open"
+
+
 def check(label_: str, got, want) -> None:
     global fail
     if got != want:
@@ -155,14 +169,30 @@ check("a room is found by its opaque id",
 check("and never by the host's principal", room.by_token(HOST), None)
 
 # ------------------------------------------------- cancelling ends it
-ended: list = []
 q = asyncio.Queue(maxsize=4)
 room.of_host(HOST).queues.append(q)
 room.cancel(HOST)
 check("the host's room is gone", room.of_host(HOST), None)
 check("and what the guest had open was ENDED, not left hanging",
-      q.get_nowait(), None)
+      closed_with(q), None)
 check("the other host's room is untouched", room.of_host(OTHER).host, OTHER)
+
+# REPLACING A GUEST MUST EVICT THEM, not merely stop them talking. The
+# overwrite used to leave the displaced guest's stream subscribed to the
+# host's hub: refused by every write route, and still hearing every word,
+# while the band showed the new name and the host believed only that
+# person was there.
+room.invite(HOST, "primero@ejemplo.es")
+room.claim(HOST, GUEST, "el primero")
+first = asyncio.Queue(maxsize=4)
+room.of_host(HOST).queues.append(first)
+room.invite(HOST, "segundo@ejemplo.es")
+check("the replaced guest is cut off, not just silenced",
+      closed_with(first), None)
+check("and the room now belongs to nobody yet", room.of_host(HOST).guest, None)
+check("naming the person who was actually invited",
+      room.of_host(HOST).email, "segundo@ejemplo.es")
+room.cancel(HOST)
 room.forget(OTHER)
 check("a session ending forgets its room", room.of_host(OTHER), None)
 

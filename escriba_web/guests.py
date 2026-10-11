@@ -97,6 +97,19 @@ class Room:
         self._by_host: Dict[str, Invitation] = {}
 
     def invite(self, host: str, email: str) -> Invitation:
+        """Name somebody, replacing whoever was named before.
+
+        THE DISPLACED INVITATION IS CLOSED, which it was not at first,
+        and the omission was the worst-shaped bug this feature could
+        have had: overwriting the entry left the previous guest's
+        `/events` stream subscribed to this hub. Their write routes
+        began refusing them -- the new invitation's address is not
+        theirs -- so they could no longer speak, and they went on
+        HEARING everything, while the band showed the new name and the
+        host believed only that person was in the room. A guest the host
+        thinks is gone must not still be listening.
+        """
+        self._close(self._by_host.get(host))
         inv = Invitation(host=host, email=email.strip().lower(),
                          since=datetime.now())
         self._by_host[host] = inv
