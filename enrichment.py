@@ -189,11 +189,15 @@ async def _pages(candidates: List[Dict[str, str]]) -> tuple:
         return_exceptions=True)
     read, failed = [], []
     for candidate, page in zip(candidates, fetched):
+        # THE HOST, NOT THE URL, and every one of them rather than the
+        # first.  A note saying "3 could not be read" and then naming one
+        # reason hides two, which is how a content type we should be
+        # handling stayed invisible: the PDF was the one it printed.
+        host = urllib.parse.urlsplit(candidate["url"]).hostname or "?"
         if isinstance(page, BaseException):
-            failed.append(f"{candidate['url']}: {type(page).__name__}: "
-                          f"{str(page)[:80]}")
+            failed.append(f"{host}: {str(page)[:60] or type(page).__name__}")
         elif not page:
-            failed.append(f"{candidate['url']}: no readable text")
+            failed.append(f"{host}: no readable text")
         else:
             read.append(dict(candidate, text=page))
     return read, failed
@@ -298,9 +302,11 @@ async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
 
     # READ HERE, NOT BY THE JUDGE.  See `_read`: the judge used to open
     # its own candidates and looped on a page it could not finish.
+    asked = len(candidates)
     candidates, unread = await _pages(candidates)
     if unread:
-        board.note(f"· «{query}»: {len(unread)} could not be read — {unread[0]}")
+        board.note(f"· «{query}»: {len(unread)} of {asked} could not be "
+                   f"read — " + "; ".join(unread))
     if not candidates:
         return []
     # NOT RECORDED AS DISCARDED.  A page that did not answer today may

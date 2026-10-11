@@ -134,7 +134,8 @@ try:
     check("only the readable candidate comes back", len(read), 1)
     check("and it carries its text", read[0]["text"], "cuerpo")
     check("the other is reported, not dropped in silence", len(unread), 1)
-    check("with the URL in the reason", "127.0.0.1:1" in unread[0], True)
+    check("naming its host", unread[0].startswith("127.0.0.1:"), True)
+    check("and saying what went wrong", len(unread[0]) > len("127.0.0.1: "), True)
 finally:
     enrichment._public = guard
     server.shutdown()
