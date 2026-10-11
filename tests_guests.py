@@ -134,67 +134,111 @@ check("and is not somebody else's", token(HOST) == token(GUEST), False)
 check("and is not the principal", token(HOST) == HOST, False)
 
 # ------------------------------------------------------------ the room
+#
+# SEVERAL AT ONCE, because an interview has two sides: a host documenting
+# a topic calls in two people so that one can correct the other, and that
+# correction is the thing worth writing down.
 room = Room()
-check("nobody is expected to begin with", room.of_host(HOST), None)
+check("nobody is expected to begin with", room.of_host(HOST), [])
 inv = room.invite(HOST, "  Marta@Ejemplo.ES ")
 check("an address is folded, not stored as typed", inv.email, "marta@ejemplo.es")
-check("the host can see it standing open", room.of_host(HOST).email,
-      "marta@ejemplo.es")
+check("the host can see it standing open",
+      [i.email for i in room.of_host(HOST)], ["marta@ejemplo.es"])
 check("and it is not claimed yet", inv.guest, None)
-check("the guest is expected", [i.host for i in room.waiting_for("marta@ejemplo.es")],
-      [HOST])
+check("nobody is actually here", room.present(HOST), [])
+check("the guest is expected",
+      [i.host for i in room.waiting_for("marta@ejemplo.es")], [HOST])
 check("somebody else is not", room.waiting_for("otro@ejemplo.es"), [])
 check("and neither is nobody", room.waiting_for(""), [])
 
+# A SECOND COLLEAGUE IS ADDED, NOT SUBSTITUTED.
+room.invite(HOST, "carlos@ejemplo.es")
+check("both are in the room",
+      [i.email for i in room.of_host(HOST)],
+      ["marta@ejemplo.es", "carlos@ejemplo.es"])
+check("in the order the host named them",
+      room.of_host(HOST)[0].email, "marta@ejemplo.es")
+
 # TWO HOSTS CAN WANT THE SAME COLLEAGUE, and showing only one of them
 # would hide a request that was really made.
-second = room.invite(OTHER, "marta@ejemplo.es")
+room.invite(OTHER, "marta@ejemplo.es")
 check("both hosts are reported", len(room.waiting_for("marta@ejemplo.es")), 2)
 check("oldest first", room.waiting_for("marta@ejemplo.es")[0].host, HOST)
 
-# THE ROOM PINS TO WHOEVER WALKS IN.  Matching the address alone would
-# leave it open to the next holder of that address after the guest has
-# gone -- and to anybody else the host never named.
+# EACH INVITATION PINS TO WHOEVER WALKS IN.  Matching the address alone
+# would leave it open to the next holder of that address after the guest
+# has gone -- and to anybody the host never named.
+marta = room.find(token(HOST), "marta@ejemplo.es")
+check("a room is found by its opaque id and the address", marta is inv, True)
+check("never by the host's principal", room.find(HOST, "marta@ejemplo.es"), None)
+check("and an address nobody invited finds nothing",
+      room.find(token(HOST), "nadie@ejemplo.es"), None)
 check("the named guest is let in",
-      room.claim(HOST, GUEST, "marta.ruiz") is not None, True)
-check("and is recorded on it", room.of_host(HOST).guest, GUEST)
+      room.claim(marta, GUEST, "marta.ruiz") is not None, True)
+check("and is recorded on it", marta.guest, GUEST)
+check("so the host can see who is actually here",
+      [i.name for i in room.present(HOST)], ["marta.ruiz"])
 check("the same guest comes back in",
-      room.claim(HOST, GUEST, "marta.ruiz") is not None, True)
+      room.claim(marta, GUEST, "marta.ruiz") is not None, True)
 check("anybody else is refused once it is claimed",
-      room.claim(HOST, OTHER, "quien sea"), None)
-check("a room nobody opened cannot be claimed",
-      room.claim("nobody-at-all", GUEST, "marta"), None)
-check("a room is found by its opaque id",
-      room.by_token(token(HOST)).host, HOST)
-check("and never by the host's principal", room.by_token(HOST), None)
+      room.claim(marta, OTHER, "quien sea"), None)
 
-# ------------------------------------------------- cancelling ends it
-q = asyncio.Queue(maxsize=4)
-room.of_host(HOST).queues.append(q)
-room.cancel(HOST)
-check("the host's room is gone", room.of_host(HOST), None)
-check("and what the guest had open was ENDED, not left hanging",
-      closed_with(q), None)
-check("the other host's room is untouched", room.of_host(OTHER).host, OTHER)
+# THE OTHER SIDE OF THE INTERVIEW ARRIVES, and claiming one invitation
+# says nothing about the other.
+carlos = room.find(token(HOST), "carlos@ejemplo.es")
+check("the second colleague is let in on their own invitation",
+      room.claim(carlos, OTHER, "carlos.vega") is not None, True)
+check("and both are now here",
+      sorted(i.name for i in room.present(HOST)), ["carlos.vega", "marta.ruiz"])
 
-# REPLACING A GUEST MUST EVICT THEM, not merely stop them talking. The
+# ------------------------------------- showing ONE of them out
+# An interview's two sides do not finish together: the colleague who has
+# said their piece leaves while the other is still answering.
+his = asyncio.Queue(maxsize=4)
+carlos.queues.append(his)
+room.revoke(HOST, "carlos@ejemplo.es")
+check("the one shown out is cut off", closed_with(his), None)
+check("and only that one", [i.name for i in room.present(HOST)], ["marta.ruiz"])
+check("the other is still in the room",
+      [i.email for i in room.of_host(HOST)], ["marta@ejemplo.es"])
+
+# REPLACING ONE GUEST MUST EVICT THEM, not merely stop them talking. The
 # overwrite used to leave the displaced guest's stream subscribed to the
 # host's hub: refused by every write route, and still hearing every word,
 # while the band showed the new name and the host believed only that
 # person was there.
-room.invite(HOST, "primero@ejemplo.es")
-room.claim(HOST, GUEST, "el primero")
-first = asyncio.Queue(maxsize=4)
-room.of_host(HOST).queues.append(first)
-room.invite(HOST, "segundo@ejemplo.es")
+hers = asyncio.Queue(maxsize=4)
+marta.queues.append(hers)
+room.invite(HOST, "marta@ejemplo.es")
 check("the replaced guest is cut off, not just silenced",
-      closed_with(first), None)
-check("and the room now belongs to nobody yet", room.of_host(HOST).guest, None)
-check("naming the person who was actually invited",
-      room.of_host(HOST).email, "segundo@ejemplo.es")
-room.cancel(HOST)
+      closed_with(hers), None)
+check("and that invitation belongs to nobody yet",
+      room.find(token(HOST), "marta@ejemplo.es").guest, None)
+
+# AND A TYPO MUST NOT EVICT THE COLLEAGUE WHO IS ANSWERING.
+room.invite(HOST, "carlos@ejemplo.es")
+still = room.find(token(HOST), "carlos@ejemplo.es")
+room.claim(still, OTHER, "carlos.vega")
+theirs = asyncio.Queue(maxsize=4)
+still.queues.append(theirs)
+room.invite(HOST, "marta@ejemplo.es")          # fixing the other address
+check("re-inviting one address leaves the other alone",
+      closed_with(theirs), "nothing was sent: the stream was left open")
+check("and that guest is still here",
+      [i.name for i in room.present(HOST)], ["carlos.vega"])
+
+# ------------------------------------------------- cancelling ends it all
+q = asyncio.Queue(maxsize=4)
+room.of_host(HOST)[0].queues.append(q)
+gone = room.cancel(HOST)
+check("everybody is shown out at once", len(gone), 2)
+check("the host's room is gone", room.of_host(HOST), [])
+check("and what they had open was ENDED, not left hanging",
+      closed_with(q), None)
+check("the other host's room is untouched",
+      [i.host for i in room.of_host(OTHER)], [OTHER])
 room.forget(OTHER)
-check("a session ending forgets its room", room.of_host(OTHER), None)
+check("a session ending forgets its room", room.of_host(OTHER), [])
 
 
 async def main() -> int:
@@ -457,7 +501,7 @@ async def main() -> int:
 
         # AND NOT MARKED WHEN NOBODY IS THERE, which is what makes the
         # mark worth anything: a row on every turn would say nothing.
-        host.guest_gone()
+        host.guest_gone("marta.ruiz")
         await host.talk(b"fake-recording")
         rows = [json.loads(line) for line in
                 (host.archive.dir / "manifest.jsonl").read_text(
@@ -467,6 +511,86 @@ async def main() -> int:
     finally:
         _driver._turn, _driver.voice._to_mp3 = real_turn, real_mp3
         host._scribe = None
+
+    # ------------------------------------- two of them, and the floor
+    # The host called in two people so that one could correct the other.
+    host._guests.clear()
+    host.guest_here("marta.ruiz", who_id=token(GUEST))
+    host.guest_here("carlos.vega", who_id=token(OTHER))
+    check("both are in the room", host._guests, ["marta.ruiz", "carlos.vega"])
+    check("and arriving twice does not duplicate anybody",
+          (host.guest_here("marta.ruiz"), host._guests)[1],
+          ["marta.ruiz", "carlos.vega"])
+
+    # WHO ELSE IS LISTENING, told to each of them: somebody answering
+    # into a room without being told who is in it has not been given the
+    # chance to decide what to say.
+    theirs = host.guest_snapshot(GUEST, "marta.ruiz")
+    check("a guest is told who else is here",
+          theirs["present"], ["marta.ruiz", "carlos.vega"])
+    check("and whether anybody holds the floor", theirs["floor"], None)
+    check("but not what the room is spending", "consumo" in theirs, False)
+
+    # REFUSED, NOT QUEUED. Waiting was right while the only person who
+    # could collide with you was yourself with two tabs open; with two
+    # guests it means a press that looks like it did nothing and an
+    # answer arriving to a question somebody else has since replaced.
+    from escriba_web.driver import FloorTaken
+    await host._turn_lock.acquire()
+    host._floor = "carlos.vega"
+    try:
+        await host.talk(b"fake-recording", by="marta.ruiz")
+        check("a second speaker is refused while one has the floor",
+              "accepted", "refused")
+    except FloorTaken as exc:
+        check("a second speaker is told who has it",
+              "carlos.vega" in str(exc), True)
+    finally:
+        host._floor = None
+        host._turn_lock.release()
+
+    real_turn, _driver._turn = _driver._turn, (
+        lambda scribe, prompt, att, relay, **kw: said.append(prompt) or _done(None))
+    real_mp3, _driver.voice._to_mp3 = _driver.voice._to_mp3, lambda b: b
+    host._scribe = object()
+    try:
+        # AND RELEASED ON EVERY PATH. A floor left held by somebody whose
+        # recording never became a turn is a room in which nobody can
+        # speak again, with a reload the only remedy -- which is why it
+        # is a context manager and not a pair of calls around the turn's
+        # own `try`: `_to_mp3` and `archive.heard` both sit inside it and
+        # both can raise.
+        await host.talk(b"fake-recording", by="marta.ruiz")
+        check("the floor is free again after a turn", host._floor, None)
+
+        _driver.voice._to_mp3 = lambda b: (_ for _ in ()).throw(
+            RuntimeError("ffmpeg refused it"))
+        try:
+            await host.talk(b"fake-recording", by="marta.ruiz")
+        except RuntimeError:
+            pass
+        check("and after one that never became a turn at all",
+              host._floor, None)
+        check("so the next speaker is not refused",
+              host._turn_lock.locked(), False)
+    finally:
+        _driver._turn, _driver.voice._to_mp3 = real_turn, real_mp3
+        host._scribe = None
+
+    # THE TRACE NAMES EVERYBODY WHO WAS LISTENING, not just one of them:
+    # the question "who could have heard this" has two answers now.
+    rows = [json.loads(line) for line in
+            (host.archive.dir / "manifest.jsonl").read_text(
+                encoding="utf-8").splitlines() if line.strip()]
+    both = [r for r in rows if r.get("stage") == "guest-present"
+            and len(r.get("guests") or []) == 2]
+    check("a turn with two guests names both",
+          both[-1]["guests"], ["marta.ruiz", "carlos.vega"])
+    check("and still says which one spoke", both[-1]["speaker"], "marta.ruiz")
+
+    # ONE LEAVES, THE OTHER STAYS.
+    host.guest_gone("carlos.vega")
+    check("only the one who left is gone", host._guests, ["marta.ruiz"])
 
     print("guests OK" if not fail else f"{fail} failure(s)")
     return 1 if fail else 0

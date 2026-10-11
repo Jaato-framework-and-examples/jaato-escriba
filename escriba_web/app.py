@@ -41,7 +41,7 @@ import transcribe as _transcribe                                   # noqa: E402
 import staging as _staging                                        # noqa: E402
 import workspace as _workspace                                     # noqa: E402
 
-from .driver import NothingHeard, NotReady, Person                 # noqa: E402
+from .driver import FloorTaken, NothingHeard, NotReady, Person     # noqa: E402
 from .guests import ROOM, Invitation, label, token  # noqa: E402
 from .hub import frame                                             # noqa: E402
 
@@ -296,6 +296,12 @@ async def talk(request: Request, audio: UploadFile) -> StreamingResponse:
             await person.talk(blob)
         except NotReady as exc:
             yield frame("alert", {"kind": "waking", "detail": str(exc)})
+        except FloorTaken as exc:
+            # ITS OWN KIND. Somebody else is talking, which is not a
+            # failure of anything and must not read as one: the page
+            # disables the button while the floor is held, and this is
+            # for the press that raced it anyway.
+            yield frame("alert", {"kind": "floor", "detail": str(exc)})
         except NothingHeard:
             # NOT a connection failure, and it used to be reported as one.
             # The page owns the words; what crosses is which situation it
@@ -481,12 +487,14 @@ def _invited(request: Request) -> Tuple[Person, Invitation, str]:
         raise HTTPException(403, "the proxy in front of this deployment is "
                                  "not forwarding an email address, so there "
                                  "is nothing to match an invitation against")
-    inv = ROOM.by_token(request.query_params.get("room", ""))
-    # ONE REFUSAL FOR EVERY CAUSE. No room, the wrong address, somebody
-    # else already in it: an uninvited caller learns nothing about which,
-    # and therefore nothing about whose session exists.
-    if (inv is None or inv.email != email.strip().lower()
-            or ROOM.claim(inv.host, principal, _name_of(request)) is None):
+    # BOTH HALVES OF THE LOOKUP: the room from the opaque token, and then
+    # the invitation issued to the address the proxy asserted -- because
+    # one room now holds several, one per person the host named.
+    inv = ROOM.find(request.query_params.get("room", ""), email)
+    # ONE REFUSAL FOR EVERY CAUSE. No room, no invitation to that address,
+    # somebody else already holding it: an uninvited caller learns nothing
+    # about which, and therefore nothing about whose session exists.
+    if inv is None or ROOM.claim(inv, principal, _name_of(request)) is None:
         raise HTTPException(403, "no open invitation for you")
     host = PEOPLE.get(inv.host)
     if host is None:
@@ -508,26 +516,41 @@ async def invitar(request: Request) -> dict:
     email = str((body or {}).get("email") or "").strip()
     if "@" not in email:
         raise HTTPException(400, "an email address")
-    # WHOEVER WAS HERE IS LEAVING, and all three audiences are told
-    # before the new name replaces them: the stream is closed by
-    # `invite`, and this is what puts the departure on the transcript,
-    # in the manifest and in front of the escriba.
-    going = ROOM.of_host(person.principal)
-    if going is not None and going.guest is not None:
+    # ONLY THE INVITATION TO THIS ADDRESS IS REPLACED, and if somebody
+    # was holding it they are shown out through the same path a
+    # withdrawal takes -- stream closed, transcript, manifest, and the
+    # escriba told on its next turn. Everybody else in the room stays:
+    # a host fixing a typo must not evict the colleague who is in the
+    # middle of answering a question.
+    going = next((i for i in ROOM.of_host(person.principal)
+                  if i.email == email.strip().lower() and i.guest), None)
+    if going is not None:
         person.guest_gone(going.name or going.email, stage="guest-replaced")
     inv = ROOM.invite(person.principal, email)
     person.invited(inv.email)
-    return {"room": token(person.principal), **inv.json()}
+    return {"room": token(person.principal), "guests": _room_of(person)}
 
 
 @app.delete("/invitar")
 async def desinvitar(request: Request) -> dict:
-    """Withdraw it, and end whatever the guest still had open."""
+    """Show one guest out, or everybody.
+
+    NAMED RATHER THAN "THE GUEST", because an interview has two sides
+    and one of them finishes first: the colleague who has said their
+    piece leaves, and the other one is still answering.
+    """
     person = await person_of(request)
-    inv = ROOM.cancel(person.principal)
-    if inv is not None:
+    email = str(request.query_params.get("email") or "").strip().lower()
+    gone = ([ROOM.revoke(person.principal, email)] if email
+            else ROOM.cancel(person.principal))
+    for inv in [i for i in gone if i is not None]:
         person.guest_gone(inv.name or inv.email, stage="guest-revoked")
-    return {"room": None}
+    return {"room": token(person.principal), "guests": _room_of(person)}
+
+
+def _room_of(person: Person) -> list:
+    """Everybody this host has named, and whether they are here yet."""
+    return [i.json() for i in ROOM.of_host(person.principal)]
 
 
 @app.get("/invitacion")
@@ -588,6 +611,8 @@ async def guest_talk(request: Request, audio: UploadFile) -> StreamingResponse:
             await host.talk(blob, by=name)
         except NotReady as exc:
             yield frame("alert", {"kind": "waking", "detail": str(exc)})
+        except FloorTaken as exc:
+            yield frame("alert", {"kind": "floor", "detail": str(exc)})
         except NothingHeard:
             yield frame("alert", {"kind": "silence"})
         except Exception as exc:                      # noqa: BLE001

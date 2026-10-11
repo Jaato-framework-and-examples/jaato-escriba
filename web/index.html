@@ -483,7 +483,19 @@ const S = {
   selfId: "",
   //: Rooms this person has been offered, and the invitation this person
   //: has issued.
-  invited: [], waiting: null, inviting: false,
+  invited: [], inviting: false,
+  //: EVERYBODY THE HOST HAS NAMED, and whether each is here yet. A list,
+  //: because an interview has two sides: a host documenting a topic
+  //: calls in two people so that one can correct the other, and the
+  //: correction is the thing worth writing down.
+  guests: [],
+  //: Who holds the turn, published by the server rather than guessed
+  //: from the pills. `null` is nobody, `""` is the host, a name is that
+  //: guest. With three people the lock has to be VISIBLE: a press that
+  //: silently does nothing is the worst affordance in the page.
+  floor: null,
+  //: Everybody in the room, by name, as the server publishes it.
+  present: [],
   //: The other voice, silenced. A host and a guest are often already on
   //: a call together, in which case each hears the other through it and
   //: this page would be a second, delayed copy.
@@ -647,6 +659,11 @@ const ALERTS = {
   // about to change under the reader — their own escriba comes back —
   // and a transcript replacing itself with no explanation reads as a bug.
   guest: (d) => [tx("alert.guest.title"), d.reason || tx("guest.closed")],
+  // Not a failure either: two people pressed at once and one of them
+  // lost. The button is already disabled while the floor is held; this
+  // is for the press that raced it.
+  floor: (d) => [tx("alert.floor.title"), tx("alert.floor.body",
+                                             { detail: d.detail || "" })],
   // A recording with no audio in it.  Its own kind, because it used to
   // arrive as `connection` and send the person to look at their network
   // for a press that was simply too short to carry anything.
@@ -1608,20 +1625,26 @@ async function invite(field) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }) });
   if (!res.ok) return;
-  S.waiting = await res.json();
+  S.guests = (await res.json()).guests || [];
   S.inviting = false;
   renderGuest();
 }
 
-async function uninvite() {
-  await fetch("/invitar", { method: "DELETE" }).catch(() => {});
-  S.waiting = null;
+// ONE OF THEM, OR ALL OF THEM. An interview's two sides do not finish
+// together: the colleague who has said their piece leaves while the
+// other is still answering, so showing somebody out is by name.
+async function uninvite(email) {
+  const res = await fetch("/invitar" + (email ? "?email=" +
+                          encodeURIComponent(email) : ""),
+                          { method: "DELETE" }).catch(() => null);
+  S.guests = (res && res.ok && (await res.json()).guests) || [];
   renderGuest();
 }
 
 async function enterRoom(room) {
   S.room = room;
   S.invited = [];
+  S.guests = []; S.present = []; S.floor = null;
   // The transcript of their own escriba, if they had one open, is not
   // theirs to carry into somebody else's room.
   S.order = []; S.byId.clear(); S.items = {}; S.counts = {}; S.days = [];
@@ -1631,6 +1654,7 @@ async function enterRoom(room) {
 
 function leaveRoom() {
   S.room = null; S.guest = false; S.host = "";
+  S.guests = []; S.present = []; S.floor = null;
   S.order = []; S.byId.clear();
   renderAll();
   connect();
@@ -1650,6 +1674,15 @@ function renderGuest() {
     band.hidden = false;
     band.append(el("span", "nm", tx("guest.inside", { who: S.host })),
                 el("span", "warn", tx("guest.nothing_before")));
+    // WHO ELSE IS LISTENING. The host may have called in two people so
+    // that one corrects the other; somebody answering into a room
+    // without being told who is in it has not been given the chance to
+    // decide what to say.
+    const others = (S.present || []).filter((n) => n !== S.who);
+    if (others.length) {
+      band.append(el("span", "warn",
+                     tx("guest.present", { who: others.join(", ") })));
+    }
     const hush = el("button", "hbtn", tx("guest.hush"));
     hush.setAttribute("aria-pressed", String(S.hushOther));
     hush.onclick = () => { S.hushOther = !S.hushOther; renderGuest(); };
@@ -1658,26 +1691,48 @@ function renderGuest() {
     const wrap = el("span", "");
     wrap.append(hush, out);
     band.append(wrap);
-  } else if (S.waiting) {
+  } else if (S.guests.length) {
     band.hidden = false;
-    band.append(el("span", "nm", S.waiting.here
-                     ? tx("guest.here", { who: S.waiting.name || S.waiting.email })
-                     : tx("guest.waiting", { who: S.waiting.email })));
-    if (S.waiting.here) {
-      // THE CONSEQUENCE THE HOST AGREED TO, said while it is true rather
-      // than at the moment of inviting: their escriba reads the wiki with
-      // THEIR grants for as long as somebody else is asking it questions.
+    // EVERY ONE OF THEM, each with its own way out. A single line saying
+    // "somebody is here" cannot be acted on when there are two.
+    for (const g of S.guests) {
+      const row = el("span", "invite");
+      row.append(el("span", "nm", g.here
+                      ? tx("guest.here", { who: g.name || g.email })
+                      : tx("guest.waiting", { who: g.email })));
+      const out = el("button", "hbtn", tx("guest.cancel"));
+      out.onclick = () => uninvite(g.email);
+      row.append(out);
+      band.append(row);
+    }
+    if (S.guests.some((g) => g.here)) {
+      // THE CONSEQUENCES THE HOST AGREED TO, said while they are true
+      // rather than once at the moment of inviting: the escriba reads
+      // the wiki with THEIR grants for as long as somebody else is
+      // asking it questions, and every answer is on their bill.
       band.append(el("span", "warn", tx("guest.hears")),
                   el("span", "warn", tx("guest.grants")));
+      // THE BILL, WHERE IT CAN BE SEEN. An interview is the long,
+      // many-turn session this ceiling was sized against, and the ladder
+      // finalises the HOST's session at 80 %. Arriving as a surprise is
+      // the avoidable part.
+      //
+      // READ THE WAY `renderEngines` READS IT, from the daemon's own
+      // budget report: `spend.budget.{used,limits}` keyed by dimension.
+      // A first attempt invented `spend.usd` and would have rendered
+      // nothing, forever, with both halves looking correct.
+      const b = S.consumo && S.consumo.spend && S.consumo.spend.budget;
+      const used = b && b.used && b.used.usd;
+      const cap = b && b.limits && b.limits.usd;
+      if (used != null && cap != null) {
+        band.append(el("span", "warn", tx("guest.spent", {
+          spent: Number(used).toFixed(2), limit: Number(cap).toFixed(2) })));
+      }
     }
     const hush = el("button", "hbtn", tx("guest.hush"));
     hush.setAttribute("aria-pressed", String(S.hushOther));
     hush.onclick = () => { S.hushOther = !S.hushOther; renderGuest(); };
-    const stop = el("button", "hbtn", tx("guest.cancel"));
-    stop.onclick = uninvite;
-    const wrap = el("span", "");
-    wrap.append(hush, stop);
-    band.append(wrap);
+    band.append(hush);
   } else if (S.inviting) {
     // The field, in the band rather than in a dialog: the host is in the
     // middle of a conversation and a modal would take the page away from
@@ -1888,6 +1943,18 @@ function pttFace() {
     ptt.disabled = true;
     t.textContent = tx("alert.insecure.title");
     s.textContent = S.micReason;
+    time.textContent = "";
+    return;
+  }
+  // SOMEBODY ELSE HAS THE FLOOR, so this button says so and does not
+  // work. The lock has always existed server-side; what is new is that
+  // three people can race for it, and a press that silently does
+  // nothing is the worst thing this page could do with one.
+  const held = S.floor != null && S.floor !== (S.guest ? S.who : "");
+  if (held && !S.recording) {
+    ptt.disabled = true;
+    t.textContent = tx("guest.floor", { who: S.floor || S.host || "" });
+    s.textContent = tx("ptt.sub");
     time.textContent = "";
     return;
   }
@@ -2189,6 +2256,11 @@ function onEvent(kind, data) {
     S.guest = !!data.guest;
     S.host = data.host || "";
     S.selfId = data.self_id || "";
+    // A RECONNECT COMES BACK TO THE SAME ROOM, not an empty one: who is
+    // present and who is talking are state, so they travel with the
+    // snapshot like everything else the page redraws from.
+    S.present = data.present || [];
+    S.floor = data.floor !== undefined ? data.floor : null;
     renderAll();
   } else if (kind === "entry") {
     updateEntry(data);
@@ -2221,12 +2293,17 @@ function onEvent(kind, data) {
     S.days = data; renderDays();
   } else if (kind === "speech") {
     onSpeech(data);
+  } else if (kind === "room") {
+    S.present = data.present || [];
+    S.floor = data.floor !== undefined ? data.floor : S.floor;
+    renderGuest(); pttFace();
   } else if (kind === "closed") {
     // THE ROOM ENDED FROM THE OTHER SIDE: the host withdrew the
     // invitation or their session went away. Said in the server's own
     // words and then this page becomes its owner's own escriba again,
     // which is where somebody whose visit is over belongs.
     S.room = null; S.guest = false; S.host = "";
+    S.guests = []; S.present = []; S.floor = null;
     raise("guest", { reason: data.reason || tx("guest.closed") });
     renderAll();
     connect();
@@ -2267,7 +2344,8 @@ function connect() {
   if (source) { try { source.close(); } catch (e) {} }
   const es = source = new EventSource(api("/events"));
   for (const kind of ["state", "entry", "counts", "items", "status", "alert",
-                      "days", "wiki", "consumo", "closing", "speech", "closed"]) {
+                      "days", "wiki", "consumo", "closing", "speech", "closed",
+                      "room"]) {
     es.addEventListener(kind, (m) => onEvent(kind, JSON.parse(m.data)));
   }
   es.onopen = () => {

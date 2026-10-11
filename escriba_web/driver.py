@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import re
 import sys
@@ -206,6 +207,22 @@ WIKI_UNWIRED = {"state": "sin conectar", "rows": [],
 
 class NotReady(RuntimeError):
     """A turn was asked for before the session existed."""
+
+
+class FloorTaken(RuntimeError):
+    """Somebody else is already talking.
+
+    REFUSED RATHER THAN QUEUED, once a conversation can hold three
+    people. The turn lock has always serialised -- a second press while
+    a turn is in flight would interleave two conversations and the model
+    would answer the pair -- and waiting was the right answer while the
+    only person who could collide with you was yourself, two tabs open.
+    With two guests in an interview, waiting means a press that appears
+    to do nothing and an answer arriving a minute later to a question
+    somebody else has since asked. So the lock's holder is published,
+    every page disables its own button while somebody else has it, and a
+    press that races anyway is told so.
+    """
 
 
 class NothingHeard(RuntimeError):
@@ -443,7 +460,7 @@ class Person:
         #: whichever side takes it, which is exactly when it starts
         #: mattering.
         self._notices: List[str] = []
-        #: WHO ELSE IS IN THE ROOM, while somebody is.
+        #: WHO ELSE IS IN THE ROOM, while anybody is.
         #:
         #: Read for one purpose: every turn taken while this is set gets
         #: a row of its own in the manifest. The escriba reads the wiki
@@ -453,7 +470,11 @@ class Person:
         #: cannot be enforced away. What can be done is make it
         #: ANSWERABLE afterwards: which reads happened while somebody
         #: else was in the room, and which of the two was speaking.
-        self._guest: Optional[str] = None
+        self._guests: List[str] = []
+        #: WHO HOLDS THE TURN, so every page can say so and disable its
+        #: own button rather than letting a press do nothing. `None` is
+        #: nobody, `""` is the owner, a name is that guest.
+        self._floor: Optional[str] = None
         #: `{"url": ..., "dir": Path}` when the operator wired a kbwiki,
         #: `None` when they did not.  ABSENT IS OFF, with nothing
         #: defaulted: a URL this project invented would point the
@@ -920,16 +941,42 @@ class Person:
         the other would leave the manifest saying the opposite of the
         truth. A test found exactly that before a person could.
         """
-        self._guest = who
+        if who not in self._guests:
+            self._guests.append(who)
         self._room("guest-joined", who, "note.guest_here",
                    "agent.guest_joined", who_id=who_id)
+        self._told_who()
 
-    def guest_gone(self, who: str = "", stage: str = "guest-left") -> None:
-        """They are not here any more, whichever way it ended."""
-        who = who or self._guest or ""
-        self._guest = None
-        if who:
-            self._room(stage, who, "note.guest_left", "agent.guest_left")
+    def guest_gone(self, who: str, stage: str = "guest-left") -> None:
+        """One of them is not here any more, whichever way it ended.
+
+        NAMED, never "the guest": with two people in an interview, the
+        one who leaves when the other stays is the whole reason this
+        takes an argument.
+        """
+        if who in self._guests:
+            self._guests.remove(who)
+        self._room(stage, who, "note.guest_left", "agent.guest_left")
+        self._told_who()
+
+    def _told_who(self) -> None:
+        """Publish who is in the room, so every page shows the same list."""
+        self.hub.publish("room", {"present": list(self._guests),
+                                  "floor": self._floor})
+
+    def floor(self, who: Optional[str]) -> None:
+        """Who is talking, or nobody.  Published, because three can race."""
+        self._floor = who
+        self._told_who()
+
+    @contextlib.contextmanager
+    def _holding(self, who: str):
+        """The floor, for exactly as long as this block runs."""
+        self.floor(who)
+        try:
+            yield
+        finally:
+            self.floor(None)
 
     # -- a turn ----------------------------------------------------------
     async def talk(self, blob: bytes, by: str = "") -> None:
@@ -959,6 +1006,24 @@ class Person:
         # a turn, a session or a place in the queue behind one.
         if not blob:
             raise NothingHeard()
+        # THE FLOOR IS TAKEN, OR IT IS NOT, decided before the lock is
+        # awaited rather than by waiting on it.
+        #
+        # The lock has always serialised, and waiting was right while
+        # the only person who could collide with you was yourself with
+        # two tabs open. Once two guests are in an interview, waiting
+        # means a press that looks like it did nothing and an answer
+        # arriving to a question somebody else has since replaced. Each
+        # page disables its own button while somebody else holds the
+        # floor; this is for the press that races anyway.
+        #
+        # YOUR OWN SECOND PRESS STILL QUEUES, which is the behaviour the
+        # lock was given for and the page already prevents: nothing is
+        # changed for a person talking to their own escriba.
+        speaker = by or ""
+        if self._turn_lock.locked() and self._floor != speaker:
+            raise FloorTaken(self.say("note.floor_taken",
+                                      who=self._floor or self.who))
         async with self._turn_lock:
             if self._scribe is None:
                 # NOT A FAULT, AND IT SHOULD NOT READ LIKE ONE.  Opening
@@ -970,97 +1035,107 @@ class Person:
                 # to look at the network.
                 raise NotReady("el escriba todavía está despertando; "
                                "inténtalo de nuevo en unos segundos")
-            data = await asyncio.to_thread(voice._to_mp3, blob)
-            seconds = len(data) / 4000.0      # 32 kbit/s mono, by construction
-            said = {"mime_type": voice.UTTERANCE_MIME, "data": data,
-                    "display_name": "utterance.mp3", "seconds": seconds,
-                    ATTACHMENT_ID_KEY: self.archive.heard(data)}
-            # Popped the way the terminal driver pops it: `seconds` is for
-            # the view and the manifest, and an unknown key on an
-            # attachment is not something to send to the daemon.
-            self.board.heard(said.pop("seconds"), said.get(ATTACHMENT_ID_KEY),
-                             by=by)
-            said["seconds"] = seconds
-            # Started BEFORE the turn and never waited for: the model is
-            # about to take several seconds and the transcriber takes a
-            # few of its own, so they overlap and the person waits for
-            # neither.  The row updates when it lands, by id.
-            self._transcribing(self.board.state.entries[-1],
-                               said[ATTACHMENT_ID_KEY])
-            try:
-                # THE ONLY TEXT A SPOKEN TURN CARRIES, and until there
-                # could be two voices in one conversation there was none:
-                # who is speaking, and whatever has happened in the room
-                # that the escriba has not been told about yet. Drained
-                # here rather than accumulated, so a notice is delivered
-                # once and the next turn is clean again.
-                # THE TRACE FOR THE ONE THING NOT ENFORCED. A guest's
-                # question reaches kbwiki with the HOST's grants, and
-                # the host's question does too while a guest is
-                # listening to the answer. Neither can be prevented
-                # without reconnecting MCP between turns, so both are
-                # recorded: the manifest is append-only and in order, so
-                # a row here sits immediately before the turn's own and
-                # says who was present and who spoke.
-                if self._guest is not None:
-                    self.archive.turn(stage="guest-present",
-                                      guest=self._guest,
-                                      speaker=by or "host",
-                                      grants="host", source="invitation")
-                lines = self._notices
-                self._notices = []
-                if by:
-                    lines = lines + [self.say("agent.guest_speaks", who=by)]
-                await asyncio.wait_for(
-                    _turn(self._scribe, "\n".join(lines),
-                          said, self._relay(),
-                          log=self.archive.turn, tui=self.board),
-                    timeout=TURN_TIMEOUT)
-                self._settle()
-                asyncio.create_task(self._measure())
-            except asyncio.TimeoutError:
-                # Nothing came back and nothing failed.  The recording is
-                # archived either way; what must not happen is the page
-                # waiting on it forever, so the session is dropped and
-                # reopened and the person is told to try again.
-                self.board.note(self.say("note.turn_timeout", secs=int(TURN_TIMEOUT)))
-                self._scribe = None
-                asyncio.create_task(self._resume())
-                raise NotReady(self.say("note.no_answer"))
-            except SessionGone as exc:
-                # NAME THE REASON WE HAVE, not the one that sounds likely.
-                # `SessionGone` covers an RPC closing, a session
-                # terminating and a session not being found — see
-                # `run_escriba._GONE` — and this used to report every one
-                # of them as "se alcanzó el límite de presupuesto".  A
-                # budget abort says so in its own text; anything else is
-                # reported as what it was, because sending somebody to
-                # raise a ceiling that was never reached wastes the one
-                # piece of evidence they had.
-                text = str(exc)
-                budget = any(w in text.lower() for w in ("budget", "exhaust", "presupuesto"))
-                self.hub.publish("alert", {
-                    "kind": "budget" if budget else "session",
-                    "at": datetime.now().strftime("%H:%M"), "detail": text[:200]})
-                if not budget:
-                    # AND REPAIR IT, which this did not used to do.  The
-                    # transport handler no longer rebuilds the session
-                    # when the connection returns — that was opening a
-                    # second connection every time — so a turn failing
-                    # is now the ONLY thing that replaces a dead
-                    # session.  `TURN_TIMEOUT` already did it for a turn
-                    # that hangs; a `SessionGone` fails fast instead,
-                    # and without this the next press would fail the
-                    # same way forever.
-                    #
-                    # Not after a BUDGET ending: that session ended
-                    # because a declared ceiling was reached, and
-                    # quietly opening another one with a fresh budget
-                    # answers a limit by ignoring it.  The alert stands
-                    # and the person decides.
+            # HELD BY A CONTEXT MANAGER, not by a pair of calls, and
+            # taken after the one refusal that needs no turn.
+            #
+            # `_to_mp3` and `archive.heard` both sit inside here and
+            # both can raise, so releasing it in the turn's own
+            # `finally` left the floor held by somebody whose
+            # recording never became a turn: a room in which nobody
+            # can speak again, with a reload the only remedy. One
+            # entry, one exit, every path.
+            with self._holding(speaker):
+                data = await asyncio.to_thread(voice._to_mp3, blob)
+                seconds = len(data) / 4000.0      # 32 kbit/s mono, by construction
+                said = {"mime_type": voice.UTTERANCE_MIME, "data": data,
+                        "display_name": "utterance.mp3", "seconds": seconds,
+                        ATTACHMENT_ID_KEY: self.archive.heard(data)}
+                # Popped the way the terminal driver pops it: `seconds` is for
+                # the view and the manifest, and an unknown key on an
+                # attachment is not something to send to the daemon.
+                self.board.heard(said.pop("seconds"), said.get(ATTACHMENT_ID_KEY),
+                                 by=by)
+                said["seconds"] = seconds
+                # Started BEFORE the turn and never waited for: the model is
+                # about to take several seconds and the transcriber takes a
+                # few of its own, so they overlap and the person waits for
+                # neither.  The row updates when it lands, by id.
+                self._transcribing(self.board.state.entries[-1],
+                                   said[ATTACHMENT_ID_KEY])
+                try:
+                    # THE ONLY TEXT A SPOKEN TURN CARRIES, and until there
+                    # could be two voices in one conversation there was none:
+                    # who is speaking, and whatever has happened in the room
+                    # that the escriba has not been told about yet. Drained
+                    # here rather than accumulated, so a notice is delivered
+                    # once and the next turn is clean again.
+                    # THE TRACE FOR THE ONE THING NOT ENFORCED. A guest's
+                    # question reaches kbwiki with the HOST's grants, and
+                    # the host's question does too while a guest is
+                    # listening to the answer. Neither can be prevented
+                    # without reconnecting MCP between turns, so both are
+                    # recorded: the manifest is append-only and in order, so
+                    # a row here sits immediately before the turn's own and
+                    # says who was present and who spoke.
+                    if self._guests:
+                        self.archive.turn(stage="guest-present",
+                                          guests=list(self._guests),
+                                          speaker=by or "host",
+                                          grants="host", source="invitation")
+                    lines = self._notices
+                    self._notices = []
+                    if by:
+                        lines = lines + [self.say("agent.guest_speaks", who=by)]
+                    await asyncio.wait_for(
+                        _turn(self._scribe, "\n".join(lines),
+                              said, self._relay(),
+                              log=self.archive.turn, tui=self.board),
+                        timeout=TURN_TIMEOUT)
+                    self._settle()
+                    asyncio.create_task(self._measure())
+                except asyncio.TimeoutError:
+                    # Nothing came back and nothing failed.  The recording is
+                    # archived either way; what must not happen is the page
+                    # waiting on it forever, so the session is dropped and
+                    # reopened and the person is told to try again.
+                    self.board.note(self.say("note.turn_timeout", secs=int(TURN_TIMEOUT)))
                     self._scribe = None
                     asyncio.create_task(self._resume())
-                raise
+                    raise NotReady(self.say("note.no_answer"))
+                except SessionGone as exc:
+                    # NAME THE REASON WE HAVE, not the one that sounds likely.
+                    # `SessionGone` covers an RPC closing, a session
+                    # terminating and a session not being found — see
+                    # `run_escriba._GONE` — and this used to report every one
+                    # of them as "se alcanzó el límite de presupuesto".  A
+                    # budget abort says so in its own text; anything else is
+                    # reported as what it was, because sending somebody to
+                    # raise a ceiling that was never reached wastes the one
+                    # piece of evidence they had.
+                    text = str(exc)
+                    budget = any(w in text.lower() for w in ("budget", "exhaust", "presupuesto"))
+                    self.hub.publish("alert", {
+                        "kind": "budget" if budget else "session",
+                        "at": datetime.now().strftime("%H:%M"), "detail": text[:200]})
+                    if not budget:
+                        # AND REPAIR IT, which this did not used to do.  The
+                        # transport handler no longer rebuilds the session
+                        # when the connection returns — that was opening a
+                        # second connection every time — so a turn failing
+                        # is now the ONLY thing that replaces a dead
+                        # session.  `TURN_TIMEOUT` already did it for a turn
+                        # that hangs; a `SessionGone` fails fast instead,
+                        # and without this the next press would fail the
+                        # same way forever.
+                        #
+                        # Not after a BUDGET ending: that session ended
+                        # because a declared ceiling was reached, and
+                        # quietly opening another one with a fresh budget
+                        # answers a limit by ignoring it.  The alert stands
+                        # and the person decides.
+                        self._scribe = None
+                        asyncio.create_task(self._resume())
+                    raise
 
     async def stage(self, filename: str, data: bytes,
                     by: str = "") -> Dict[str, Any]:
@@ -1194,6 +1269,12 @@ class Person:
                                    # hand each party the other's
                                    # identifier for nothing.
                                    self_id=_token(self.principal),
+                                   # Who is in the room and who is
+                                   # talking, so a reconnecting page
+                                   # comes back to the same room rather
+                                   # than an empty one.
+                                   present=list(self._guests),
+                                   floor=self._floor,
                                    consumo=self.consumption())
 
     def guest_snapshot(self, principal: str, name: str) -> dict:
@@ -1222,6 +1303,13 @@ class Person:
                 "status": self.board.status(),
                 "guest": True, "host": self.who, "who": name,
                 "self_id": _token(principal),
+                # WHO ELSE IS HERE, which a guest in an interview is
+                # meant to know: the host called two people in so that
+                # one could correct the other, and somebody answering
+                # into a room without being told who is listening has
+                # not been given the chance to decide what to say.
+                "present": list(self._guests),
+                "floor": self._floor,
                 # The host's language, not the guest's: the conversation
                 # is in it, the escriba speaks it, and the guest has no
                 # session here whose preference could be read.

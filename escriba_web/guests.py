@@ -16,6 +16,20 @@ would be a second, weaker secret sitting beside a strong one, and it
 would only decide who may KNOCK.  So what is held here is a NAME the
 host typed, matched against an identity the proxy asserted.
 
+SEVERAL AT ONCE, BECAUSE AN INTERVIEW HAS TWO SIDES.  A host documenting
+a topic often needs two people in the same conversation: one of them
+corrects the other, and that correction is the thing worth writing down.
+So a host holds a LIST of invitations, one per address, each claimed,
+traced and revoked on its own -- when one of the two has said their piece
+and goes, the other stays.  The transport was already shaped for this
+(the hub fans out, and every page skips only its OWN voice by opaque id,
+so each guest hears the other with nothing added); what was shaped for
+one was the bookkeeping in this file.
+
+INVITING THE SAME ADDRESS TWICE REPLACES THAT ONE INVITATION AND NO
+OTHER.  A host correcting a typo must not evict the colleague who is in
+the middle of answering a question.
+
 IT DIES WITH THE HOST'S SESSION.  No expiry clock, because there is
 nothing for one to be right about: the invitation exists to let somebody
 into a conversation that is happening now, and when that conversation is
@@ -85,38 +99,43 @@ class Invitation:
 
 
 class Room:
-    """Every host's standing invitation, keyed by the host's principal.
-
-    One at a time, deliberately: a second invitation from the same host
-    REPLACES the first. Somebody who needs two colleagues at once is
-    holding a meeting, and a second brain that four people talk into is
-    a different product from this one.
-    """
+    """Every host's standing invitations, keyed by the host's principal."""
 
     def __init__(self) -> None:
-        self._by_host: Dict[str, Invitation] = {}
+        self._by_host: Dict[str, List[Invitation]] = {}
 
     def invite(self, host: str, email: str) -> Invitation:
-        """Name somebody, replacing whoever was named before.
+        """Name somebody, replacing any earlier invitation to that address.
 
-        THE DISPLACED INVITATION IS CLOSED, which it was not at first,
-        and the omission was the worst-shaped bug this feature could
-        have had: overwriting the entry left the previous guest's
-        `/events` stream subscribed to this hub. Their write routes
-        began refusing them -- the new invitation's address is not
-        theirs -- so they could no longer speak, and they went on
-        HEARING everything, while the band showed the new name and the
-        host believed only that person was in the room. A guest the host
-        thinks is gone must not still be listening.
+        THE DISPLACED INVITATION IS CLOSED, and the omission of that was
+        the worst-shaped bug this feature could have had: replacing an
+        entry left the previous guest's `/events` stream subscribed to
+        this hub. Their write routes began refusing them -- the new
+        invitation's address is not theirs -- so they could no longer
+        speak, and they went on HEARING everything, while the band
+        showed the new name and the host believed only that person was
+        in the room. A guest the host thinks is gone must not still be
+        listening.
+
+        ONLY THAT ONE IS REPLACED. A host fixing a typo must not evict
+        the colleague who is in the middle of answering a question.
         """
-        self._close(self._by_host.get(host))
-        inv = Invitation(host=host, email=email.strip().lower(),
-                         since=datetime.now())
-        self._by_host[host] = inv
+        folded = email.strip().lower()
+        held = self._by_host.setdefault(host, [])
+        for stale in [i for i in held if i.email == folded]:
+            self._close(stale)
+            held.remove(stale)
+        inv = Invitation(host=host, email=folded, since=datetime.now())
+        held.append(inv)
         return inv
 
-    def of_host(self, host: str) -> Optional[Invitation]:
-        return self._by_host.get(host)
+    def of_host(self, host: str) -> List[Invitation]:
+        """Everybody this host has named, in the order they named them."""
+        return list(self._by_host.get(host) or [])
+
+    def present(self, host: str) -> List[Invitation]:
+        """Those who are actually here, which is not the same list."""
+        return [i for i in self.of_host(host) if i.guest is not None]
 
     def waiting_for(self, email: str) -> List[Invitation]:
         """Every host expecting this address, oldest first.
@@ -128,41 +147,58 @@ class Room:
         folded = (email or "").strip().lower()
         if not folded:
             return []
-        return sorted((i for i in self._by_host.values() if i.email == folded),
-                      key=lambda i: i.since)
+        return sorted((i for held in self._by_host.values() for i in held
+                       if i.email == folded), key=lambda i: i.since)
 
-    def by_token(self, tok: str) -> Optional[Invitation]:
-        """The invitation a guest named, found by its opaque id.
+    def find(self, tok: str, email: str) -> Optional[Invitation]:
+        """The one invitation in room `tok` that was issued to `email`.
 
-        A GUEST NEVER HOLDS THE HOST'S PRINCIPAL.  They have to be able
-        to say WHICH room they are entering — two colleagues can invite
-        the same person at once — and the host's principal is the real
-        key, but it is also Keycloak's subject id and none of a guest's
+        A GUEST NEVER HOLDS THE HOST'S PRINCIPAL.  They have to say
+        WHICH room they are entering -- two colleagues can invite the
+        same person at once -- and the host's principal is the real key,
+        but it is also Keycloak's subject id and none of a guest's
         business. So the wire carries the same digest the voice frames
-        use, and the lookup happens on this side.
+        use, and BOTH halves of the lookup happen on this side: the room
+        from the token, and then the invitation from the address the
+        proxy asserted, because one room now holds several.
         """
-        return next((i for i in self._by_host.values()
-                     if tok and token(i.host) == tok), None)
+        folded = (email or "").strip().lower()
+        if not tok or not folded:
+            return None
+        for host, held in self._by_host.items():
+            if token(host) != tok:
+                continue
+            return next((i for i in held if i.email == folded), None)
+        return None
 
-    def claim(self, host: str, principal: str, name: str) -> Optional[Invitation]:
+    def claim(self, inv: Invitation, principal: str,
+              name: str) -> Optional[Invitation]:
         """Let this principal in, if the invitation is theirs to claim.
 
-        Returns the invitation, or `None` — which is the only answer a
+        Returns the invitation, or `None` -- which is the only answer a
         caller needs: every refusal here means the same thing to a guest
         route, and spelling out which one would tell an uninvited caller
         whether a room exists.
         """
-        inv = self._by_host.get(host)
-        if inv is None:
-            return None
         if inv.guest is None:
             inv.guest, inv.name = principal, label(name)
             return inv
         return inv if inv.guest == principal else None
 
-    def cancel(self, host: str) -> Optional[Invitation]:
-        """Withdraw it, and end whatever the guest still has open."""
-        return self._close(self._by_host.pop(host, None))
+    def revoke(self, host: str, email: str) -> Optional[Invitation]:
+        """Show ONE guest out, leaving the rest of the room as it was."""
+        folded = (email or "").strip().lower()
+        held = self._by_host.get(host) or []
+        for inv in list(held):
+            if inv.email == folded:
+                held.remove(inv)
+                return self._close(inv)
+        return None
+
+    def cancel(self, host: str) -> List[Invitation]:
+        """Show everybody out, and end whatever they still have open."""
+        held = self._by_host.pop(host, [])
+        return [i for i in (self._close(inv) for inv in held) if i is not None]
 
     def forget(self, host: str) -> None:
         """The host's session is gone, so the room is too."""

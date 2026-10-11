@@ -187,7 +187,7 @@ const ctx = vm.createContext(sandbox);
 vm.runInContext(blocks[blocks.length - 1] +
   "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, " +
   "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows, api, " +
-  "renderGuest, renderTranscript};", ctx);
+  "renderGuest, renderTranscript, pttFace};", ctx);
 const T = sandbox.__test;
 
 // ------------------------------------------------ the page before the hub
@@ -727,40 +727,94 @@ check("and the guest's carries their name",
 // WHAT THE HOST CANNOT MISS. A second brain somebody can join silently is
 // a trust problem, so the band is not dismissible: it is there for as
 // long as somebody else can hear the conversation.
-T.S.guest = false; T.S.waiting = null; T.S.inviting = false;
+T.S.guest = false; T.S.guests = []; T.S.inviting = false;
 T.renderGuest();
 const band = () => byId.get("guest-band");
 const offer = () => byId.get("guest-offer");
 check("nothing is said when nobody else is here", band().hidden, true);
-T.S.waiting = { email: "marta@ejemplo.es", here: false, name: null };
+T.S.guests = [{ email: "marta@ejemplo.es", here: false, name: null }];
 T.renderGuest();
 check("an invitation standing open is shown", band().hidden, false);
 check("with the address as the host typed it",
       band().textContent.includes("marta@ejemplo.es"), true);
-T.S.waiting = { email: "marta@ejemplo.es", here: true, name: "marta.ruiz" };
+
+// TWO SIDES, BECAUSE AN INTERVIEW HAS TWO. A single line saying
+// "somebody is here" cannot be acted on when there are two of them, and
+// the one who has said their piece leaves while the other is still
+// answering -- so each gets its own way out.
+T.S.guests = [{ email: "marta@ejemplo.es", here: true, name: "marta.ruiz" },
+              { email: "carlos@ejemplo.es", here: true, name: "carlos.vega" }];
 T.renderGuest();
-check("and when they arrive, that they are here",
-      band().textContent.includes("marta.ruiz"), true);
-// THE CONSEQUENCE THE HOST AGREED TO, said while it is true rather than
-// once at the moment of inviting.
+check("both are named", band().textContent.includes("marta.ruiz") &&
+      band().textContent.includes("carlos.vega"), true);
+check("and each has its own way out",
+      band().walk().filter((n) => n.className === "invite").length, 2);
+// THE CONSEQUENCES THE HOST AGREED TO, said while they are true rather
+// than once at the moment of inviting.
 check("that they can hear the escriba",
       band().textContent.includes("oye al escriba"), true);
 check("and that the wiki is being read with the host's permissions",
       band().textContent.includes("con tus permisos"), true);
+// AND THE BILL, because an interview is exactly the long many-turn
+// session the ceiling was sized against, and the ladder finalises the
+// HOST's session at 80 %.
+// THE DAEMON'S OWN SHAPE, which `renderEngines` already reads: a first
+// attempt at this invented `spend.usd` and would have rendered nothing
+// at all, forever, with both halves looking correct on their own.
+T.S.consumo = { window: null,
+                spend: { budget: { used: { usd: 4.5 }, limits: { usd: 10 } } } };
+T.renderGuest();
+check("the host sees what the room is spending",
+      band().textContent.includes("4.50") &&
+      band().textContent.includes("10.00"), true);
+T.S.consumo = { window: null, spend: null };
+T.renderGuest();
+check("and a reading we do not have is not shown as zero",
+      band().textContent.includes("0.00"), false);
 
-// THE GUEST'S OWN REMINDER of where they are, and that they are seeing
-// this conversation from the moment they walked in.
-T.S.waiting = null; T.S.guest = true; T.S.host = "dani";
+// WHO HOLDS THE TURN. The lock has always existed server-side; what is
+// new is that three people can race for it, and a press that silently
+// does nothing is the worst thing this page could do with one.
+T.S.guest = false; T.S.who = "dani"; T.S.floor = null;
+// The sandbox is an insecure origin, so `micReason` is set and the button
+// is disabled for that reason throughout. Lifted for these four legs,
+// which are about the floor and nothing else.
+const noMic = T.S.micReason;
+T.S.micReason = null;
+T.pttFace();
+const pttEl = () => byId.get("ptt");
+check("with the floor free, the button works", pttEl().disabled, false);
+T.S.floor = "marta.ruiz";
+T.pttFace();
+check("while somebody else talks it does not", pttEl().disabled, true);
+check("and it says who", byId.get("ptt-title").textContent.includes("marta.ruiz"),
+      true);
+T.S.floor = "";           // the host has it
+T.pttFace();
+check("the host holding it does not lock the host out", pttEl().disabled, false);
+T.S.floor = null;
+T.S.micReason = noMic;
+T.renderAll();
+
+// THE GUEST'S OWN REMINDER of where they are, that they are seeing this
+// conversation from the moment they walked in, and who else is in it.
+T.S.guests = []; T.S.guest = true; T.S.host = "dani"; T.S.who = "marta.ruiz";
+T.S.present = ["marta.ruiz", "carlos.vega"];
 T.renderGuest();
 check("the guest is told whose session this is",
       band().textContent.includes("dani"), true);
 check("and that there is a before they cannot see",
       band().textContent.includes("antes de entrar"), true);
 check("the invite button is not theirs to press", byId.get("guest-btn").hidden, true);
+check("and they are told who else is listening",
+      band().textContent.includes("carlos.vega"), true);
+check("without being told about themselves",
+      band().textContent.split("marta.ruiz").length - 1, 0);
 
 // An offer is shown INSTEAD of opening their own session: `/invitacion`
 // resolved no person, so nothing has been started for them yet.
-T.S.guest = false; T.S.host = ""; T.S.invited = [{ room: "r1", host: "dani" }];
+T.S.guest = false; T.S.host = ""; T.S.present = [];
+T.S.invited = [{ room: "r1", host: "dani" }];
 T.renderGuest();
 check("somebody invited somewhere is told so", offer().hidden, false);
 check("and by whom", offer().textContent.includes("dani"), true);
