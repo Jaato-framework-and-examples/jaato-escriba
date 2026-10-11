@@ -168,6 +168,21 @@ plugins:
   # level").  Turning strict tool-use on would bring this tool down
   # again, and `kb_get_node`'s schema with it if it ever grows one.
   #
+  # THE FRAMEWORK NOW STATES THAT RULE IN ONE PLACE, so it is no longer
+  # an inference of ours: jaato `4e60ab91` (#1631) added
+  # `shared/plugins/mcp/schema_compat.py`, which checks the TOP LEVEL
+  # only and says of nested combinators "they are accepted inside
+  # `properties`".  The same change makes such a tool EXCLUDED at
+  # connect -- dropped from schemas, executors, streaming names and the
+  # system-instruction listing, announced once at WARNING by name, and
+  # listed by `mcp show` -- and scrubs tool ids out of the runner's
+  # send-stage error, so a 400 names the tool instead of `t_<hash>`.
+  # It ships in 1.3.0rc14; the daemon that died was 1.3.0rc13.  So a bad
+  # schema here no longer kills every turn -- it makes the tool go
+  # missing in silence from the agent's point of view, and the WARNING
+  # is the only notice.  Adding a name here is still a change to watch
+  # a live session for, just for a different symptom.
+  #
   # NAMED AGAINST THE SERVER, not against a plausible list.  A tool
   # named here that the server does not serve is simply absent, with
   # nothing said anywhere -- which is how `request_upload` nearly

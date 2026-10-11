@@ -790,15 +790,37 @@ request it handles once.
 **One unusable MCP tool takes down every turn, not just that call.**
 Every tool's schema is sent to the provider on every request, so a
 schema the provider refuses fails the whole turn — `kb_declare_source`
-carries a top-level `oneOf`, OpenAI rejects a function parameter
+carried a top-level `oneOf`, OpenAI rejects a function parameter
 schema with `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not` at the top
 level, and the escriba died four times in four minutes without
-speaking once, greeting included. Nothing between jaato and the
-provider validates a third-party MCP schema against what the provider
-will accept, and the failure names a hashed function id
-(`t_d3b93b33` = `sha256(tool_name)[:8]`) rather than the tool. So
-widening the tool scope here is a change to test against a live
-provider, not only against `validate`.
+speaking once, greeting included. The failure named a hashed function
+id (`t_d3b93b33` = `sha256(tool_name)[:8]`) rather than the tool, so
+identifying the culprit meant hashing candidate names until one
+matched.
+
+Both halves of that are fixed upstream, in jaato `4e60ab91`
+([#1631](https://github.com/Jaato-framework-and-examples/jaato/issues/1631)):
+the MCP plugin now leaves such a tool out of its schemas, executors,
+streaming names and system-instruction listing, announcing it once at
+WARNING by name, and the runner runs the send-stage error and
+traceback through `scrub_tool_ids`. It ships in `jaato-server
+1.3.0rc14`; the daemon that died was `1.3.0rc13`, which predates it.
+So the symptom changes rather than the schema: a refused tool is now
+quietly absent and one WARNING line naming it is the whole notice. A
+tool the escriba's profile names but the plugin has dropped produces no
+error of its own — sessions opened fine for days with
+`request_upload` listed and never served — so the agent lives and
+the capability does not, which is the failure to go looking for.
+
+The ban on combinators is a **top-level** rule, and jaato now says so
+in one place: `shared/plugins/mcp/schema_compat.py` checks the top
+level only and leaves nested ones alone, "they are accepted inside
+`properties`". That is why `kb_declare_source` is offered again with a
+`oneOf` still inside its `file` property, and why enabling strict
+tool-use would take it down anyway — strict mode bans the keyword at
+any depth, and `_strict_tools` is `False` by default
+(`openrouter/provider.py:636`). Widening the tool scope here remains a
+change to test against a live provider, not only against `validate`.
 
 **The `del wiki` tab is not a listing of the wiki.** That is a
 measurement, not a preference: `kb_list_nodes` with no filter answers
