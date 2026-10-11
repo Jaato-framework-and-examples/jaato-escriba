@@ -133,6 +133,28 @@ sandbox.globalThis = sandbox;
 const html = PAGE_HTML;
 const blocks = [...html.matchAll(/<script>\n([\s\S]*?)\n<\/script>/g)].map((m) => m[1]);
 if (!blocks.length) { console.log("  FAIL could not find the application script in web/index.html"); process.exit(1); }
+// NO TWO TOP-LEVEL FUNCTIONS MAY SHARE A NAME, and this is here because
+// two did.  `send(file)` uploaded a document and `send()` posted a
+// recording; both were declared at the top level of this one script, so
+// the later declaration replaced the earlier and EVERY upload called the
+// recorder instead — posting an empty audio part to `/talk` and never
+// once calling `/stage`.  JavaScript does this silently: the page parses,
+// both functions read correctly where they are written, and nothing in
+// this suite noticed, because a test that renders the panel never calls
+// the handler the button is wired to.
+//
+// A rename is the fix for that instance.  This is the fix for the class.
+{
+  const decl = /^(?:async )?function ([A-Za-z_$][\w$]*)\s*\(/gm;
+  const seen = new Map();
+  const twice = [];
+  for (const m of blocks[blocks.length - 1].matchAll(decl)) {
+    if (seen.has(m[1])) twice.push(m[1]);
+    seen.set(m[1], true);
+  }
+  check("no top-level function name is declared twice", twice, []);
+}
+
 const ctx = vm.createContext(sandbox);
 vm.runInContext(blocks[blocks.length - 1] +
   "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, renderEngines, keyOf};", ctx);

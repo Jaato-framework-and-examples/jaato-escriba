@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import re
 import sys
 import time
@@ -40,8 +41,17 @@ import transcribe as _transcribe                                   # noqa: E402
 import staging as _staging                                        # noqa: E402
 import workspace as _workspace                                     # noqa: E402
 
-from .driver import NotReady, Person                               # noqa: E402
+from .driver import NothingHeard, NotReady, Person                 # noqa: E402
 from .hub import frame                                             # noqa: E402
+
+#: WHY THIS EXISTS.  Both `except` branches below answer the browser with
+#: an alert and used to swallow the exception whole, so a failure in this
+#: process left no trace anywhere: uvicorn logged a 200, the daemon logged
+#: nothing because nothing reached it, and the page showed copy that named
+#: the wrong cause.  Diagnosing one cost a round trip to the VPS journal
+#: that could not answer either.  The person still gets the alert; the
+#: operator now gets the traceback.
+log = logging.getLogger("escriba.web")
 
 HERE = Path(__file__).resolve().parent
 PAGE = HERE.parent / "web" / "index.html"
@@ -147,6 +157,7 @@ async def _open(person: Person) -> None:
         # directory several times a minute, each one paid for.  The
         # failure is remembered for a moment so the reconnects land on
         # it instead of on the provider.
+        log.exception("opening a session for %s failed", person.principal)
         FAILED[person.principal] = time.monotonic()
         PEOPLE.pop(person.principal, None)
         person.hub.publish("alert", {"kind": "connection",
@@ -240,7 +251,13 @@ async def talk(request: Request, audio: UploadFile) -> StreamingResponse:
             await person.talk(blob)
         except NotReady as exc:
             yield frame("alert", {"kind": "waking", "detail": str(exc)})
+        except NothingHeard:
+            # NOT a connection failure, and it used to be reported as one.
+            # The page owns the words; what crosses is which situation it
+            # is.
+            yield frame("alert", {"kind": "silence"})
         except Exception as exc:                      # noqa: BLE001
+            log.exception("a turn for %s failed", principal_of(request))
             yield frame("alert", {"kind": "connection", "detail": str(exc)[:200]})
         finally:
             yield frame("status", person.board.status())
@@ -418,6 +435,13 @@ def main(argv=None) -> int:
     # lifespan shutdown still runs, which is what consolidates the
     # conversation.  Lowering systemd's TimeoutStopSec would not do this
     # — SIGKILL skips the shutdown entirely.
+    # OUR OWN RECORDS, NOT UVICORN'S.  Its logging config names only the
+    # `uvicorn.*` loggers and leaves the root alone, so without this the
+    # app's tracebacks reach stderr through `logging.lastResort` — level
+    # WARNING, no format, no timestamp.  They are the only account of a
+    # failure that never reaches the daemon, so they are worth a line.
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     config = uvicorn.Config(app, host=args.host, port=args.port,
                             log_level="info", timeout_graceful_shutdown=5)
     Server(config).run()

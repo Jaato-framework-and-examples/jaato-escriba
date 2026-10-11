@@ -96,6 +96,8 @@
   "alert.waking": "el escriba todavía está despertando.",
   "alert.offline.title": "Sin conexión",
   "alert.offline.body": "Se ha perdido la conexión con el escriba. Reintentando…",
+  "alert.silence.title": "No se ha oído nada",
+  "alert.silence.body": "La grabación ha llegado vacía. Mantén pulsado mientras hablas y suelta al terminar.",
   "alert.restarting": "el escriba se está reiniciando",
   "alert.lost": "se ha perdido la conexión",
   "note.assets_refreshed": "· assets actualizados desde la plantilla: {what}",

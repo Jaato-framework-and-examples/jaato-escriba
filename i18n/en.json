@@ -96,6 +96,8 @@
   "alert.waking": "the escriba is still waking up.",
   "alert.offline.title": "No connection",
   "alert.offline.body": "The connection to the escriba has been lost. Retrying…",
+  "alert.silence.title": "Nothing was heard",
+  "alert.silence.body": "The recording arrived empty. Hold the button while you speak and let go when you finish.",
   "alert.restarting": "the escriba is restarting",
   "alert.lost": "the connection has been lost",
   "note.assets_refreshed": "· assets refreshed from the template: {what}",

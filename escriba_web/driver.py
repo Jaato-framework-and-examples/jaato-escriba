@@ -222,6 +222,21 @@ class NotReady(RuntimeError):
     """A turn was asked for before the session existed."""
 
 
+class NothingHeard(RuntimeError):
+    """The recording that arrived holds no audio.
+
+    NAMED, because it used to be anonymous.  An empty blob reached
+    `voice._to_mp3`, ffmpeg refused it, and the exception fell into
+    `/talk`'s bare `except Exception` — which reports every unknown
+    failure as a lost connection.  So a recording with nothing in it
+    sent the person to look at their network, and the one occurrence we
+    had to diagnose cost a trip to the server's journal.
+
+    It carries no text: the page owns the words, in the person's own
+    language, the same way it owns every other alert's.
+    """
+
+
 #: How long one turn may take before it is declared lost.
 #:
 #: NOT A PERFORMANCE LIMIT.  The slowest healthy turn on this path is
@@ -713,6 +728,10 @@ class Person:
         would interleave two conversations in one session, and the model
         would answer the pair.
         """
+        # REFUSED BEFORE THE LOCK: nothing about an empty recording needs
+        # a turn, a session or a place in the queue behind one.
+        if not blob:
+            raise NothingHeard()
         async with self._turn_lock:
             if self._scribe is None:
                 # NOT A FAULT, AND IT SHOULD NOT READ LIKE ONE.  Opening

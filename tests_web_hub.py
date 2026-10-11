@@ -264,6 +264,44 @@ async def main():
         check("with 413 and the ceiling in it", exc.status_code, 413)
         check("naming the limit", str(staging.MAX_BYTES) in str(exc.detail), True)
 
+    # ------------------------------------------- a recording with nothing in it
+    # It used to reach ffmpeg, which refused it, and the exception fell
+    # into `/talk`'s bare `except Exception` -- reported to the person as
+    # a lost connection, which sent them to look at their network for a
+    # press that was simply too short to carry anything.
+    from escriba_web.driver import NothingHeard
+    try:
+        await person.talk(b"")
+        check("an empty recording is refused", "accepted", "refused")
+    except NothingHeard:
+        pass
+    except Exception as exc:                                   # noqa: BLE001
+        check("an empty recording is refused by name", type(exc).__name__,
+              "NothingHeard")
+
+    # EVERY KIND THE SERVER CAN PUBLISH HAS WORDS IN THE PAGE.  The two
+    # halves live in different files and in different languages, and a
+    # kind with no entry in `ALERTS` throws where the alert is rendered
+    # -- so the person gets no alert at all, which is the one moment the
+    # alert existed for.
+    import re as _re2
+    src = "".join((Path(__file__).resolve().parent / f).read_text()
+                  for f in ("escriba_web/app.py", "escriba_web/driver.py"))
+    # Only the ALERT publishes: `"kind"` also names an entry's kind, which
+    # is a different vocabulary entirely.  A kind chosen by a condition
+    # (`"budget" if budget else "session"`) contributes both of its arms.
+    published = set()
+    for call in _re2.finditer(r'\("alert",\s*\{(.{0,160}?)\}', src, _re2.S):
+        picks = _re2.search(r'"kind":([^,\n]*(?:\n[^,\n]*)?)', call.group(1))
+        if picks:
+            published |= set(_re2.findall(r'"(\w+)"', picks.group(1)))
+    page = (Path(__file__).resolve().parent / "web" / "index.html").read_text()
+    body = page[page.index("const ALERTS"):]
+    spoken = {m.group(1) for m in
+              _re2.finditer(r"^  (\w+): \(", body[:body.index("\n};")], _re2.M)}
+    check("every alert the server raises has copy in the page",
+          sorted(published - spoken), [])
+
     # ------------------------------------------------------ path guards
     from escriba_web.app import ATT
     check("a real attachment id is accepted", bool(ATT.match("att_0123456789abcdef")), True)

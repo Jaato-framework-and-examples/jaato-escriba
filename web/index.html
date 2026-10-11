@@ -578,6 +578,10 @@ const ALERTS = {
   insecure: () => [tx("alert.insecure.title"),
     tx("alert.insecure.body")],
   waking: (d) => ["Un momento", d.detail || tx("alert.waking")],
+  // A recording with no audio in it.  Its own kind, because it used to
+  // arrive as `connection` and send the person to look at their network
+  // for a press that was simply too short to carry anything.
+  silence: () => [tx("alert.silence.title"), tx("alert.silence.body")],
   restarting: (d) => ["Reconectando", `${d.reason}. La página se reconecta sola.`],
   connection: (d) => d.had
     ? [tx("alert.offline.title"), tx("alert.offline.body")]
@@ -1061,7 +1065,7 @@ function uploader() {
   input.type = "file";
   input.id = "stage-file";
   input.hidden = true;
-  input.onchange = () => { if (input.files && input.files[0]) send(input.files[0]); };
+  input.onchange = () => { if (input.files && input.files[0]) stageDocument(input.files[0]); };
   const b = el("button", "primary", S.staging.busy ? tx("stage.busy") : tx("stage.add"));
   b.id = "stage-btn";
   b.disabled = S.staging.busy;
@@ -1075,7 +1079,17 @@ function uploader() {
 // catalogue on its own tick and the row arrives by the same route as
 // every other reference, so there is one writer of that list and no
 // chance of a row the server does not have.
-async function send(file) {
+//
+// NAMED FOR WHAT IT SENDS, and so is `sendUtterance`.  Both were called
+// `send`, both were declared at the top level of this one script, and a
+// second function declaration simply REPLACES the first — so every
+// upload called the recorder, which ignored the file, posted an empty
+// `audio` part to `/talk`, and left the server raising on a zero-length
+// recording.  `/stage` was never called by anything.  Nothing warned:
+// the page parses, both halves read correctly on their own, and the
+// guard that compared this function's field name against the route's
+// parameter proved a STRING, never that the function runs.
+async function stageDocument(file) {
   S.staging.busy = true; S.staging.msg = ""; renderPanel();
   try {
     if (MOCK) { await new Promise((r) => setTimeout(r, 300)); return; }
@@ -1546,7 +1560,7 @@ async function startRec() {
     recorder = new MediaRecorder(s);
     chunks = [];
     recorder.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
-    recorder.onstop = send;
+    recorder.onstop = sendUtterance;
     recorder.start();
   } catch (err) {
     S.micReason = err && err.name === "NotAllowedError" ? "permiso denegado" : "no se pudo abrir";
@@ -1575,7 +1589,13 @@ function stopRec() {
   if (held < 300) {
     // Too short to be speech: a stray click should not become a turn, and
     // an empty attachment is a wasted round trip through the model.
-    try { recorder.stop(); } catch (e) {}
+    //
+    // UNBOUND BEFORE STOPPING, because `onstop` IS the sender.  This
+    // branch exists to suppress the round trip and used to perform it:
+    // `recorder.stop()` fires the `stop` event, `sendUtterance` runs off
+    // it, and a 120 ms press posted the empty recording this is here to
+    // prevent.  Measured in Chrome against the real page.
+    try { recorder.onstop = null; recorder.stop(); } catch (e) {}
     recorder = null;
     $("ptt-sub").textContent = "demasiado corto";
     pttFace();
@@ -1584,7 +1604,7 @@ function stopRec() {
   try { recorder.stop(); } catch (e) {}
 }
 
-async function send() {
+async function sendUtterance() {
   const blob = new Blob(chunks, { type: recorder && recorder.mimeType || "audio/webm" });
   recorder = null;
   S.status = { status: "thinking", query: null };
@@ -1620,16 +1640,29 @@ ptt.addEventListener("pointerdown", (ev) => {
 ptt.addEventListener("pointerup", stopRec);
 ptt.addEventListener("pointercancel", stopRec);
 window.addEventListener("keydown", (ev) => {
-  if (ev.code !== "Space" || ev.repeat || typing(ev.target)) return;
+  if (ev.code !== "Space" || ev.repeat || typing(ev.target) || activates(ev.target)) return;
   ev.preventDefault();
   startRec();
 });
 window.addEventListener("keyup", (ev) => {
-  if (ev.code !== "Space" || typing(ev.target)) return;
+  if (ev.code !== "Space" || typing(ev.target) || activates(ev.target)) return;
   ev.preventDefault();
   stopRec();
 });
 const typing = (t) => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+
+// WHERE SPACE ALREADY MEANS SOMETHING.  A focused control is activated by
+// the space bar — that is how a keyboard reaches a button at all — and
+// both handlers above called `preventDefault()` on every Space there was,
+// on the way down AND on the way up.  So no button in this page could be
+// reached from the keyboard: measured in Chrome, Space on a focused
+// "aportar documento" opened no file picker, where a click did.
+//
+// The talk button is the exception, and deliberately: it is HELD, not
+// clicked, so the global binding is its keyboard equivalent rather than a
+// rival for it.
+const activates = (t) => t && t !== ptt &&
+  (t.tagName === "BUTTON" || t.tagName === "SELECT" || t.tagName === "SUMMARY");
 
 // ------------------------------------------------------------------- hub
 function onEvent(kind, data) {

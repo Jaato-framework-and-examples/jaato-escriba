@@ -764,7 +764,23 @@ in every person's directory.
 | `tests_web_hub.py` | The fan-out, the board-to-event mapping and the two path guards — the half of the backend whose failures are silent. No server, no daemon, no session. |
 | `tests_staging.py` | A document the person stages: that a browser's filename can never name a file outside their workspace, that the catalogue entry is what the plugin will accept (checked by the framework's own validator where `jaato-server` is installed, and SAID where it is not), and that a missing file is never reported as an empty one. |
 | `tests_web.js` | The web page's render paths, headless: it runs the page's own script against a DOM stub. `node tests_web.js`. It cannot say whether the page LOOKS right — that needs `?mock=1` and eyes. |
+| `tests_browser.py` | Where a CLICK goes, in a real browser: the real page served against a stub that records what arrives. `python tests_browser.py`, with `ESCRIBA_BROWSER=…` naming a browser if playwright's own chromium is not installed; the legs are SAID to be unrun rather than passing quietly. It exists because every other suite covered the upload path while the feature was dead — see below. |
 | `tests_render.py`, `tests_terminal.py`, `tests_workspace.py`, `tests_housekeeping.py`, `tests_board.py` | Every render path at four sizes; the terminal handover on a pty; provisioning and what must never leak between people; the two retention clocks and what the ceiling may never delete. All headless. |
+
+**A test can cover every line of a path that never runs.** The upload
+shipped dead: `web/index.html` declared `send` twice at the top level —
+once to post a document to `/stage`, once to post a recording to
+`/talk` — and a second function declaration simply replaces the first,
+so every upload called the recorder, posted an empty audio part, and
+`/stage` was never called by anything. Nothing caught it. The page
+parses, both functions read correctly where they are written, the
+render tests drew the button, and the guard that compared the page's
+field name against the route's parameter compared two STRINGS without
+asking whether the function holding one of them runs. The production
+evidence was a 189-byte `POST /talk` where a document should have been,
+reproduced byte for byte in Chrome. Hence two guards rather than one
+fix: `tests_web.js` refuses a top-level function name declared twice,
+and `tests_browser.py` asserts the endpoint a click actually reaches.
 
 Everything that is not SDK lives outside the driver on purpose:
 `run_escriba.py` should read as what it means to demonstrate.
