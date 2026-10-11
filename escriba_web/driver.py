@@ -50,6 +50,7 @@ import workspace as _workspace                                   # noqa: E402
 from run_escriba import DRAIN, SessionGone, _reconcile, _turn   # noqa: E402
 
 from . import kbwiki                                             # noqa: E402
+from . import wiki as _wiki                                      # noqa: E402
 from .hub import Hub                                             # noqa: E402
 
 
@@ -197,26 +198,6 @@ class WebBoard(_board.StateBoard):
 #: a reader and mean opposite things.
 WIKI_UNWIRED = {"state": "sin conectar", "rows": [],
                 "detail": "no hay ninguna fuente MCP configurada para el wiki"}
-
-
-def wiki_references() -> Dict[str, Any]:
-    """References the person may see in the kbwiki, listed LIVE.
-
-    NOTHING FROM THE WIKI IS WRITTEN INTO THE WORKSPACE, and that is the
-    design rather than an omission.  The wiki serves each identity only
-    what it has been granted, and a copy on disk outlives the grant: a
-    node revoked tomorrow would still sit in `.jaato/references/` and the
-    references plugin would go on offering its content to the model.
-    Listing live means a revocation fails closed, with no expiry pass to
-    write and nothing to get wrong.
-
-    THIS IS THE SEAM.  The MCP tools are not connected yet; until they
-    are, the state is reported and no rows are invented.  When they land,
-    this returns `{"state": "ok", "rows": [...]}` with each row carrying
-    `origin: "wiki"` — and the local path above stays untouched, because
-    the two never meet on disk.
-    """
-    return dict(WIKI_UNWIRED)
 
 
 class NotReady(RuntimeError):
@@ -383,6 +364,11 @@ class Person:
         #: carries one and a `reload_session_env` per request would
         #: reconnect the MCP server for no reason.
         self._token: Optional[str] = None
+        #: The wiki pages this conversation opened.  Built whether or not
+        #: a wiki is wired -- with none there are no calls to observe, so
+        #: it stays empty and `wiki_state` reports the unwired state
+        #: instead of an empty connected one, which mean opposite things.
+        self._consulted = _wiki.Consulted(self.hub)
         self._window: Optional[dict] = None
         self._spend: Optional[dict] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -476,6 +462,19 @@ class Person:
             json.dumps(kbwiki.server_entry(self.wiki["url"]), indent=2) + "\n",
             encoding="utf-8")
 
+    def wiki_state(self) -> Dict[str, Any]:
+        """What the `del wiki` tab is told, and WHICH ABSENCE it is.
+
+        Two empties that mean opposite things: no wiki wired at all, and
+        a wiki the escriba has not needed to open yet.  The first is a
+        deployment that cannot reach the kbwiki; the second is a
+        conversation that has not asked it anything.  The panel says
+        which.
+        """
+        if self.wiki is None:
+            return dict(WIKI_UNWIRED)
+        return self._consulted.state()
+
     async def open(self) -> None:
         """Open the session and start the clock on this conversation.
 
@@ -551,6 +550,7 @@ class Person:
                               getattr(self._scribe.client, "client_id", None))
         self._watcher = enrichment.Observer(self.conn, self.ws, board=self.board)
         self._watcher.attach(self._scribe.client)
+        self._consulted.attach(self._scribe.client)
         self._scribe.client.subscribe(EventType.CONTEXT_UPDATED, self._context)
 
     def _connection(self, status) -> None:
@@ -988,7 +988,7 @@ class Person:
                                    strings=i18n.catalogue(self.locale),
                                    playback="navegador", days=self.days(),
                                    engines=self.engines(),
-                                   wiki=wiki_references(),
+                                   wiki=self.wiki_state(),
                                    # The upload ceiling travels to the
                                    # page so the refusal it shows and
                                    # the refusal the server makes are

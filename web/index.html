@@ -1014,7 +1014,7 @@ function subTabs(box) {
 function row(it) {
   const b = el("button", "item");
   const meta = S.tab === "memoria" ? [it.at, (it.tags || []).join(", ")].filter(Boolean).join(" · ")
-             : S.tab === "referencias" ? (it.origin === "staged" ? weight(it) : host(it.url))
+             : S.tab === "referencias" ? refMeta(it)
              : [it.at, it.path].filter(Boolean).join(" · ");
   b.append(el("span", "text", it.text), el("span", "meta", meta));
   b.onclick = () => { S.sel = keyOf(S.tab, it); renderPanel(); };
@@ -1044,6 +1044,17 @@ function references(box, rows) {
   for (const it of rows) box.append(row(it));
 }
 function host(url) { try { return new URL(url).host; } catch (e) { return url; } }
+
+// THREE ORIGINS, THREE THINGS WORTH SAYING IN ONE LINE.  A reference
+// found here is placed by its host, a staged document by its size, and a
+// wiki page by when the escriba opened it -- it has neither.  This used
+// to be `host(it.url)` for anything not staged, and `host(undefined)`
+// returns its argument, so a wiki row's second column read "undefined".
+function refMeta(it) {
+  if (it.origin === "staged") return weight(it);
+  if (it.origin === "wiki") return it.at || "";
+  return host(it.url);
+}
 
 // How big a staged document is, or that it is GONE.  A missing file is
 // said rather than drawn as zero bytes: the catalogue still offers the
@@ -1819,11 +1830,17 @@ function mockState() {
                   output_tokens: 18940, reasoning_tokens: 2100 },
       },
     },
+    // THE SHAPE THE SERVER ACTUALLY SENDS, which is thinner than this
+    // fixture used to pretend: a wiki row is a node the escriba OPENED,
+    // and the only things the tool-call events carry are its id and
+    // when.  No url and no content -- the end event has no result
+    // payload.  A fixture richer than the server is a design nobody can
+    // ship.
     wiki: { state: "ok", rows: [
-      { text: "Riego por goteo: patrones de montaje", url: "https://kb.darumalabs.ai/n/riego-goteo",
-        content: "Nodo del wiki sobre montajes de riego.", tags: ["riego"], origin: "wiki" },
-      { text: "Consumo hídrico de hortalizas en maceta", url: "https://kb.darumalabs.ai/n/consumo-hidrico",
-        content: "Tabla de consumo por especie y volumen.", tags: ["riego", "huerto"], origin: "wiki" },
+      { id: "riego-goteo-patrones", text: "riego-goteo-patrones",
+        at: "09:18", tags: [], origin: "wiki" },
+      { id: "consumo-hidrico-maceta", text: "consumo-hidrico-maceta",
+        at: "09:19", tags: [], origin: "wiki" },
     ] },
     engines: [
       { agent: "escriba", rows: [

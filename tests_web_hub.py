@@ -398,6 +398,49 @@ async def main():
     check("with no wiki the session env is the workspace's own",
           person.env_file, person.ws / ".env")
 
+    # ------------------------------------- which wiki pages came into it
+    # Read from the CALLS, because the end event carries no result: the
+    # id is in `tool_args` on the start and the outcome on the end, so
+    # the pair is what a row is made of.
+    from escriba_web import wiki as _wikimod
+
+    class _Ev:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    def opened(c, node, tool="mcp__kbwiki__kb_get_node", ok=True, cid="c1"):
+        c._started(_Ev(tool_name=tool, tool_args={"id": node}, call_id=cid))
+        c._ended(_Ev(tool_name=tool, call_id=cid, success=ok))
+
+    c = _wikimod.Consulted()
+    opened(c, "rip-overview")
+    check("an opened page becomes a row", [r["text"] for r in c.rows()],
+          ["rip-overview"])
+    check("and it is marked as the wiki's", c.rows()[0]["origin"], "wiki")
+    opened(c, "rip-overview", cid="c2")
+    check("the same page twice is one row", len(c.rows()), 1)
+    opened(c, "ldap-security-groups", ok=False, cid="c3")
+    check("a call that FAILED is not a page the person saw", len(c.rows()), 1)
+    # A listing is navigation: 22 search hits in the panel would bury the
+    # one page the escriba then read.
+    opened(c, "ignored", tool="mcp__kbwiki__kb_list_nodes", cid="c4")
+    check("finding pages is not opening them", len(c.rows()), 1)
+    opened(c, "x", tool="readFile", cid="c5")
+    check("and another plugin's call is not the wiki's", len(c.rows()), 1)
+    # The content call opens the same page by the same id.
+    opened(c, "kibana-rip-stats", tool="mcp__kbwiki__kb_get_node_content",
+           cid="c6")
+    check("reading the text opens it too", len(c.rows()), 2)
+
+    # TWO EMPTIES THAT MEAN OPPOSITE THINGS: no wiki wired at all, and a
+    # wiki this conversation has not needed.  The panel must not show the
+    # same thing for both.
+    from escriba_web.driver import WIKI_UNWIRED
+    check("with no wiki the panel says so", person.wiki_state(),
+          dict(WIKI_UNWIRED))
+    check("with one wired and nothing read it is connected and empty",
+          who.wiki_state(), {"state": "ok", "rows": [], "detail": ""})
+
     # ------------------------------------------------------ path guards
     from escriba_web.app import ATT
     check("a real attachment id is accepted", bool(ATT.match("att_0123456789abcdef")), True)

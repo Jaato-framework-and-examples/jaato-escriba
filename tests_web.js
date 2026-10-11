@@ -380,10 +380,17 @@ check("both origins are offered as tabs",
 check("the local tab lists what was found here",
       refs.includes("Nombres de Gatos") || refs.includes("Riego por gravedad"), true);
 check("and not the wiki's rows beside them",
-      refs.includes("Riego por goteo: patrones de montaje"), false);
+      refs.includes("riego-goteo-patrones"), false);
 check("the wiki tab is reachable from here", refs.includes("del wiki"), true);
+// A WIKI ROW IS A PAGE THE ESCRIBA OPENED, and the tool-call events it
+// is read from carry the node's id and nothing else -- no url, no title,
+// no body.  `host(undefined)` returns its argument, so every one of
+// these rows used to print "undefined" where a host would go.
+const fromWiki = showWiki();
 check("a connected wiki lists its rows under its own tab",
-      showWiki().includes("Riego por goteo: patrones de montaje"), true);
+      fromWiki.includes("riego-goteo-patrones"), true);
+check("and says when each page was opened", fromWiki.includes("09:18"), true);
+check("and never the word undefined", fromWiki.includes("undefined"), false);
 
 // The wiki tab carries its STATE where a count would go, and says it
 // again in place of the list: an empty list and a server that did not

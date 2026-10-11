@@ -757,6 +757,7 @@ in every person's directory.
 | `workspace.py` | One root, one directory per person, provisioned from `template/` on first authentication. |
 | `housekeeping.py` | Prunes each person's recordings to the disk ceiling without reaching inside the retention floor the profile declared. `python -m housekeeping --root … --budget-file …`. |
 | `transcribe.py` | What the person said, in text, from the mp3 already archived. Optional (`--extra stt`), off unless a model is named, and the transcript is stored beside the recording so the same retention clock governs both. |
+| `escriba_web/wiki.py` | Which wiki pages came into the conversation, read from the escriba's own tool calls rather than from a second connection to kbwiki. Nothing is kept: not on disk, not past the session. |
 | `escriba_web/kbwiki.py` | What it takes for a person's escriba to reach the kbwiki AS THEM: where their access token is written so the MCP header can read it, and the `.mcp.json` entry that reads it. Off unless `--kbwiki-url` and `--token-dir` are both given. |
 | `escriba_web/` | The backend the page talks to: `hub.py` (one fan-out per person), `driver.py` (one workspace, session and archive per person; the turn itself is `run_escriba`'s, imported), `app.py` (routing). `python -m escriba_web --root … --dev-principal …`. |
 | `i18n.py`, `i18n/*.json` | Every user-facing string, one file per language, at key parity (`tests_i18n.py` is what enforces it). The page is handed the whole catalogue with each snapshot, so the strings and the data they label can never be a version apart. |
@@ -785,6 +786,22 @@ person's own data. Every request carries a fresh token and only a
 changed one is written, because oauth2-proxy renews the forwarded
 token when it handles a request and a held-open `/events` stream is one
 request it handles once.
+
+**The `del wiki` tab is not a listing of the wiki.** That is a
+measurement, not a preference: `kb_list_nodes` with no filter answers
+with counts alone, and a real kbwiki held 829 nodes across three runs.
+So the tab answers what the other two answer — "de esta conversación"
+lists what the judge kept, "aportados" what the person handed over,
+and this the wiki pages the escriba actually OPENED while you were
+talking. It is read from `TOOL_CALL_START`/`TOOL_CALL_END` on the
+session that already holds the kbwiki connection, so there is no
+second client and no second credential path in the BFF. The row
+carries the node's id and when it was opened and nothing else, because
+`ToolCallEndEvent` has no result payload — the id is what the
+librarian itself cites (`[ref:<id>]`), so it is the handle rather than
+a placeholder for one. Two empties mean opposite things and the panel
+says which: no wiki wired at all, versus a wiki this conversation has
+not needed.
 
 **A test can cover every line of a path that never runs.** The upload
 shipped dead: `web/index.html` declared `send` twice at the top level —
