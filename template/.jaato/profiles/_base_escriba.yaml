@@ -129,16 +129,17 @@ plugins:
   # `escriba_web/kbwiki.py` for where that token lives and why it is not
   # in the workspace.
   #
-  # FIVE OF TWENTY-SEVEN, and reading only.  Every tool name is a word
+  # SIX OF TWENTY-SEVEN.  Every tool name is a word
   # the voice tier may read aloud, and a model choosing between 27
-  # similar names by ear is choosing badly; nothing here can create a
-  # template, promote a run or run a stage, which are the most expensive
-  # things a mishearing could reach.
+  # similar names by ear is choosing badly; these are the five that read
+  # and the one that contributes.  Nothing here can create a template,
+  # promote a run or run a stage, which are the most expensive things a
+  # mishearing could reach.
   #
-  # `kb_declare_source` IS NOT HERE, AND ITS ABSENCE COST A MORNING.
-  # Its input schema carries a TOP-LEVEL `oneOf` (exactly one of wiki,
-  # gitlab or file), and OpenAI refuses a function parameter schema that
-  # has `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not` at the top level:
+  # `kb_declare_source` IS BACK, AND ITS ABSENCE COST A MORNING.  It
+  # carried a TOP-LEVEL `oneOf` (exactly one of wiki, gitlab or file),
+  # and OpenAI refuses a function parameter schema that has
+  # `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not` at the top level:
   #
   #   model loop raised BadRequestError: Error code: 400 ... "Invalid
   #   schema for function 't_d3b93b33': schema must have type 'object'
@@ -151,10 +152,21 @@ plugins:
   # unusable tool took the escriba down completely, greeting included --
   # four sessions in four minutes, each ending before it said anything.
   #
-  # So this is not a judgement about whether the person should be able
-  # to contribute by voice; the tool cannot be offered to this provider
-  # at all.  It comes back when kbwiki expresses exactly-one-of without
-  # a top-level `oneOf`, which is kbwiki's change to make.
+  # kbwiki fixed its schema (RIP-KB-EXTRACTOR#1, c4a44ba) and the tool
+  # is offered again.  `kb_run_stages` was fixed in the same change and
+  # is still NOT here: the schema was never why it was excluded.
+  #
+  # ITS `file` PROPERTY STILL CARRIES A NESTED `oneOf`, published by
+  # jaato-mcp for any file argument (`src/jaato_mcp/files.py:132`:
+  # `{"description": ..., "oneOf": [other, inline]}`).  That is
+  # accepted, and the reason is worth writing down rather than
+  # rediscovering: the ban on `oneOf` ANYWHERE is a STRICT-mode rule,
+  # and strict mode is off.  `openrouter/provider.py:636` defaults
+  # `_strict_tools` to False, no profile here sets it, so no
+  # `"strict": True` is emitted and only the non-strict top-level rule
+  # applies -- which is precisely what the 400 above says ("at the top
+  # level").  Turning strict tool-use on would bring this tool down
+  # again, and `kb_get_node`'s schema with it if it ever grows one.
   #
   # NAMED AGAINST THE SERVER, not against a plausible list.  A tool
   # named here that the server does not serve is simply absent, with
@@ -174,7 +186,7 @@ plugins:
   # names a host, and the host is the operator's (`--kbwiki-url`).  With
   # no `.mcp.json` in the workspace this plugin loads and offers
   # nothing, which is the unwired state the dashboard already reports.
-  - "mcp(mode:preload, tools:[mcp__kbwiki__ask_librarian, mcp__kbwiki__kb_list_bundles, mcp__kbwiki__kb_list_nodes, mcp__kbwiki__kb_get_node, mcp__kbwiki__kb_get_node_content])"
+  - "mcp(mode:preload, tools:[mcp__kbwiki__ask_librarian, mcp__kbwiki__kb_list_bundles, mcp__kbwiki__kb_list_nodes, mcp__kbwiki__kb_get_node, mcp__kbwiki__kb_get_node_content, mcp__kbwiki__kb_declare_source])"
 
 # Drop the instruction layers the framework injects.  This agent
 # converses; the platform constants (task-completion, parallel batching,
@@ -350,6 +362,7 @@ plugin_configs:
           - mcp__kbwiki__kb_list_nodes
           - mcp__kbwiki__kb_get_node
           - mcp__kbwiki__kb_get_node_content
+          - mcp__kbwiki__kb_declare_source
 
 # ---------------------------------------------------------------- isolation
 # Kernel-enforced confinement, per session.  OFF BY DEFAULT in the
