@@ -46,9 +46,26 @@ naming somebody in advance fails visibly rather than quietly.
 It is not fixed in code because there is nothing here to fix: asking
 whether an address maps to an account means querying Keycloak from the
 invite path, and matching on the principal instead would be inventing an
-identity. The state is made impossible upstream instead — the realm
-requires the attribute — and `_invited`'s 403 is what a regression looks
-like.
+identity. It is made impossible upstream instead, and `_invited`'s 403 is
+what a regression looks like.
+
+AUDITED ON THE DEPLOYMENT, 2026-10-12, so that the next reader starts
+from a measurement rather than from this file's intent. Realm
+`jaato-web-coder-shell`, which escriba SHARES with the web coder, kbwiki
+and simbus — which is why the one remaining tightening is not escriba's
+to make alone. Four accounts, none without an address and none
+unverified, so no guest is broken today. Self-registration is off and
+there are no identity providers, so every account is made by an admin.
+The user-profile attribute carries `required={roles:[user]}`, Keycloak's
+default: required when somebody edits their own profile, and NOT required
+when an admin creates the account. So the residual gap is exactly one
+shape — an admin omitting the address on a new account — and closing it
+means adding `admin` to `required.roles` for all four services.
+
+Verification is NOT part of this contract. `_invited` needs the header to
+be present, not the address to be confirmed, so an unverified address
+works and a realm that stops verifying breaks nothing here. The audit
+counted it; this feature does not read it.
 
 So the feature rests on two deployment facts, neither visible from this
 process:
@@ -56,7 +73,7 @@ process:
 | Fact | Where | What a regression looks like |
 |---|---|---|
 | The proxy forwards the user headers | `escriba-oauth2-proxy`, `--pass-user-headers=true` (confirmed on the deployment 2026-10-12) | every guest gets `_invited`'s 403, and the host waits on an invitation nobody can claim |
-| The realm requires an email address | Keycloak realm config, and every account predating it | one particular guest is offered nothing by `/invitacion`, silently, while their host waits |
+| Every account has an email address | realm `jaato-web-coder-shell`: enforced for self-service, an admin's omission is the gap | one particular guest is offered nothing by `/invitacion`, silently, while their host waits |
 
 ## Traced, because it cannot be enforced
 
