@@ -318,11 +318,12 @@ class Room:
         for q in list(inv.queues):
             # The stream is woken rather than cancelled: it is sitting on
             # `queue.get()`, and a sentinel it can recognise is the only
-            # thing that both ends it and lets it say why.
-            try:
-                q.put_nowait(None)
-            except asyncio.QueueFull:
-                pass
+            # thing that both ends it and lets it say why.  `close` can
+            # never fail for want of room, which the `put_nowait` it
+            # replaces could -- and a guest whose stream was full was
+            # exactly a guest who went on listening after being shown
+            # out.
+            q.close()
         inv.queues.clear()
         return inv
 

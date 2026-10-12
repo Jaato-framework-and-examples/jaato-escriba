@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import staging                                          # noqa: E402
 from fastapi import Request                              # noqa: E402
-from escriba_web.hub import Hub, frame                   # noqa: E402
+from escriba_web.hub import VOICE_BACKLOG, Hub, frame                   # noqa: E402
 from escriba_web.driver import WebBoard, entry_json      # noqa: E402
 
 fail = 0
@@ -117,6 +117,50 @@ async def main():
         drain(fast)
     check("the reader that keeps up survives", fast in fresh._subs, True)
     check("the one that stalls is dropped", slow in fresh._subs, False)
+    # AND IT IS TOLD. The defect this replaced: `drop` removed the queue
+    # and the stream that owned it went on awaiting it forever, with the
+    # keepalive holding the connection open -- so the browser never saw
+    # an error, never reconnected, and never got the snapshot that would
+    # have fixed it. Measured on the deployment 2026-10-12: no audio, no
+    # new rows, a header stuck on "hablando", and two reloads to recover.
+    ended = []
+    while not slow.empty():
+        ended.append(slow.get_nowait())
+    check("the last thing it is handed is the sentinel",
+          ended[-1] if ended else "nothing", None)
+
+    # ------------------------------------- the voice is what gives way
+    # A SLOW READER LOSES AUDIO, NOT STATE. That split is the whole
+    # point: a voice frame that never sounds costs a fragment of a
+    # sentence, while a `status` that never arrives leaves the page
+    # saying "hablando" after the escriba has stopped.
+    ring = Hub(lambda: {})
+    q = ring.subscribe()
+    drain(q)
+    for i in range(VOICE_BACKLOG * 3):
+        ring.publish("speech", {"i": i, "pcm": "x"})
+    check("a reader that never drains the voice is NOT dropped",
+          q in ring._subs, True)
+    check("it just stops holding the oldest of it", q.qsize(), VOICE_BACKLOG)
+    check("and the loss is counted", ring.lost, VOICE_BACKLOG * 2)
+    heard = [d["i"] for _, d in drain(q)]
+    check("what is kept is the MOST RECENT, not the first it managed",
+          heard[0], VOICE_BACKLOG * 2)
+
+    # AND STATE SURVIVES A VOICE FLOOD, which is the symptom that sent
+    # somebody to reload the page twice.
+    both = Hub(lambda: {})
+    q2 = both.subscribe()
+    drain(q2)
+    both.publish("status", {"state": "speaking"})
+    for i in range(VOICE_BACKLOG * 2):
+        both.publish("speech", {"i": i, "pcm": "x"})
+    both.publish("status", {"state": "listening"})
+    kinds = [k for k, _ in drain(q2)]
+    check("both status frames arrive through the flood",
+          [k for k in kinds if k == "status"], ["status", "status"])
+    check("and the state ones come first, so a burst cannot delay them",
+          kinds[0], "status")
 
     # ------------------------------------------- the board becomes events
     hub = Hub(lambda: {})

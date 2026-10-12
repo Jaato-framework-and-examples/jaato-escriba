@@ -41,7 +41,7 @@ from escriba_web.driver import Person, entry_json         # noqa: E402
 import yaml                                              # noqa: E402
 import escriba_web.driver as _driver                     # noqa: E402
 from escriba_web.guests import ROOM, Room, label, reason, token   # noqa: E402
-from escriba_web.hub import Hub                           # noqa: E402
+from escriba_web.hub import Channel, Hub                  # noqa: E402
 
 fail = 0
 
@@ -261,7 +261,7 @@ check("and both are now here",
 # ------------------------------------- showing ONE of them out
 # An interview's two sides do not finish together: the colleague who has
 # said their piece leaves while the other is still answering.
-his = asyncio.Queue(maxsize=4)
+his = Channel()
 carlos.queues.append(his)
 room.revoke(HOST, "carlos@ejemplo.es")
 check("the one shown out is cut off", closed_with(his), None)
@@ -274,7 +274,7 @@ check("the other is still in the room",
 # host's hub: refused by every write route, and still hearing every word,
 # while the band showed the new name and the host believed only that
 # person was there.
-hers = asyncio.Queue(maxsize=4)
+hers = Channel()
 marta.queues.append(hers)
 room.invite(HOST, "marta@ejemplo.es")
 check("the replaced guest is cut off, not just silenced",
@@ -290,7 +290,7 @@ room.justify(HOST, "carlos@ejemplo.es", "discrepa del cierre", "el cierre")
 room.open_up(HOST, "carlos@ejemplo.es")
 still = room.find(token(HOST), "carlos@ejemplo.es")
 room.claim(still, OTHER, "carlos.vega")
-theirs = asyncio.Queue(maxsize=4)
+theirs = Channel()
 still.queues.append(theirs)
 room.invite(HOST, "marta@ejemplo.es")          # fixing the other address
 check("re-inviting one address leaves the other alone",
@@ -299,7 +299,7 @@ check("and that guest is still here",
       [i.name for i in room.present(HOST)], ["carlos.vega"])
 
 # ------------------------------------------------- cancelling ends it all
-q = asyncio.Queue(maxsize=4)
+q = Channel()
 room.of_host(HOST)[0].queues.append(q)
 gone = room.cancel(HOST)
 check("everybody is shown out at once", len(gone), 2)

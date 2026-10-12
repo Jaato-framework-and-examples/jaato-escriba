@@ -228,7 +228,15 @@ def _sse(request: Request, hub, queue: asyncio.Queue,
                         # sitting on `queue.get()`, and the only thing
                         # that both wakes it and lets it say why is a
                         # value it can recognise.
-                        if closed is not None:
+                        #
+                        # TWO THINGS END A STREAM AND ONLY ONE IS NEWS.
+                        # `overflowed` means this reader fell behind and
+                        # the hub ended it so the browser reconnects into
+                        # a fresh snapshot — nothing has changed about
+                        # whether the guest is welcome, and telling them
+                        # the host withdrew would be a lie that costs
+                        # them the room.
+                        if closed is not None and not queue.overflowed:
                             yield frame("closed", closed)
                         break
                     yield item
