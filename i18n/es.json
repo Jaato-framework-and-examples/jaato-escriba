@@ -69,7 +69,6 @@
   "guest.grants": "mientras esté aquí, el escriba consulta el wiki con tus permisos",
   "guest.hears": "oye al escriba y puede hablar",
   "guest.here": "{who} está aquí",
-  "guest.hush": "no me pongas su voz",
   "guest.inside": "estás en la sesión de {who}",
   "guest.invite": "invitar a alguien",
   "guest.invited_by": "{who} te espera en su sesión",

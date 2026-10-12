@@ -500,7 +500,6 @@ const S = {
   //: The other voice, silenced. A host and a guest are often already on
   //: a call together, in which case each hears the other through it and
   //: this page would be a second, delayed copy.
-  hushOther: false,
   //: How to link one wiki page, `{id}` where the node id goes. The server
   //: states it; a deployment whose wiki has no browsable page sends null
   //: and a node is shown as its id, never as a link to nowhere.
@@ -1696,14 +1695,9 @@ function renderGuest() {
       band.append(el("span", "warn",
                      tx("guest.present", { who: others.join(", ") })));
     }
-    const hush = el("button", "hbtn", tx("guest.hush"));
-    hush.setAttribute("aria-pressed", String(S.hushOther));
-    hush.onclick = () => { S.hushOther = !S.hushOther; renderGuest(); };
     const out = el("button", "hbtn", tx("guest.leave"));
     out.onclick = leaveRoom;
-    const wrap = el("span", "");
-    wrap.append(hush, out);
-    band.append(wrap);
+    band.append(out);
   } else if (S.guests.length) {
     band.hidden = false;
     // EVERY ONE OF THEM, each with its own way out. A single line saying
@@ -1765,10 +1759,6 @@ function renderGuest() {
           spent: Number(used).toFixed(2), limit: Number(cap).toFixed(2) })));
       }
     }
-    const hush = el("button", "hbtn", tx("guest.hush"));
-    hush.setAttribute("aria-pressed", String(S.hushOther));
-    hush.onclick = () => { S.hushOther = !S.hushOther; renderGuest(); };
-    band.append(hush);
   } else if (S.inviting) {
     // The field, in the band rather than in a dialog: the host is in the
     // middle of a conversation and a modal would take the page away from
@@ -1845,11 +1835,6 @@ function onSpeech(f) {
   // plays at all — but the last pieces of an utterance arrive after the
   // key is up, and without this you would hear your own tail.
   if (f.by_id && f.by_id === S.selfId) return;
-  // AND NOT THE OTHER PERSON'S, if they are already audible some other
-  // way. A host and a guest are usually on a call together while this
-  // happens, so their voices reach each other through it and this page
-  // would be a second, later copy of the same words.
-  if (f.by_id && S.hushOther) return;
   if (S.recording || !VOICE.ctx || VOICE.ctx.state !== "running") return;
   if (f.stream !== VOICE.stream) { hush(); VOICE.stream = f.stream; }
   const ctx = VOICE.ctx;

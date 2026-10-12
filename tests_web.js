@@ -682,7 +682,6 @@ T.S.room = null;
 // NEVER YOUR OWN VOICE BACK AT YOU. While the key is down nothing plays
 // at all, but the last pieces of an utterance arrive after it comes up.
 T.S.selfId = "mine0000";
-T.S.hushOther = false;
 let heardSoFar = audio.started.length;
 T.onSpeech({ stream: "m1", rate: 48000, channels: 1, pcm: piece(1000),
              by: "yo", by_id: "mine0000" });
@@ -693,19 +692,13 @@ T.onSpeech({ stream: "m2", rate: 48000, channels: 1, pcm: piece(1000),
 check("but it does play the other person",
       audio.started.length, heardSoFar + 1);
 
-// AND NOT EVEN THEM, if they are already audible some other way: the two
-// are usually on a call together while this happens, so each hears the
-// other through it and this page would be a second, later copy.
-T.S.hushOther = true;
+// AND THE ESCRIBA IS HEARD BY EVERYBODY. Its frames carry no speaker at
+// all, which is what tells them apart from a person's: the suppression
+// above keys on `by_id`, so the one voice nobody in the room can get any
+// other way is the one voice that cannot be suppressed.
 heardSoFar = audio.started.length;
-T.onSpeech({ stream: "m3", rate: 48000, channels: 1, pcm: piece(1000),
-             by: "marta.ruiz", by_id: "theirs00" });
-check("the other voice can be silenced", audio.started.length, heardSoFar);
-// THE ESCRIBA IS NOT SILENCED WITH THEM. Its frames carry no speaker,
-// and it is the one voice a guest cannot get any other way.
 T.onSpeech({ stream: "m4", rate: 24000, channels: 1, pcm: piece(1000) });
-check("the escriba is still heard", audio.started.length, heardSoFar + 1);
-T.S.hushOther = false;
+check("the escriba is heard", audio.started.length, heardSoFar + 1);
 
 // WHOSE VOICE THIS WAS. A `said` row starts with no text — the words
 // arrive later, from the transcriber — so without a name the transcript

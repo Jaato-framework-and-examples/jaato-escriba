@@ -69,7 +69,6 @@
   "guest.grants": "while they are here, the escriba reads the wiki with your grants",
   "guest.hears": "hears the escriba and can speak",
   "guest.here": "{who} is here",
-  "guest.hush": "mute their voice",
   "guest.inside": "you are in {who}'s session",
   "guest.invite": "invite somebody",
   "guest.invited_by": "{who} is expecting you in their session",
