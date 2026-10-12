@@ -374,6 +374,15 @@ plugin_configs:
         tools:
           - store_memory
           - retrieve_memories
+          # The one client-provided tool: the web driver runs it in its
+          # own process so the escriba can say why an invited colleague
+          # is needed.  A HOST TOOL IS STILL A TOOL as far as this
+          # policy is concerned -- it comes from the client rather than
+          # a plugin, and that buys it nothing here.  Left off, it is
+          # offered to the model and then silently refused, which in
+          # this feature means a host watching "el escriba está
+          # escribiendo…" for as long as they care to wait.
+          - justificar_invitado
           # The tier switch itself.  A denied `enter_tier` would strand
           # the voice tier holding something to write and no way to write
           # it.

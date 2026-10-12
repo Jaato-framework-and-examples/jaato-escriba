@@ -38,6 +38,8 @@ from fastapi import HTTPException                        # noqa: E402
 
 from escriba_web import app as _app                      # noqa: E402
 from escriba_web.driver import Person, entry_json         # noqa: E402
+import yaml                                              # noqa: E402
+import escriba_web.driver as _driver                     # noqa: E402
 from escriba_web.guests import ROOM, Room, label, reason, token   # noqa: E402
 from escriba_web.hub import Hub                           # noqa: E402
 
@@ -137,6 +139,27 @@ check("what the escriba wrote is kept", reason("Llevó el cierre"),
 check("and bounded", len(reason("m" * 500)), 240)
 check("markup cannot escape the line", reason("<b>x</b>"), "bx/b")
 check("and nothing is invented for an empty one", reason("   "), "")
+
+# ------------------------------------------- the tool the profile must allow
+# TWO FILES HAVE TO AGREE and nothing else makes them.  The driver
+# registers the tool by name; the escriba's profile runs
+# `defaultPolicy: deny` with an explicit whitelist, and its own comment
+# says what a missing entry does -- the tool is offered to the model and
+# then silently refused, which a spoken turn has nowhere to report.  So a
+# rename here, or a new tool, would ship as a host watching "el escriba
+# está escribiendo…" for as long as they cared to wait.
+#
+# PARSED, NOT GREPPED: a duplicate YAML key is silent, and reading the
+# file for the string would pass on a stanza the loader had thrown away.
+_profile = yaml.safe_load(
+    (Path("template") / ".jaato" / "profiles"
+     / "_base_escriba.yaml").read_text(encoding="utf-8"))
+_allowed = (_profile["plugin_configs"]["permission"]["policy"]
+            ["whitelist"]["tools"])
+check("the tool the driver registers is one the profile permits",
+      _driver.JUSTIFY_TOOL in _allowed, True)
+check("and the two tools it was already allowed are still there",
+      {"store_memory", "retrieve_memories"} <= set(_allowed), True)
 
 # ----------------------------------------------------------- the token
 check("a person's id is stable", token(HOST), token(HOST))
@@ -507,7 +530,6 @@ async def main() -> int:
     # for not announcing a document: a turn spent saying "somebody
     # arrived" answers a question nobody asked. It rides the next real
     # turn, whichever side takes it.
-    import escriba_web.driver as _driver
 
     host._notices.clear()
     # ONE CALL PER TRANSITION. Being in the room and being recorded as
