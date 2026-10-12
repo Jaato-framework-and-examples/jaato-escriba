@@ -863,6 +863,55 @@ async def main():
     # somebody choosing to spend again on a session that never opened.
     check("and records nothing", rows, [])
 
+    # --------------------------------------------- starting from scratch
+    # ONE RENAME, NOT A LIST OF DELETIONS. A reset assembled out of six
+    # deletions grows a seventh thing it does not know about; the
+    # workspace IS the list, so moving it takes all of it and cannot
+    # take half.
+    zero_root = Path(tempfile.mkdtemp(prefix="escriba-zero-"))
+    gone = Person("zero-sub-01", root=zero_root, identity={"username": "ana"})
+    ws = gone.ws
+    # The Person already opened an archive directory for the session it is
+    # about to have, so the day it would span is counted from here rather
+    # than assumed to be zero.
+    before = gone.holdings()["days"]
+    (ws / "audio" / "20261012_120000").mkdir(parents=True, exist_ok=True)
+    (ws / "audio" / "20261012_120000" / "in_att_1.mp3").write_bytes(b"x")
+    (ws / "audio" / "20261012_120000" / "out_1_a.wav").write_bytes(b"y")
+    (ws / "audio" / "20261012_120000" / "manifest.jsonl").write_text("{}\n")
+
+    held = gone.holdings()
+    # COUNTED BEFORE IT IS OFFERED, and the recordings counted APART:
+    # a memory can be told again, a conversation cannot be re-had.
+    check("the recordings are counted", held["recordings"], 2)
+    check("and the manifest is not one of them", held["recordings"] != 3, True)
+    check("and the days they span", held["days"], before + 1)
+    check("the memories are counted too", "curated" in held and "raw" in held, True)
+
+    home = ws.parent
+    person_json = home / "person.json"
+    check("the identity file is where the rename will not reach it",
+          person_json.is_file(), True)
+
+    aside = await gone.scratch()
+    check("the workspace is gone from where it was", ws.exists(), False)
+    check("and is beside itself, not deleted", aside.is_dir(), True)
+    check("named so a person can find it", aside.name.startswith("workspace.olvidado-"), True)
+    check("with the recordings still in it",
+          (aside / "audio" / "20261012_120000" / "in_att_1.mp3").is_file(), True)
+    # IDENTITY IS NOT WHAT THEY ASKED TO FORGET. It lives one level up,
+    # it is what the proxy asserts, and it is how an operator maps a
+    # directory back to a person.
+    check("the identity survives the reset", person_json.is_file(), True)
+
+    # AND THE NEXT PERSON OF THE SAME PRINCIPAL GETS A NEW WORKSPACE,
+    # provisioned from the template — the path a first-ever visitor
+    # takes, which is the whole point of dropping the cached Person.
+    again = Person("zero-sub-01", root=zero_root, identity={"username": "ana"})
+    check("a fresh workspace is provisioned in its place", again.ws.is_dir(), True)
+    check("at the same path as before", again.ws, ws)
+    check("holding none of the recordings", again.holdings()["recordings"], 0)
+
     print("web backend OK" if not fail else f"{fail} failure(s)")
     return 1 if fail else 0
 

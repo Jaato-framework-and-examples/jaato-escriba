@@ -408,6 +408,48 @@ async def nueva(request: Request) -> dict:
     return {"ok": True}
 
 
+@app.get("/de-cero")
+async def de_cero_counts(request: Request) -> dict:
+    """What starting from scratch would take, counted before it is offered.
+
+    A SEPARATE READ, so the confirmation shows the person their own
+    numbers rather than a sentence about "everything". The recordings
+    are in it because they are the half nothing can reconstruct.
+    """
+    person = await person_of(request)
+    return person.holdings()
+
+
+@app.post("/de-cero")
+async def de_cero(request: Request) -> dict:
+    """Move this person's whole workspace aside and begin again.
+
+    ONE RENAME, NOT A LIST OF DELETIONS. `Person.scratch` says why; what
+    this route adds is the forgetting of the PROCESS's own state. The
+    `Person` is dropped and the room with it, exactly as `_open` does
+    when a session cannot be opened, so the next request builds a new
+    one and provisions a workspace from the template — the same path a
+    person takes on their first ever visit, which is the point.
+
+    NOT A GUEST ROUTE, and not reachable as one: a guest's page talks to
+    `/invitado/*`, and this resolves the CALLER's own person, so the
+    worst a guest could do by posting here is reset their own escriba.
+
+    THE ESCRIBA CANNOT REACH IT EITHER. There is no tool for this and
+    there will not be one: a second brain that can decide to forget
+    itself is not a second brain.
+    """
+    person = await person_of(request)
+    aside = await person.scratch()
+    PEOPLE.pop(person.principal, None)
+    # AND THE ROOM WITH IT. An invitation into a session that no longer
+    # exists is an invitation into nothing.
+    ROOM.forget(person.principal)
+    log.warning("%s started from scratch; the old workspace is at %s",
+                person.principal, aside)
+    return {"moved": aside.name}
+
+
 @app.get("/days")
 async def days(request: Request):
     person = await person_of(request)

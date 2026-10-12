@@ -367,6 +367,7 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
       <div id="days"></div>
       <div class="note"><span id="nav-note"></span>
         <code>audio/</code>.</div>
+      <div class="note" id="scratch"></div>
     </nav>
 
     <section class="mid">
@@ -484,7 +485,7 @@ const S = {
   selfId: "",
   //: Rooms this person has been offered, and the invitation this person
   //: has issued.
-  invited: [], inviting: false, inviteError: null,
+  invited: [], inviting: false, inviteError: null, scratch: null,
   //: EVERYBODY THE HOST HAS NAMED, and whether each is here yet. A list,
   //: because an interview has two sides: a host documenting a topic
   //: calls in two people so that one can correct the other, and the
@@ -723,6 +724,63 @@ async function restartSession(btn) {
   if (!res || !res.ok) { btn.disabled = false; return; }
   S.alert = null;
   renderAlert();
+}
+
+// ------------------------------------------------------- from scratch
+// EVERYTHING, AND THE COUNTS FIRST. "start from scratch" and "move aside
+// the nineteen things you told it over three weeks" are the same press
+// and very different decisions, so the numbers come from the server
+// before the confirmation is shown, and the recordings are named apart
+// from the rest: a memory can be told again, a conversation cannot be
+// re-had.
+//
+// A TYPED WORD, not a second click. Two clicks in the same place is
+// something a thumb does; a word is something a person decides.
+function renderScratch() {
+  const box = $("scratch");
+  box.textContent = "";
+  if (S.guest) return;                 // not a guest's workspace to reset
+  if (!S.scratch) {
+    const b = el("button", "hbtn", tx("scratch.button"));
+    b.onclick = askScratch;
+    box.append(b);
+    return;
+  }
+  const h = S.scratch;
+  box.append(el("div", "warn", tx("scratch.warn", h)),
+             el("div", "warn", tx("scratch.irreplaceable")),
+             el("div", "", tx("scratch.kept")));
+  const field = el("input", "");
+  field.placeholder = tx("scratch.type");
+  const go = el("button", "hbtn", tx("scratch.go"));
+  go.onclick = () => doScratch(field, go);
+  field.onkeydown = (ev) => { if (ev.key === "Enter") doScratch(field, go); };
+  const no = el("button", "hbtn", tx("scratch.cancel"));
+  no.onclick = () => { S.scratch = null; renderScratch(); };
+  box.append(field, go, no);
+  field.focus();
+}
+
+async function askScratch() {
+  const res = await fetch("/de-cero").catch(() => null);
+  if (!res || !res.ok) return;
+  S.scratch = await res.json();
+  renderScratch();
+}
+
+async function doScratch(field, btn) {
+  // THE WORD IS THE CONFIRMATION. Compared against the catalogue so it
+  // is the word the person was ASKED for, in the language they are
+  // reading, rather than a Spanish constant an English reader is shown
+  // and then expected to type.
+  if (((field && field.value) || "").trim().toLowerCase() !== tx("scratch.word")) return;
+  btn.disabled = true;
+  const res = await fetch("/de-cero", { method: "POST" }).catch(() => null);
+  if (!res || !res.ok) { btn.disabled = false; return; }
+  // THE PAGE IS RELOADED rather than patched: the person on the other
+  // side of this has no session, no workspace and no transcript, and the
+  // honest way to show that is the page a first-ever visitor gets.
+  location.reload();
 }
 
 // ---------------------------------------------------------------- days
@@ -2389,7 +2447,7 @@ function onEvent(kind, data) {
     // so there is no reply for it to ride; and this is what makes a
     // second tab, and the first one after a reconnect, agree.
     if (!S.guest && data.guests) S.guests = data.guests;
-    renderGuest(); pttFace();
+    renderGuest(); renderScratch(); pttFace();
   } else if (kind === "invitacion") {
     // AN INVITATION THAT ARRIVED WHILE THIS PAGE WAS ALREADY OPEN.
     // `/invitacion` is asked once, at boot, so somebody already sitting
@@ -2645,7 +2703,7 @@ function renderAll() {
   applyTheme();                 // its label is a string like any other
   renderLangs(); renderPills(); renderCounts(); renderTabs(); renderPanel();
   renderDays(); renderTranscript(); renderEngines(); pttFace();
-  renderGuest();
+  renderGuest(); renderScratch();
   // The static markup carries no Spanish any more, so the parts of the
   // chrome that are not redrawn by a renderer are set here.
   $("guest-btn").onclick = () => { S.inviting = !S.inviting; renderGuest(); };

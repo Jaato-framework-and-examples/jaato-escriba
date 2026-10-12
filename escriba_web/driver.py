@@ -1081,13 +1081,84 @@ class Person:
     def _relay(self) -> Relay:
         return Relay(archive=self.archive, hub=self.hub)
 
-    async def close(self) -> None:
+    def holdings(self) -> dict:
+        """What a reset would move aside, counted before it is offered.
+
+        COUNTS FIRST, which is `_forget`'s rule and the reason it has
+        one: "erase everything" and "erase the nineteen things you told
+        me over three weeks" are the same command and very different
+        decisions. The recordings are counted separately because they
+        are the half nothing can reconstruct -- a memory can be told
+        again, a conversation cannot be re-had -- so the number has to
+        be in front of the person before they type the word.
+        """
+        held = memory.counts(self.ws)
+        catalogue = self.ws / enrichment.CATALOGUE
+        audio = self.ws / _archive.ROOT
+        return {
+            "curated": held["curated"], "raw": held["raw"],
+            "references": (len(list(catalogue.glob("auto-*.json")))
+                           if catalogue.is_dir() else 0),
+            "recordings": (len([f for f in audio.rglob("*")
+                                if f.is_file() and f.suffix != ".jsonl"])
+                           if audio.is_dir() else 0),
+            "days": (len([d for d in audio.iterdir() if d.is_dir()])
+                     if audio.is_dir() else 0),
+        }
+
+    async def scratch(self) -> Path:
+        """Everything this escriba has, moved aside in ONE rename.
+
+        "FROM SCRATCH, ABSOLUTELY" means the workspace, not a list of
+        things to remember to clear. Memories, references, documents,
+        recordings, the manifest, staged files, preferences and the
+        authored assets all live under it, so a rename takes all of them
+        at once and cannot take half. A reset assembled out of six
+        deletions is a reset that grows a seventh thing it does not know
+        about.
+
+        MOVED, NEVER UNLINKED, which is `_forget`'s rule and is worth
+        more here than there: this takes the recordings too, and those
+        are the only copy of what was actually said. The tree is
+        renamed beside itself and the path is returned, so the person
+        can be told where their old escriba went.
+
+        `person.json` SURVIVES, because it lives one level up: identity
+        is what the proxy asserts and what an operator maps a directory
+        back to a person with, not something this person is choosing to
+        forget.
+
+        NOT CONSOLIDATED ON THE WAY OUT. `close` normally runs the
+        curator so the session is remembered; here it is about to be
+        moved aside, and spending a model turn to curate memories into
+        a tree nobody will read again is work for nothing.
+        """
+        await self.close(consolidate=False)
+        return await asyncio.to_thread(self._aside)
+
+    def _aside(self) -> Path:
+        """The rename itself, off the loop, and refusing to collide."""
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        aside = self.ws.with_name(f"{self.ws.name}.olvidado-{stamp}")
+        # A SECOND RESET IN THE SAME SECOND would otherwise rename one
+        # tree ON TOP of another on some platforms. Rare, and the cost
+        # of being wrong is somebody's only copy of a conversation.
+        n = 0
+        while aside.exists():
+            n += 1
+            aside = self.ws.with_name(f"{self.ws.name}.olvidado-{stamp}-{n}")
+        self.ws.rename(aside)
+        return aside
+
+    async def close(self, consolidate: bool = True) -> None:
         self._stop.set()
         if self._ticker is not None:
             await self._ticker
         if getattr(self, "_watcher", None) is not None:
             await self._watcher.drain()
         await self._close_session()
+        if not consolidate:
+            return
         # With the conversation closed and nobody waiting, the curator.
         await self._consolidate()
 

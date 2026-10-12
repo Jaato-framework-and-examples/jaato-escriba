@@ -187,7 +187,7 @@ const ctx = vm.createContext(sandbox);
 vm.runInContext(blocks[blocks.length - 1] +
   "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, " +
   "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows, api, " +
-  "renderGuest, renderTranscript, pttFace};", ctx);
+  "renderGuest, renderScratch, renderTranscript, pttFace};", ctx);
 const T = sandbox.__test;
 
 // ------------------------------------------------ the page before the hub
@@ -920,6 +920,42 @@ T.onEvent("alert", { kind: "budget", at: "18:14" });
 check("and a guest is not offered somebody else's ceiling", again(), false);
 T.S.guest = false;
 T.S.alert = null;
+
+// STARTING FROM SCRATCH, AND WHO MAY. The counts come from the server
+// before the confirmation is shown, and the recordings are named apart
+// from the rest: a memory can be told again, a conversation cannot.
+const scratch = () => byId.get("scratch");
+T.S.guest = false; T.S.scratch = null;
+T.renderScratch();
+check("the way to start over is offered",
+      scratch().walk().some((n) => n._text === ES["scratch.button"]), true);
+// NOT A GUEST'S WORKSPACE TO RESET. They are in somebody else's session;
+// the button would reset their own, which is not what the press means.
+T.S.guest = true;
+T.renderScratch();
+check("but never to a guest", scratch().textContent, "");
+T.S.guest = false;
+
+// THE COUNTS FIRST: "start from scratch" and "move aside the nineteen
+// things you told it over three weeks" are the same press.
+T.S.scratch = { curated: 19, raw: 2, references: 66, recordings: 140, days: 3 };
+T.renderScratch();
+check("the confirmation says how many memories go", 
+      scratch().textContent.includes("19"), true);
+check("and how many recordings", scratch().textContent.includes("140"), true);
+// THE ONE THING NOTHING CAN RECONSTRUCT, said apart from the rest.
+check("and that the recordings are the part that cannot be re-had",
+      scratch().textContent.includes(ES["scratch.irreplaceable"]), true);
+check("and that nothing is actually deleted",
+      scratch().textContent.includes(ES["scratch.kept"]), true);
+// A TYPED WORD, not a second click: two clicks in the same place is
+// something a thumb does.
+// The stub element keeps whatever the render assigns, so the field is
+// found by the property the page actually sets on it.
+check("and asks for a word rather than another click",
+      scratch().walk().some((n) => n.placeholder === ES["scratch.type"]), true);
+T.S.scratch = null;
+T.renderScratch();
 
 // ------------------------------------------- where the answer came from
 // The escriba may not read a URL aloud — a dictated address helps nobody
