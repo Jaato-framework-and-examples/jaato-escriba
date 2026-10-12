@@ -484,9 +484,20 @@ def _invited(request: Request) -> Tuple[Person, Invitation, str]:
         # SAID, NOT WORKED AROUND. Matching on the principal instead
         # would be inventing an identity for somebody, and a guess about
         # who is at the door is the one thing this must not make.
-        raise HTTPException(403, "the proxy in front of this deployment is "
-                                 "not forwarding an email address, so there "
-                                 "is nothing to match an invitation against")
+        #
+        # THE CAUSE IS NOT NAMED, because this code cannot tell which of
+        # the two it is, and naming the wrong one sends an operator to
+        # check something that is already correct. This used to blame the
+        # proxy. Measured on the deployment on 2026-10-12, the proxy
+        # forwards the header (`escriba-oauth2-proxy` runs with
+        # `--pass-user-headers=true`), so the only remaining cause was an
+        # account with no email address -- which the realm is now
+        # required to refuse. Arriving here therefore means one of those
+        # two has regressed, and `CLAUDE.md` beside this file says which
+        # to look at and why the feature depends on both.
+        raise HTTPException(403, "this request carries no email address, so "
+                                 "there is nothing to match an invitation "
+                                 "against")
     # BOTH HALVES OF THE LOOKUP: the room from the opaque token, and then
     # the invitation issued to the address the proxy asserted -- because
     # one room now holds several, one per person the host named.

@@ -30,6 +30,34 @@ of record:
 | Only one person talks at a time, and the others can see it | `Person._floor` is published; each page disables its own button while somebody else holds it, and a press that races anyway is refused with `FloorTaken` rather than queued. Waiting was right while the only person who could collide with you was yourself with two tabs open |
 | A failed recording cannot lock the room | the floor is a context manager (`Person._holding`), not a pair of calls around the turn's `try` — `_to_mp3` and `archive.heard` both sit inside it and both can raise |
 
+## Required of the deployment, because this code cannot check it
+
+**Every account in the realm must have an email address.** The whole
+feature matches an identity the proxy asserted against an address the host
+typed, so an account carrying no address can be invited and can never
+arrive. That failure is silent on both sides, which is the reason it is
+written down here: `GET /invitacion` does not refuse such a person —
+`Room.waiting_for("")` returns `[]`, so they are offered nothing and never
+learn a room was waiting — while the host sees the invitation standing open
+beside its cancel, indistinguishable from one not claimed *yet*. It
+defeats exactly the promise `invitar` makes in its own docstring, that
+naming somebody in advance fails visibly rather than quietly.
+
+It is not fixed in code because there is nothing here to fix: asking
+whether an address maps to an account means querying Keycloak from the
+invite path, and matching on the principal instead would be inventing an
+identity. The state is made impossible upstream instead — the realm
+requires the attribute — and `_invited`'s 403 is what a regression looks
+like.
+
+So the feature rests on two deployment facts, neither visible from this
+process:
+
+| Fact | Where | What a regression looks like |
+|---|---|---|
+| The proxy forwards the user headers | `escriba-oauth2-proxy`, `--pass-user-headers=true` (confirmed on the deployment 2026-10-12) | every guest gets `_invited`'s 403, and the host waits on an invitation nobody can claim |
+| The realm requires an email address | Keycloak realm config, and every account predating it | one particular guest is offered nothing by `/invitacion`, silently, while their host waits |
+
 ## Traced, because it cannot be enforced
 
 **The escriba reads kbwiki with the host's grants, whoever asked.** The
