@@ -492,14 +492,52 @@ async def main():
            cid="c6")
     check("reading the text opens it too", len(c.rows()), 2)
 
+    # ------------------------------------------- the asking is counted
+    # MEASURED, 2026-10-12: two `kb_list_nodes` calls that found nothing
+    # rendered as "0 del wiki", which is what a conversation that never
+    # looked renders as too. The person asked the escriba twice whether
+    # it was using the wiki at all -- a question the page should have
+    # answered and could not.
+    a = _wikimod.Consulted()
+    check("nothing asked is not a connection anybody has tested",
+          a.state()["state"], "unused")
+    opened(a, "", tool="mcp__kbwiki__kb_list_nodes", cid="a1")
+    opened(a, "", tool="mcp__kbwiki__ask_librarian", cid="a2")
+    check("a lookup that found nothing is still a lookup",
+          a.state()["asked"], 2)
+    check("and it opened no page", a.state()["opened"], 0)
+    check("looking is not listing: the panel stays what came IN",
+          a.rows(), [])
+    check("and a wiki that answered is connected", a.state()["state"], "ok")
+
+    # A CALL THAT FAILED IS THE THIRD ABSENCE, and the one the old panel
+    # could not show at all: `_ended` dropped failures and `state`
+    # answered "ok" regardless, so a refused token looked like an idle
+    # wiki.
+    opened(a, "", tool="mcp__kbwiki__ask_librarian", ok=False, cid="a3")
+    check("a wiki that refused is not a wiki that is fine",
+          a.state()["state"], "failing")
+    check("the failure is counted", a.state()["failed"], 1)
+    check("and a failed lookup is not counted as a lookup that happened",
+          a.state()["asked"], 2)
+    opened(a, "rip-overview", cid="a4")
+    check("and one good call afterwards clears it", a.state()["state"], "ok")
+
     # TWO EMPTIES THAT MEAN OPPOSITE THINGS: no wiki wired at all, and a
     # wiki this conversation has not needed.  The panel must not show the
     # same thing for both.
     from escriba_web.driver import WIKI_UNWIRED
     check("with no wiki the panel says so", person.wiki_state(),
           dict(WIKI_UNWIRED))
-    check("with one wired and nothing read it is connected and empty",
-          who.wiki_state(), {"state": "ok", "rows": [], "detail": ""})
+    # NOT "ok".  A wiki that is merely CONFIGURED has told us nothing
+    # about whether it can be reached; this used to answer "ok" on the
+    # strength of a config key, so a refused token and an untouched wiki
+    # rendered identically -- in the one panel whose purpose is to tell
+    # two absences apart.
+    check("with one wired and nothing asked it says exactly that",
+          who.wiki_state()["state"], "unused")
+    check("and claims no lookups it cannot show",
+          (who.wiki_state()["asked"], who.wiki_state()["opened"]), (0, 0))
 
     # ------------------------------------------------------ path guards
     from escriba_web.app import ATT

@@ -42,6 +42,19 @@ from typing import Any, Dict, List, Optional
 #: one page it then read.
 OPENS = ("mcp__kbwiki__kb_get_node", "mcp__kbwiki__kb_get_node_content")
 
+#: The calls that LOOK without opening anything.  Counted but never
+#: listed: the panel stays a list of what came into the conversation,
+#: and these are how the escriba got there.
+#:
+#: COUNTED AT ALL because of what the panel could not answer.  Measured
+#: on 2026-10-12: the escriba made two `kb_list_nodes` calls, both
+#: returning nothing, and the panel read "0 del wiki" -- identical to
+#: never having looked.  The person asked it twice whether it was using
+#: the wiki at all, which is a question the page should have answered
+#: and could not.
+ASKS = ("mcp__kbwiki__ask_librarian", "mcp__kbwiki__kb_list_nodes",
+        "mcp__kbwiki__kb_list_bundles")
+
 
 class Consulted:
     """The wiki pages this session opened, in the order it opened them."""
@@ -53,6 +66,15 @@ class Consulted:
         #: id that is not there says nothing about what the person saw.
         self._pending: Dict[str, str] = {}
         self._rows: Dict[str, dict] = {}
+        #: Lookups made, whether or not they found anything.
+        self._asked = 0
+        #: Calls that came back an error, and the last one's status.
+        self._failed = 0
+        self._detail = ""
+        #: Whether the LAST kbwiki call succeeded.  `None` until one has
+        #: been made, which is the state the panel used to report as
+        #: "ok" with no evidence whatsoever.
+        self._last: Optional[bool] = None
 
     def attach(self, client) -> None:
         from jaato_sdk import EventType
@@ -60,20 +82,31 @@ class Consulted:
         client.subscribe(EventType.TOOL_CALL_END, self._ended)
 
     def _started(self, ev) -> None:
-        if getattr(ev, "tool_name", None) not in OPENS:
+        name = getattr(ev, "tool_name", None)
+        if name not in OPENS and name not in ASKS:
             return
         node = (getattr(ev, "tool_args", None) or {}).get("id")
-        if node:
-            self._pending[getattr(ev, "call_id", "")] = str(node)
+        self._pending[getattr(ev, "call_id", "")] = (name, str(node or ""))
 
     def _ended(self, ev) -> None:
-        node = self._pending.pop(getattr(ev, "call_id", ""), None)
-        if node is None or not getattr(ev, "success", False):
+        held = self._pending.pop(getattr(ev, "call_id", ""), None)
+        if held is None:
             return
-        if node in self._rows:
-            return                      # read twice is one page, not two
-        self._rows[node] = {"id": node, "text": node, "origin": "wiki",
-                            "at": datetime.now().strftime("%H:%M"), "tags": []}
+        name, node = held
+        ok = bool(getattr(ev, "success", False))
+        self._last = ok
+        if not ok:
+            self._failed += 1
+            # ALL `ToolCallEndEvent` CARRIES. No result payload, so the
+            # status is the whole of what can be said about why.
+            self._detail = str(getattr(ev, "result_status", "") or "")
+        elif name in ASKS:
+            self._asked += 1
+        if ok and name in OPENS and node and node not in self._rows:
+            # Read twice is one page, not two.
+            self._rows[node] = {"id": node, "text": node, "origin": "wiki",
+                                "at": datetime.now().strftime("%H:%M"),
+                                "tags": []}
         if self.hub is not None:
             self.hub.publish("wiki", self.state())
 
@@ -81,5 +114,23 @@ class Consulted:
         return list(self._rows.values())
 
     def state(self) -> Dict[str, Any]:
-        """What the panel is told: connected, with whatever has been read."""
-        return {"state": "ok", "rows": self.rows(), "detail": ""}
+        """What the panel is told, every field of it MEASURED.
+
+        This used to return the literal `"ok"` whenever a wiki was
+        configured, which said nothing about whether one could be
+        reached: a refused token and an untouched wiki rendered
+        identically, and the panel's whole reason for existing is to
+        tell two absences apart.  A state is now a fact about calls that
+        happened.
+
+        `unused` nothing has been called yet · `ok` the last call
+        succeeded · `failing` the last one did not, with `detail`.
+
+        A CODE, NOT A WORD, because the page writes the sentence: these
+        reach a person, and `i18n/` is where what a person reads lives.
+        """
+        code = ("unused" if self._last is None
+                else "ok" if self._last else "failing")
+        return {"state": code, "rows": self.rows(),
+                "asked": self._asked, "opened": len(self._rows),
+                "failed": self._failed, "detail": self._detail}

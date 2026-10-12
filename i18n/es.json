@@ -151,5 +151,10 @@
   "theme.dark": "oscuro",
   "theme.light": "claro",
   "theme.system": "sistema",
-  "unit.of": " de {v}"
+  "unit.of": " de {v}",
+  "wiki.asked": "{n} consultas",
+  "wiki.failing": "no responde",
+  "wiki.opened": "{n} abiertas",
+  "wiki.unused": "todavía no se ha consultado en esta conversación",
+  "wiki.unwired": "sin conectar — no hay ninguna fuente MCP configurada para el wiki"
 }

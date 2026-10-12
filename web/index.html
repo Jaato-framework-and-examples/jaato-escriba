@@ -456,7 +456,7 @@ const S = {
   //: workspace, and it is one we have no grounds for.
   loaded: false,
   activeDay: null, progSec: 0, engines: [], loadedDays: new Set(),
-  wiki: { state: "sin conectar", rows: [], detail: "" },
+  wiki: { state: "unwired", rows: [], detail: "", asked: 0 },
   //: Replies already offered to the speakers, by entry id.  A reply is
   //: played ONCE and never again on its own: the audio ref arrives in a
   //: second event after the text, a `repeats` bump re-publishes a row,
@@ -1043,7 +1043,17 @@ function renderCounts() {
     { label: tx("panel.references"), value: c.catalogue, d: delta(c.catalogue, c.catalogue_at_start),
       hint: !S.loaded ? ""
             : (c.found || 0) + " encontradas · " + (c.selected || 0) + " elegidas"
-              + (S.wiki.state === "ok" ? " · " + S.wiki.rows.length + " del wiki" : ""),
+              // THE ASKING, NOT ONLY THE OPENING. "0 del wiki" was true
+              // of a conversation that had searched twice and found
+              // nothing, and indistinguishable from one that never
+              // looked — so the person asked the escriba twice whether
+              // it was using the wiki, which is a question this line
+              // should answer.
+              + (S.wiki.state === "failing" ? " · " + tx("wiki.failing")
+                 : (S.wiki.asked || (S.wiki.rows || []).length)
+                   ? " · " + tx("wiki.asked", { n: S.wiki.asked || 0 })
+                     + " · " + tx("wiki.opened", { n: (S.wiki.rows || []).length })
+                   : ""),
       good: (d) => d >= 0 },
     { label: tx("panel.documents"), value: S.loaded ? (S.items.documentos || []).length : u,
       d: delta((S.items.documentos || []).length, c.documents_at_start),
@@ -1126,12 +1136,14 @@ const staged = (want) => (S.items.referencias || [])
   .filter((r) => (r.origin === "staged") === want);
 
 function subTabs(box) {
-  const w = S.wiki || { state: "sin conectar", rows: [] };
+  const w = S.wiki || { state: "unwired", rows: [], asked: 0 };
   const sub = el("div", "tabs sub");
   for (const [key, label, n] of [
         ["local", tx("refs.local"), String(staged(false).length)],
         ["staged", tx("refs.staged"), String(staged(true).length)],
-        ["wiki", tx("refs.wiki"), w.state === "ok" ? String((w.rows || []).length) : w.state]]) {
+        ["wiki", tx("refs.wiki"),
+         (w.state === "ok" || w.state === "unused")
+           ? String((w.rows || []).length) : tx("wiki." + w.state)]]) {
     const b = el("button", key === S.refTab ? "on" : "");
     b.append(el("span", null, label), el("span", "n", n));
     b.onclick = () => { S.refTab = key; S.sel = null; renderPanel(); };
@@ -1162,7 +1174,10 @@ function references(box, rows) {
   const w = S.wiki || { state: "sin conectar", rows: [], detail: "" };
   if (S.refTab === "staged") box.append(uploader());
   if (S.refTab === "wiki" && w.state !== "ok") {
-    box.append(el("div", "empty", w.detail || w.state));
+    // THE STATE IS A CODE; the sentence is the catalogue's. `detail` is
+    // the server's own account of a failure and has no translation.
+    box.append(el("div", "empty",
+                  tx("wiki." + w.state) + (w.detail ? " — " + w.detail : "")));
     return;
   }
   if (!rows.length) {
@@ -2453,7 +2468,9 @@ function mockState() {
     // when.  No url and no content -- the end event has no result
     // payload.  A fixture richer than the server is a design nobody can
     // ship.
-    wiki: { state: "ok", rows: [
+    // `asked` higher than the rows, because that is the ordinary shape:
+    // the escriba looks several times and opens what it finds.
+    wiki: { state: "ok", asked: 5, opened: 2, failed: 0, detail: "", rows: [
       { id: "riego-goteo-patrones", text: "riego-goteo-patrones",
         at: "09:18", tags: [], origin: "wiki" },
       { id: "consumo-hidrico-maceta", text: "consumo-hidrico-maceta",

@@ -151,5 +151,10 @@
   "theme.dark": "dark",
   "theme.light": "light",
   "theme.system": "system",
-  "unit.of": " of {v}"
+  "unit.of": " of {v}",
+  "wiki.asked": "{n} lookups",
+  "wiki.failing": "not responding",
+  "wiki.opened": "{n} opened",
+  "wiki.unused": "not consulted yet in this conversation",
+  "wiki.unwired": "not connected — no MCP source is configured for the wiki"
 }

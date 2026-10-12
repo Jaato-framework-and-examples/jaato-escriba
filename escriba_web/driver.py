@@ -250,8 +250,10 @@ class WebBoard(_board.StateBoard):
 #: absence: the panel says "sin conectar" rather than showing an empty
 #: list, because an empty list and an unreachable server look the same to
 #: a reader and mean opposite things.
-WIKI_UNWIRED = {"state": "sin conectar", "rows": [],
-                "detail": "no hay ninguna fuente MCP configurada para el wiki"}
+#: A CODE, like every other state this panel reports, so the sentence a
+#: person reads comes out of `i18n/` rather than out of this file.
+WIKI_UNWIRED = {"state": "unwired", "rows": [], "detail": "",
+                "asked": 0, "opened": 0, "failed": 0}
 
 
 class NotReady(RuntimeError):
