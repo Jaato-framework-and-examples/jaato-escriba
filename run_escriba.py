@@ -53,6 +53,13 @@ from typing import Any, List, Optional
 
 from jaato_sdk.media_identity import ATTACHMENT_ID_KEY
 from jaato_sdk import AgentError, ClientType, EventType, IPCClient
+# THE FRAMEWORK'S OWN ALLOW-LIST, imported and never re-typed here.  Its
+# comment says why it is an allow-list: `budget_exhausted` was the fifth
+# reason to exist and the code that enumerated four had already gone
+# stale, so a reason that does not exist yet must raise rather than pass
+# quietly.  A copy of the set in this file would be the stale enumeration
+# all over again.  Not re-exported from `jaato_sdk`, hence the path.
+from jaato_sdk.client.convenience import CLEAN_TERMINAL_REASONS
 
 import archive as _archive
 import board as _board
@@ -172,6 +179,32 @@ def _session_is_gone(exc: Exception) -> bool:
     return any(m.lower() in str(exc).lower() for m in _GONE)
 
 
+def _if_over(scribe, cause: Optional[Exception] = None) -> None:
+    """Raise if the daemon says this session is finished AND meant it.
+
+    `session_ended` ALONE IS NOT THE QUESTION, and getting that wrong
+    took the deployment down on 2026-10-12: a completion-gated session
+    settles every turn on `SESSION_TERMINATED` with reason `natural`,
+    which is what `signal_completion` produces, so `session_ended` is
+    true after a turn that worked perfectly.  Raising on it made the
+    GREETING fail, `_open` dropped the person, and every request 503'd.
+    Measured: `run_escriba.SessionGone: natural`, out of `Person.open`.
+
+    THE REASON IS THE QUESTION, and the framework already answers it.
+    `CLEAN_TERMINAL_REASONS` is the set a turn verb returns on rather
+    than raising for -- "what this set decides is whether it is over
+    because something CUT THE TURN SHORT".  `budget_exhausted` is not in
+    it, which is the whole case this exists for.
+    """
+    over = scribe.terminus
+    if over is None or not over.session_ended:
+        return
+    if over.reason in CLEAN_TERMINAL_REASONS:
+        return
+    raise SessionGone(over.reason, reason=over.reason,
+                      details=over.details) from cause
+
+
 async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
     """One turn, tolerating a turn that does its work but never closes.
 
@@ -260,10 +293,7 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
         # BEFORE it raises — so the daemon's account of the ending is
         # already there whenever there is one, and reading the message
         # instead would be inventing an answer next to a given one.
-        over = scribe.terminus
-        if over is not None and over.session_ended:
-            raise SessionGone(over.reason, reason=over.reason,
-                              details=over.details) from exc
+        _if_over(scribe, exc)
         if _session_is_gone(exc):
             raise SessionGone(str(exc)) from exc
         (tui or _LINES).note(f"   ↳ (turn not closed: {str(exc)[:60]})")
@@ -306,10 +336,7 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
     # manifest row is written. The turn happened; it is the NEXT one that
     # has nowhere to go, and losing this turn's record to say so would
     # trade a fact for a warning.
-    over = scribe.terminus
-    if over is not None and over.session_ended:
-        raise SessionGone(over.reason, reason=over.reason,
-                          details=over.details)
+    _if_over(scribe)
 
 
 def _forget(ws: Path, assume_yes: bool) -> int:

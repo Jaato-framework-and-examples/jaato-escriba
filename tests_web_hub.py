@@ -682,6 +682,13 @@ async def main():
                 raise self._raises
             return {"anotado": "algo"}
 
+    # `_if_over` IS NOT A COROUTINE, and must not become one: it is called
+    # without `await`, so an `async def` would return an object nobody
+    # awaits and the guard would silently never fire. An editing slip made
+    # exactly that happen while this was being written.
+    check("the ending guard is callable, not awaitable",
+          asyncio.iscoroutinefunction(_run._if_over), False)
+
     async def ending(scribe):
         """What `_turn` raises, or None if it returned."""
         try:
@@ -701,12 +708,35 @@ async def main():
     check("with what the terminal carried",
           getattr(over, "details", None), {"dimension": "usd"})
 
-    # AND AN ORDINARY TURN IS STILL ORDINARY: `session_ended` is the
-    # question, not "is there a terminus".
+    # `session_ended` ALONE IS NOT THE QUESTION, and this leg exists
+    # because getting that wrong took the deployment down on 2026-10-12.
+    # A completion-gated session settles EVERY turn on
+    # SESSION_TERMINATED with reason `natural` -- that is what
+    # `signal_completion` produces -- so `session_ended` is true after a
+    # turn that worked perfectly. Raising on it made the GREETING fail,
+    # `_open` dropped the person, and every request 503'd:
+    # `run_escriba.SessionGone: natural`, out of `Person.open`.
+    #
+    # The first version of this leg wrote `session_ended=False` for
+    # `natural`, which is not what the daemon sends. A stub that agrees
+    # with what I believed, rather than with what the daemon does,
+    # cannot catch the belief being wrong.
+    for clean in sorted(_run.CLEAN_TERMINAL_REASONS):
+        check(f"a session ending as {clean!r} is not a failure",
+              await ending(Scribe(terminus=Terminus(clean, session_ended=True))),
+              None)
     check("a turn that ended nothing just returns",
           await ending(Scribe(terminus=Terminus("natural", session_ended=False))), None)
     check("and neither does one with no terminus at all",
           await ending(Scribe()), None)
+    # AND A REASON NOBODY HAS SEEN YET STILL RAISES, which is why the
+    # framework's set is an allow-list: `budget_exhausted` was the fifth
+    # reason to exist, and the code enumerating four had already gone
+    # stale by the time it arrived.
+    over = await ending(Scribe(terminus=Terminus("cascade_cancelled",
+                                                 session_ended=True)))
+    check("an ending nobody allowed for is still an ending",
+          getattr(over, "reason", None), "cascade_cancelled")
 
     # THE DAEMON'S ACCOUNT BEATS THE MESSAGE. `_raise_if_needed` writes
     # the terminus BEFORE it raises, so it is there to be read, and the
