@@ -54,7 +54,51 @@ from run_escriba import DRAIN, SessionGone, _reconcile, _turn   # noqa: E402
 from . import kbwiki                                             # noqa: E402
 from . import wiki as _wiki                                      # noqa: E402
 from .hub import Hub                                             # noqa: E402
-from .guests import token as _token
+from .guests import ROOM, token as _token
+
+
+#: The one tool the escriba has that reaches back into this process.
+#:
+#: SPANISH, AND NOT IN `i18n/`, for the persona's reason rather than the
+#: greeting's: this is instruction to the model, never read by a person,
+#: and a copy per locale would be drift with nothing to gain.  What the
+#: escriba WRITES into it follows the person's language, because the
+#: `speech` agent param already pins that for everything it says.
+#:
+#: IT TAKES NO DECISION AWAY FROM ANYBODY.  It cannot name a guest -- the
+#: address is required and is matched against one the host typed, so the
+#: model has nothing to invent -- and it cannot let anybody in.  All it
+#: does is fill in the two fields the host is about to read and send.
+JUSTIFY_TOOL = "justificar_invitado"
+JUSTIFY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["email", "motivo", "tema"],
+    "properties": {
+        "email": {
+            "type": "string",
+            "description": "La direccion que la persona acaba de escribir, "
+                           "copiada tal cual. No te la inventes ni la "
+                           "corrijas: si no sabes cual es, no llames a esta "
+                           "herramienta.",
+        },
+        "motivo": {
+            "type": "string",
+            "minLength": 1,
+            "description": "En una linea, por que hace falta precisamente "
+                           "esta persona: que puede aclarar que no este ya "
+                           "claro. Lo va a leer ella antes de decidir si "
+                           "entra, asi que escribelo para ella y no para la "
+                           "persona que te lo pide.",
+        },
+        "tema": {
+            "type": "string",
+            "minLength": 1,
+            "description": "De que se la llama a hablar, en pocas palabras: "
+                           "el asunto concreto, no «una duda».",
+        },
+    },
+}
 
 
 def _iso(at: datetime) -> str:
@@ -665,6 +709,25 @@ class Person:
             # several clients alive at once, each with this same callback
             # attached and none of them removed.  There is now exactly
             # one at a time.
+            # THE ONE WAY BACK IN. Passed to the facade rather than
+            # registered by hand, for two reasons that are both in the
+            # SDK and neither in `explain` (filed as jaato#1639).
+            # `convenience.py:897` registers after connect and BEFORE
+            # `create_session`, which is the only ordering the
+            # runner-tier model sees; and `recovery.py:1798` re-registers
+            # them on the fresh inner client after a reconnect, so the
+            # tool survives a daemon restart. By hand, it would work
+            # until the first restart and then be gone with no error on
+            # either side — just an escriba that stops calling a tool it
+            # can no longer see.
+            client_tools=[{"name": JUSTIFY_TOOL,
+                           "description":
+                               "Di por que hace falta la persona que te "
+                               "acaban de nombrar y de que se la llama a "
+                               "hablar. Lo lee ella antes de decidir si "
+                               "entra, y lo lee primero quien te lo pide.",
+                           "parameters": JUSTIFY_SCHEMA,
+                           "handler": self._justify}],
             on_status_change=self._connection, **self.conn)
         self._scribe = await self._stack.__aenter__()
         self.archive.identify(self._scribe.session_id,
@@ -928,8 +991,34 @@ class Person:
         if tell:
             self._notices.append(self.say(tell, who=who))
 
+    def drafting(self, email: str) -> None:
+        """The host typed an address.  Nothing has been sent to anybody.
+
+        THE ESCRIBA IS NOT TOLD HERE, unlike every other transition. It
+        is about to be ASKED, directly, in a turn of its own — a notice
+        riding the next turn saying "the host named somebody" would reach
+        it after the question it is meant to prepare, or alongside it,
+        and say nothing it is not being handed anyway.
+        """
+        self.archive.turn(stage="guest-drafted", guest=email,
+                          source="invitation")
+        self.board.note(self.say("note.drafting", who=email))
+
+    def justified(self, email: str, motivo: str, tema: str) -> None:
+        """The escriba said why this person is wanted, and what for.
+
+        RECORDED BEFORE THE HOST HAS SENT IT, because what was written
+        and what was sent are different facts and the gap between them
+        is the interesting one: a justification the host read and chose
+        not to send is exactly the case this flow exists to allow.
+        """
+        self.archive.turn(stage="guest-justified", guest=email,
+                          motivo=motivo, tema=tema, source="invitation")
+        self.board.note(self.say("note.justified", who=email, tema=tema))
+        self._told_who()
+
     def invited(self, email: str) -> None:
-        """The host named somebody.  Nobody is here yet."""
+        """The host read the justification and sent it.  Nobody is here yet."""
         self._room("guest-invited", email, "note.inviting")
 
     def guest_here(self, who: str, who_id: str = "") -> None:
@@ -960,9 +1049,105 @@ class Person:
         self._told_who()
 
     def _told_who(self) -> None:
-        """Publish who is in the room, so every page shows the same list."""
+        """Publish the room, so every page shows the same one.
+
+        THE INVITATIONS TRAVEL TOO, and they did not before. The band
+        used to be filled in from the reply to the host's own `POST
+        /invitar` and from nowhere else, which was survivable while
+        typing an address was the only thing that ever changed one: a
+        second tab showed an empty band, and so did the first one after
+        a reconnect. It stops being survivable the moment a field is
+        filled in by a MODEL, seconds later and on nobody's request —
+        there is no reply for that to arrive in.
+        """
         self.hub.publish("room", {"present": list(self._guests),
-                                  "floor": self._floor})
+                                  "floor": self._floor,
+                                  "guests": self.invitations()})
+
+    def invitations(self) -> List[dict]:
+        """Everybody this host has named, in whatever state."""
+        return [i.json() for i in ROOM.of_host(self.principal)]
+
+    def _justify(self, args: dict) -> dict:
+        """The escriba answering the question the host's click asked.
+
+        RUNS ON THIS LOOP. The SDK delivers subscribers here — which is
+        what `_context` already relies on and says so — and a host tool
+        is dispatched from one, so the room, the board and the hub are
+        touched directly rather than hopped onto. `on_status_change` is
+        the callback that arrives on another thread, not this.
+
+        A REFUSAL IS RAISED rather than returned in a field the model may
+        not read: the framework turns the exception into the tool call's
+        error result, which is the channel a refused call has. Each cause
+        is told apart, unlike the guest routes' single 403 — there the
+        caller is somebody uninvited who must learn nothing, here it is
+        the escriba, which has to know what to do differently.
+        """
+        email = str(args.get("email") or "").strip().lower()
+        held = ROOM.of_address(self.principal, email)
+        if held is None:
+            raise ValueError(
+                f"no hay ninguna invitacion a «{email}». La direccion es la "
+                "que ha escrito la persona; copiala tal cual de lo que te he "
+                "dicho y no la corrijas.")
+        if held.open:
+            raise ValueError(
+                f"la invitacion a «{email}» ya se envio, y lo que lea quien "
+                "la reciba no cambia despues. No hay nada que justificar.")
+        inv = ROOM.justify(self.principal, email,
+                           str(args.get("motivo") or ""),
+                           str(args.get("tema") or ""))
+        if inv is None:
+            raise ValueError(
+                "hacen falta los dos: «motivo» y «tema». Quien lo lea tiene "
+                "que poder decidir si entra, y «te necesitamos» sin asunto "
+                "no le dice nada.")
+        self.justified(inv.email, inv.motivo, inv.tema)
+        # What the host is about to read, handed back so the escriba can
+        # say it out loud rather than guess whether the call landed.
+        return {"listo": True, "email": inv.email,
+                "motivo": inv.motivo, "tema": inv.tema,
+                "aviso": "lo lee la persona antes de enviarlo; todavia no "
+                         "lo ha visto nadie de fuera."}
+
+    async def ask_why(self, email: str) -> None:
+        """Ask the escriba why this person is needed, as a turn of its own.
+
+        A TURN, AND DELIBERATELY SO. `stage` argues against spending a
+        turn announcing a document, because that answers a question
+        nobody asked. This is the opposite case: the host pressed a
+        button whose whole meaning is "say why", so a turn is the answer
+        to a question they did ask, and the escriba's reply belongs in
+        the transcript beside it.
+
+        UNDER THE SAME LOCK AND THE SAME FLOOR as a spoken turn. It is
+        the host's own action, so it holds the floor as the host — and
+        without the lock it would race an utterance into one history.
+        """
+        if self._scribe is None:
+            # NOT a silent pass: the host is looking at an address with
+            # nothing under it, and the reason has to be on the
+            # transcript where they are already looking.
+            self.board.note(self.say("note.no_justification", who=email))
+            return
+        async with self._turn_lock:
+            # `""`, THE HOST'S OWN MARKER, and not their display name.
+            # `talk` holds the floor as `by or ""`, and the page compares
+            # `S.floor !== (S.guest ? S.who : "")` — so holding it as
+            # "dani" would disable dani's own button and tell them that
+            # dani was talking, while a guest saw the right thing. The
+            # host asked for this turn; it is theirs.
+            with self._holding(""):
+                lines = self._notices
+                self._notices = []
+                await asyncio.wait_for(
+                    _turn(self._scribe,
+                          "\n".join(lines + [self.say("agent.justify_guest",
+                                                      who=email)]),
+                          None, self._relay(),
+                          log=self.archive.turn, tui=self.board),
+                    timeout=TURN_TIMEOUT)
 
     def floor(self, who: Optional[str]) -> None:
         """Who is talking, or nobody.  Published, because three can race."""
@@ -1259,6 +1444,22 @@ class Person:
                                    # the refusal the server makes are
                                    # one number, declared once.
                                    stage_mb=staging.MAX_BYTES // (1024 * 1024),
+                                   # Who the host has named, and how far
+                                   # each one has got. Here as well as in
+                                   # the `room` frame so a reconnect
+                                   # redraws the band instead of blanking
+                                   # it -- which is what it did, and
+                                   # nobody noticed while the band was
+                                   # only ever filled in by the reply to
+                                   # the host's own POST.
+                                   #
+                                   # NOT in `guest_snapshot`. These are
+                                   # other people's addresses and the
+                                   # host's reasons for wanting them, and
+                                   # that snapshot is built key by key
+                                   # precisely so a key nobody added
+                                   # cannot leak.
+                                   guests=self.invitations(),
                                    # WHICH VOICE IS ITS OWN.  Live
                                    # microphone frames carry the speaker,
                                    # so a browser can decline to play its

@@ -321,6 +321,7 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
   border-bottom: 1px solid var(--line, #333); font-size: 13px; }
 #guest-band .nm { font-weight: 600; }
 #guest-band .warn { opacity: .8; }
+#guest-band .why { opacity: .95; max-width: 40em; }
 #guest-band button { margin-left: auto; }
 #guest-offer { padding: 14px; display: flex; gap: 10px; align-items: center;
   flex-wrap: wrap; border-bottom: 1px solid var(--line, #333); }
@@ -1630,6 +1631,18 @@ async function invite(field) {
   renderGuest();
 }
 
+// THE HOST HAS READ IT AND IS SENDING IT. Until this runs, the server
+// ignores the invitation on every guest route, so there is nothing for a
+// guest to find by guessing.
+async function sendInvite(email) {
+  const res = await fetch("/invitar/enviar", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }) }).catch(() => null);
+  if (!res || !res.ok) return;
+  S.guests = (await res.json()).guests || [];
+  renderGuest();
+}
+
 // ONE OF THEM, OR ALL OF THEM. An interview's two sides do not finish
 // together: the colleague who has said their piece leaves while the
 // other is still answering, so showing somebody out is by name.
@@ -1697,13 +1710,36 @@ function renderGuest() {
     // "somebody is here" cannot be acted on when there are two.
     for (const g of S.guests) {
       const row = el("span", "invite");
+      // THREE STATES, NOT TWO. An address the host has typed is not an
+      // invitation yet: the escriba has to say why that person is
+      // needed, and the host has to read it, before anybody outside
+      // this session sees a word of it.
       row.append(el("span", "nm", g.here
                       ? tx("guest.here", { who: g.name || g.email })
-                      : tx("guest.waiting", { who: g.email })));
+                      : !g.open
+                        ? g.email
+                        : tx("guest.waiting", { who: g.email })));
       const out = el("button", "hbtn", tx("guest.cancel"));
       out.onclick = () => uninvite(g.email);
       row.append(out);
       band.append(row);
+      if (g.open) continue;
+      if (!g.motivo) {
+        band.append(el("span", "warn", tx("guest.awaiting_reason")));
+        continue;
+      }
+      // WHAT THE GUEST WILL READ, SHOWN BEFORE THEY READ IT. Written by
+      // the escriba out of this conversation and about to be read by
+      // somebody outside it — the only text here that travels that way,
+      // which is why the person whose session it describes sees it
+      // first and decides.
+      band.append(el("span", "why", tx("guest.topic") + ": " + g.tema),
+                  el("span", "why", tx("guest.why") + ": " + g.motivo),
+                  el("span", "warn", tx("guest.reason_seen")),
+                  el("span", "warn", tx("guest.unsent")));
+      const send = el("button", "hbtn", tx("guest.send"));
+      send.onclick = () => sendInvite(g.email);
+      band.append(send);
     }
     if (S.guests.some((g) => g.here)) {
       // THE CONSEQUENCES THE HOST AGREED TO, said while they are true
@@ -1762,6 +1798,13 @@ function renderGuest() {
     for (const r of S.invited) {
       const line = el("div", "");
       line.append(el("span", "nm", tx("guest.invited_by", { who: r.host })));
+      // WHAT THEY ARE BEING CALLED IN FOR, WHILE THEY STILL HAVE THE
+      // CHOICE. Written by the host's escriba, which is the one party
+      // with the overview of the conversation the guest cannot see.
+      if (r.tema) line.append(el("span", "why",
+                                 tx("guest.topic") + ": " + r.tema));
+      if (r.motivo) line.append(el("span", "why",
+                                   tx("guest.why") + ": " + r.motivo));
       const go = el("button", "hbtn", tx("guest.enter"));
       go.onclick = () => enterRoom(r.room);
       const no = el("button", "hbtn", tx("guest.mine"));
@@ -2241,6 +2284,11 @@ function onEvent(kind, data) {
     S.stageMb = data.stage_mb != null ? data.stage_mb : S.stageMb;
     S.days = data.days || S.days;
     S.engines = data.engines || S.engines;
+    // ABSENT, NOT EMPTY, in a guest's snapshot: that one is built key by
+    // key and never carries other people's addresses or the host's
+    // reasons for wanting them. So `|| S.guests` rather than `|| []`,
+    // which would have blanked the band on a guest's own reconnect.
+    S.guests = data.guests || S.guests;
     S.wiki = data.wiki || S.wiki;
     S.wikiPage = data.wiki_page || null;
     S.consumo = data.consumo || S.consumo;
@@ -2296,6 +2344,11 @@ function onEvent(kind, data) {
   } else if (kind === "room") {
     S.present = data.present || [];
     S.floor = data.floor !== undefined ? data.floor : S.floor;
+    // THE INVITATIONS COME THIS WAY TOO. A field the escriba fills in
+    // arrives seconds after the host's click and on nobody's request,
+    // so there is no reply for it to ride; and this is what makes a
+    // second tab, and the first one after a reconnect, agree.
+    if (!S.guest && data.guests) S.guests = data.guests;
     renderGuest(); pttFace();
   } else if (kind === "closed") {
     // THE ROOM ENDED FROM THE OTHER SIDE: the host withdrew the

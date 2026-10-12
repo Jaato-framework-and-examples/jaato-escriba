@@ -30,6 +30,20 @@ INVITING THE SAME ADDRESS TWICE REPLACES THAT ONE INVITATION AND NO
 OTHER.  A host correcting a typo must not evict the colleague who is in
 the middle of answering a question.
 
+THE HOST NAMES WHO, THE ESCRIBA SAYS WHY, THE HOST SENDS.  Three steps
+and three different parties, because each knows something the others do
+not.  The host knows which colleague can settle the question and knows
+their address -- the escriba cannot know an address and must never be
+asked to produce one, since the only thing it could do with a name it
+has never read is invent something plausible.  The escriba has the
+overview of the conversation, so it is the one party that can say what
+the guest is being called in FOR without the host stopping to type a
+paragraph mid-interview.  And the host sends, because the justification
+is written by a model out of their own session and read by somebody
+outside it: they see it before a third person does.  `invite` makes the
+invitation, `justify` fills it in, `open_up` is the only thing that lets
+anybody see it.
+
 IT DIES WITH THE HOST'S SESSION.  No expiry clock, because there is
 nothing for one to be right about: the invitation exists to let somebody
 into a conversation that is happening now, and when that conversation is
@@ -58,11 +72,36 @@ from typing import Dict, List, Optional, Tuple
 #: else.
 NAME_CHARS = 60
 
+#: What the escriba may write about why somebody is wanted.  Longer than
+#: a name because it is a sentence, bounded because it is shown in a band
+#: beside a button and read by somebody deciding whether to walk in.
+#:
+#: THIS TEXT GOES THE OTHER WAY from a name.  A name is asserted by the
+#: proxy and crosses INTO a prompt; this is written by the model, out of
+#: the host's own conversation, and crosses OUT to a third person.  It is
+#: the first thing in this feature to do that, which is why the host
+#: confirms it before anybody sees it -- see `Room.open_up`.
+REASON_CHARS = 240
+
 
 def label(name: str) -> str:
     """A speaker's name, safe to put in a prompt and short enough to read."""
     clean = "".join(c for c in name if c.isprintable() and c not in "[]{}<>\n\r")
     return clean.strip()[:NAME_CHARS] or "alguien"
+
+
+def reason(text: str) -> str:
+    """What the escriba wrote about why somebody is needed, fit to show.
+
+    Bounded and stripped of the characters that would let a line of it
+    end up looking like the page's own furniture rather than something a
+    model wrote.  Empty is returned as empty ON PURPOSE: a missing
+    justification is refused by the caller, loudly, rather than filled
+    in here with something plausible.
+    """
+    clean = "".join(c for c in (text or "")
+                    if c.isprintable() and c not in "<>\n\r")
+    return clean.strip()[:REASON_CHARS]
 
 
 def token(principal: str) -> str:
@@ -87,6 +126,20 @@ class Invitation:
     #: host is still waiting, and the only identity let in afterwards.
     guest: Optional[str] = None
     name: str = ""                               # how the guest is shown
+    #: WHY this person is wanted, and WHAT FOR, written by the host's
+    #: escriba because it is the one party with the overview of the
+    #: conversation -- the host knows who to call, the escriba knows what
+    #: the call is about.  Empty until it has written them.
+    motivo: str = ""
+    tema: str = ""
+    #: Whether the guest may be offered this at all.  An invitation is
+    #: made the moment the host types an address, and that is NOT the
+    #: moment it becomes real: the escriba has not justified it yet, and
+    #: the host has not read what a third person is about to be told
+    #: about their own session.  `waiting_for` and `find` both ignore an
+    #: invitation that is not open, so every door is shut by this one
+    #: flag rather than by each route remembering to check.
+    open: bool = False
     #: The guest's live streams, so that cancelling ENDS them.  A guest
     #: route re-checks the invitation on every request, but `/events` is
     #: one request that lasts the whole visit, so the only way to close it
@@ -95,7 +148,9 @@ class Invitation:
 
     def json(self) -> dict:
         return {"email": self.email, "since": self.since.isoformat(timespec="seconds"),
-                "name": self.name or None, "here": self.guest is not None}
+                "name": self.name or None, "here": self.guest is not None,
+                "motivo": self.motivo or None, "tema": self.tema or None,
+                "open": self.open}
 
 
 class Room:
@@ -148,7 +203,11 @@ class Room:
         if not folded:
             return []
         return sorted((i for held in self._by_host.values() for i in held
-                       if i.email == folded), key=lambda i: i.since)
+                       # OPEN ONLY.  An invitation the host has typed but
+                       # not yet sent is not an invitation; offering it
+                       # would show a guest a room before the host had
+                       # read what that guest is about to be told.
+                       if i.email == folded and i.open), key=lambda i: i.since)
 
     def find(self, tok: str, email: str) -> Optional[Invitation]:
         """The one invitation in room `tok` that was issued to `email`.
@@ -168,7 +227,11 @@ class Room:
         for host, held in self._by_host.items():
             if token(host) != tok:
                 continue
-            return next((i for i in held if i.email == folded), None)
+            # `open` HERE rather than in each guest route: `_invited`
+            # calls this on every request, so one gate covers the stream,
+            # the voice, the recording and the staged document.
+            return next((i for i in held
+                         if i.email == folded and i.open), None)
         return None
 
     def claim(self, inv: Invitation, principal: str,
@@ -184,6 +247,50 @@ class Room:
             inv.guest, inv.name = principal, label(name)
             return inv
         return inv if inv.guest == principal else None
+
+    def of_address(self, host: str, email: str) -> Optional[Invitation]:
+        """This host's invitation to one address, open or not."""
+        folded = (email or "").strip().lower()
+        return next((i for i in self.of_host(host) if i.email == folded), None)
+
+    def justify(self, host: str, email: str, motivo: str,
+                tema: str) -> Optional[Invitation]:
+        """Record WHY this person is wanted and WHAT FOR.
+
+        Refuses by returning `None` -- no invitation to that address, or
+        nothing written in either field.  BOTH are refused rather than
+        one stored half-filled: a guest reading "te necesitamos" with no
+        topic has been told nothing and still has to decide whether to
+        walk into somebody else's conversation.
+
+        An invitation ALREADY OPEN is refused too.  Once the guest can
+        see it, the text they are deciding on is fixed; rewriting it
+        underneath them would mean the record and the reading diverge.
+        """
+        inv = self.of_address(host, email)
+        if inv is None or inv.open:
+            return None
+        why, what = reason(motivo), reason(tema)
+        if not why or not what:
+            return None
+        inv.motivo, inv.tema = why, what
+        return inv
+
+    def open_up(self, host: str, email: str) -> Optional[Invitation]:
+        """The host has read the justification and is sending it.
+
+        NOTHING REACHES THE GUEST BEFORE THIS.  The justification is
+        written by a model out of the host's own conversation and read by
+        somebody outside it -- the only text in this feature that travels
+        that way -- so the person whose session it describes sees it
+        first and decides.  An unjustified invitation cannot be opened:
+        the whole point is that the guest is told why.
+        """
+        inv = self.of_address(host, email)
+        if inv is None or not inv.motivo or not inv.tema:
+            return None
+        inv.open = True
+        return inv
 
     def revoke(self, host: str, email: str) -> Optional[Invitation]:
         """Show ONE guest out, leaving the rest of the room as it was."""

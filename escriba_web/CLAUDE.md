@@ -28,6 +28,9 @@ of record:
 | Two voices stay two voices | the speaker is part of `Conversation.add`'s fold key, so rows that are identical at creation do not merge |
 | Replacing one invitation evicts that guest and no other | `Room.invite` closes only the invitation to the same address. It used to replace the host's single entry **without** closing it, which left the displaced guest's `/events` stream subscribed: refused by every write route, still hearing every word, while the band showed the new name |
 | Only one person talks at a time, and the others can see it | `Person._floor` is published; each page disables its own button while somebody else holds it, and a press that races anyway is refused with `FloorTaken` rather than queued. Waiting was right while the only person who could collide with you was yourself with two tabs open |
+| A named address lets nobody in until the host sends it | `Invitation.open` is false until `Room.open_up`, and BOTH `waiting_for` and `find` ignore an invitation that is not open — so one flag closes the offer, the stream, the voice, the recording and the staged document, instead of each route remembering to check |
+| An invitation cannot be sent without a justification, and cannot be rewritten after | `Room.open_up` refuses one with either field empty; `Room.justify` refuses one already open. What the guest is deciding on is fixed from the moment they can see it |
+| The escriba cannot name a guest, and cannot let one in | `justificar_invitado` takes an address and matches it against one the HOST typed (`Room.of_address`); there is no tool that opens anything. An address the model has never read could only be invented |
 | A failed recording cannot lock the room | the floor is a context manager (`Person._holding`), not a pair of calls around the turn's `try` — `_to_mp3` and `archive.heard` both sit inside it and both can raise |
 
 ## Required of the deployment, because this code cannot check it
@@ -106,6 +109,34 @@ turned up, which is asserted rather than observed.
 show, tell — in one call. They were two, and a test found that a caller
 could do one without the other and leave the manifest saying the opposite
 of the truth.
+
+## The one thing that travels outward
+
+Everything else a guest receives is withheld by construction:
+`guest_snapshot` is BUILT key by key, so the host's memory, references,
+documents, spend and archive path cannot reach another browser by being
+rendered away.
+
+The justification is the exception, and the only one. It is **written by
+a model, out of the host's own conversation, and read by somebody outside
+it** — "para aclarar la discrepancia del informe que estás preparando
+sobre su equipo" is a plausible sentence, useful, and discloses something
+the host may not have meant to share. No schema can catch that, because
+the field is doing its job.
+
+So it is the host who decides, and the flow exists for that one reason:
+`POST /invitar` makes the invitation and asks the escriba why that person
+is needed; the band shows **the exact text the guest will read**; `POST
+/invitar/enviar` is the only thing that lets anybody see it. The
+justification is recorded when it is WRITTEN (`guest-justified`) and the
+sending is recorded separately (`guest-invited`), because a justification
+the host read and chose not to send is exactly the case this allows, and
+the record should be able to show it happened.
+
+Three parties, three things only one of them knows: the host knows who
+can settle the question and knows their address; the escriba has the
+overview of what the question is; the host, again, is the only one who
+can judge what their own session may tell a third person.
 
 ## Said, and therefore only a suggestion
 

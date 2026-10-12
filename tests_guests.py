@@ -38,7 +38,7 @@ from fastapi import HTTPException                        # noqa: E402
 
 from escriba_web import app as _app                      # noqa: E402
 from escriba_web.driver import Person, entry_json         # noqa: E402
-from escriba_web.guests import ROOM, Room, label, token   # noqa: E402
+from escriba_web.guests import ROOM, Room, label, reason, token   # noqa: E402
 from escriba_web.hub import Hub                           # noqa: E402
 
 fail = 0
@@ -128,6 +128,16 @@ check("brackets cannot close the label",
 check("and it is bounded", len(label("m" * 500)), 60)
 check("somebody with no name is still somebody", label("  "), "alguien")
 
+# ------------------------------------------------------- the reason
+# IT TRAVELS THE OTHER WAY from a name.  A name is asserted by the proxy
+# and crosses INTO a prompt; this is written by the model out of the
+# host's own conversation and crosses OUT, to somebody who is not in it.
+check("what the escriba wrote is kept", reason("Llevó el cierre"),
+      "Llevó el cierre")
+check("and bounded", len(reason("m" * 500)), 240)
+check("markup cannot escape the line", reason("<b>x</b>"), "bx/b")
+check("and nothing is invented for an empty one", reason("   "), "")
+
 # ----------------------------------------------------------- the token
 check("a person's id is stable", token(HOST), token(HOST))
 check("and is not somebody else's", token(HOST) == token(GUEST), False)
@@ -146,6 +156,36 @@ check("the host can see it standing open",
       [i.email for i in room.of_host(HOST)], ["marta@ejemplo.es"])
 check("and it is not claimed yet", inv.guest, None)
 check("nobody is actually here", room.present(HOST), [])
+
+# ------------------------------- NAMED IS NOT SENT
+# The host knows WHO can settle the question; the escriba has the
+# overview of what the question IS. Until it has written that down and
+# the host has read it, there is no invitation for anybody to find.
+check("a named address is not yet an invitation", inv.open, False)
+check("so the guest is not offered it", room.waiting_for("marta@ejemplo.es"), [])
+check("and cannot reach it by holding the right token",
+      room.find(token(HOST), "marta@ejemplo.es"), None)
+
+check("it cannot be sent with nothing to read",
+      room.open_up(HOST, "marta@ejemplo.es"), None)
+check("half a justification is refused too",
+      room.justify(HOST, "marta@ejemplo.es", "porque sabe del cierre", ""), None)
+check("and so is one for an address nobody named",
+      room.justify(HOST, "nadie@ejemplo.es", "porque", "el cierre"), None)
+check("both halves, and it is recorded",
+      room.justify(HOST, "marta@ejemplo.es",
+                   "llevó el cierre del año pasado",
+                   "el cierre contable") is inv, True)
+check("still nobody has been sent it", inv.open, False)
+check("and still nobody can find it",
+      room.find(token(HOST), "marta@ejemplo.es"), None)
+check("now the host can send it",
+      room.open_up(HOST, "marta@ejemplo.es") is inv, True)
+check("rewriting it after that is refused",
+      room.justify(HOST, "marta@ejemplo.es", "otra cosa", "otro tema"), None)
+check("and what was sent is what was written", inv.motivo,
+      "llevó el cierre del año pasado")
+
 check("the guest is expected",
       [i.host for i in room.waiting_for("marta@ejemplo.es")], [HOST])
 check("somebody else is not", room.waiting_for("otro@ejemplo.es"), [])
@@ -153,6 +193,8 @@ check("and neither is nobody", room.waiting_for(""), [])
 
 # A SECOND COLLEAGUE IS ADDED, NOT SUBSTITUTED.
 room.invite(HOST, "carlos@ejemplo.es")
+room.justify(HOST, "carlos@ejemplo.es", "discrepa del cierre", "el cierre")
+room.open_up(HOST, "carlos@ejemplo.es")
 check("both are in the room",
       [i.email for i in room.of_host(HOST)],
       ["marta@ejemplo.es", "carlos@ejemplo.es"])
@@ -162,6 +204,8 @@ check("in the order the host named them",
 # TWO HOSTS CAN WANT THE SAME COLLEAGUE, and showing only one of them
 # would hide a request that was really made.
 room.invite(OTHER, "marta@ejemplo.es")
+room.justify(OTHER, "marta@ejemplo.es", "la necesito yo también", "otra cosa")
+room.open_up(OTHER, "marta@ejemplo.es")
 check("both hosts are reported", len(room.waiting_for("marta@ejemplo.es")), 2)
 check("oldest first", room.waiting_for("marta@ejemplo.es")[0].host, HOST)
 
@@ -212,11 +256,15 @@ marta.queues.append(hers)
 room.invite(HOST, "marta@ejemplo.es")
 check("the replaced guest is cut off, not just silenced",
       closed_with(hers), None)
+check("and the address has to be justified and sent again",
+      room.find(token(HOST), "marta@ejemplo.es"), None)
 check("and that invitation belongs to nobody yet",
-      room.find(token(HOST), "marta@ejemplo.es").guest, None)
+      room.of_address(HOST, "marta@ejemplo.es").guest, None)
 
 # AND A TYPO MUST NOT EVICT THE COLLEAGUE WHO IS ANSWERING.
 room.invite(HOST, "carlos@ejemplo.es")
+room.justify(HOST, "carlos@ejemplo.es", "discrepa del cierre", "el cierre")
+room.open_up(HOST, "carlos@ejemplo.es")
 still = room.find(token(HOST), "carlos@ejemplo.es")
 room.claim(still, OTHER, "carlos.vega")
 theirs = asyncio.Queue(maxsize=4)
@@ -269,7 +317,11 @@ async def main() -> int:
     # treats null and missing alike, so what matters is that the VALUE
     # never leaves this process -- and the surest way to check that is
     # that the key is not in the frame at all.
-    for leaked in ("archive_dir", "wiki", "wiki_page", "consumo", "session_at"):
+    # `guests` CARRIES OTHER PEOPLE'S ADDRESSES and the host's reasons for
+    # wanting them -- the band's own data. A guest is told who is in the
+    # room by `present`, which is names, and that is all they are owed.
+    for leaked in ("archive_dir", "wiki", "wiki_page", "consumo", "session_at",
+                   "guests"):
         check(f"the guest is never sent {leaked}", leaked in theirs, False)
     blob = json.dumps(theirs, ensure_ascii=False, default=str)
     check("nothing of the earlier conversation is in the frame",
@@ -310,6 +362,19 @@ async def main() -> int:
 
     ROOM.invite(HOST, "marta@ejemplo.es")
     tok = token(HOST)
+    # AN INVITATION THE HOST HAS NOT SENT IS NOT A DOOR. Every guest
+    # route goes through here on every request, so this one gate covers
+    # the stream, the voice, the recording and the staged document --
+    # and it is checked BEFORE the justification exists, because that is
+    # the window in which an address has been typed and nothing else has
+    # happened yet.
+    await refuses("an address the host has only typed lets nobody in",
+            lambda: _app._invited(Req(room=tok)), 403)
+    ROOM.justify(HOST, "marta@ejemplo.es", "llevó el cierre", "el cierre")
+    await refuses("and neither does one the host has read but not sent",
+            lambda: _app._invited(Req(room=tok)), 403)
+    ROOM.open_up(HOST, "marta@ejemplo.es")
+
     await refuses("naming no room is refused",
             lambda: _app._invited(Req(email="marta@ejemplo.es")), 403)
     await refuses("naming a room that is not theirs is refused",
@@ -344,6 +409,14 @@ async def main() -> int:
     offered = await _app.invitacion(Req(room=""))
     check("the guest is offered the room", [r["room"] for r in offered["rooms"]], [tok])
     check("named by its host", offered["rooms"][0]["host"], "dani")
+    # WHY THEY ARE WANTED, WHILE THEY STILL HAVE THE CHOICE. The whole
+    # reason the host's escriba writes this: being asked to step into a
+    # conversation you cannot see is a decision, and it cannot be made
+    # on "somebody wants you".
+    check("and told what they are wanted for",
+          offered["rooms"][0]["tema"], "el cierre")
+    check("and why it has to be them",
+          offered["rooms"][0]["motivo"], "llevó el cierre")
     check("somebody else is offered nothing",
           (await _app.invitacion(Req(principal=OTHER,
                                      email="nadie@ejemplo.es")))["rooms"], [])
@@ -591,6 +664,95 @@ async def main() -> int:
     # ONE LEAVES, THE OTHER STAYS.
     host.guest_gone("carlos.vega")
     check("only the one who left is gone", host._guests, ["marta.ruiz"])
+
+    # ------------------------------------- what the escriba is allowed to say
+    # THE HOST NAMES WHO, THE ESCRIBA SAYS WHY, THE HOST SENDS. The tool
+    # exists so the one party with the overview of the conversation can
+    # write the justification, and it is deliberately unable to do
+    # anything else: it cannot name somebody, because an address it has
+    # never read could only be invented, and it cannot let anybody in.
+    ROOM.cancel(HOST)
+    ROOM.invite(HOST, "marta@ejemplo.es")
+
+    def refused(label_, args):
+        global fail
+        try:
+            host._justify(args)
+        except ValueError:
+            print(f"  ok   {label_}")
+            return
+        print(f"  FAIL {label_:<54} was allowed")
+        fail += 1
+
+    refused("an address nobody named is refused",
+            {"email": "nadie@ejemplo.es", "motivo": "porque", "tema": "algo"})
+    refused("a justification with no topic is refused",
+            {"email": "marta@ejemplo.es", "motivo": "porque", "tema": "  "})
+    refused("and one with no reason",
+            {"email": "marta@ejemplo.es", "motivo": "", "tema": "el cierre"})
+
+    out = host._justify({"email": "Marta@Ejemplo.ES",
+                         "motivo": "llevó el cierre del año pasado",
+                         "tema": "el cierre contable"})
+    check("the escriba is told it landed", out["listo"], True)
+    check("and handed back what the host will read",
+          out["motivo"], "llevó el cierre del año pasado")
+    check("which is what was stored",
+          ROOM.of_address(HOST, "marta@ejemplo.es").motivo,
+          "llevó el cierre del año pasado")
+    check("and nobody has been sent it yet",
+          ROOM.of_address(HOST, "marta@ejemplo.es").open, False)
+    check("the host can send what they read",
+          ROOM.open_up(HOST, "marta@ejemplo.es") is not None, True)
+    refused("and rewriting it afterwards is refused",
+            {"email": "marta@ejemplo.es", "motivo": "otra cosa",
+             "tema": "otro tema"})
+
+    # WRITTEN DOWN BEFORE IT WAS SENT, because what the escriba wrote and
+    # what the host chose to send are different facts, and a justification
+    # read and not sent is exactly the case this flow exists to allow.
+    rows = [json.loads(line) for line in
+            (host.archive.dir / "manifest.jsonl").read_text(
+                encoding="utf-8").splitlines() if line.strip()]
+    said = [r for r in rows if r.get("stage") == "guest-justified"]
+    check("the justification is in the record", len(said), 1)
+    check("with the reason as written", said[-1]["motivo"],
+          "llevó el cierre del año pasado")
+    check("and the topic", said[-1]["tema"], "el cierre contable")
+    check("asserted by the invitation, like every other room row",
+          said[-1]["source"], "invitation")
+
+    # THE JUSTIFICATION TURN IS THE HOST'S OWN TURN. Held as `""`, the
+    # same marker `talk` uses for them, because the page reads
+    # `S.floor !== (S.guest ? S.who : "")`: holding it as "dani" would
+    # grey out dani's own button and tell them that dani was talking,
+    # while a guest's page showed the right thing.
+    sent.clear()
+    with host._holding(""):
+        check("the host's own marker holds the floor", host._floor, "")
+        floors = [d.get("floor") for k, d in sent if k == "room"]
+        check("and it is published as theirs", floors[-1] if floors else "?", "")
+    check("and the floor is released afterwards", host._floor, None)
+
+    # THE BAND IS FED BY THE HUB, which it was not before: a field a
+    # model fills in arrives seconds after the host's click and on
+    # nobody's request, so there is no reply for it to ride. `publish` is
+    # the capture above, which is why this reads `sent` -- the first
+    # version of this leg subscribed a queue instead and passed with the
+    # publish deleted, because `subscribe` puts a snapshot in front and
+    # the snapshot carries `guests` too.
+    sent.clear()
+    host._told_who()
+    rooms = [data for kind, data in sent if kind == "room"]
+    check("the room is published when it changes", len(rooms), 1)
+    # `.get`, NOT `[...]`: a frame that stopped carrying the invitations
+    # would raise KeyError here and print a traceback with no FAIL line,
+    # which is a leg that cannot report the defect it exists for.
+    held = (rooms[-1] if rooms else {}).get("guests")
+    check("and the frame carries the invitations, not just who is present",
+          [g["email"] for g in held or []], ["marta@ejemplo.es"])
+    check("with what the guest was told, so a second tab agrees",
+          (held or [{}])[0].get("tema"), "el cierre contable")
 
     print("guests OK" if not fail else f"{fail} failure(s)")
     return 1 if fail else 0

@@ -732,18 +732,57 @@ T.renderGuest();
 const band = () => byId.get("guest-band");
 const offer = () => byId.get("guest-offer");
 check("nothing is said when nobody else is here", band().hidden, true);
-T.S.guests = [{ email: "marta@ejemplo.es", here: false, name: null }];
+T.S.guests = [{ email: "marta@ejemplo.es", here: false, name: null,
+                open: true, motivo: "conoce el cierre", tema: "cierre" }];
 T.renderGuest();
 check("an invitation standing open is shown", band().hidden, false);
 check("with the address as the host typed it",
       band().textContent.includes("marta@ejemplo.es"), true);
 
+// THE THREE STATES OF AN INVITATION, because an address the host has
+// typed is not yet an invitation anybody has been sent. The escriba has
+// to say why that person is needed, and the host has to read it, before
+// a word of it leaves this session.
+T.S.guests = [{ email: "marta@ejemplo.es", here: false, name: null,
+                open: false, motivo: null, tema: null }];
+T.renderGuest();
+check("while the escriba is still writing, the host is told so",
+      band().textContent.includes("está escribiendo"), true);
+check("and there is nothing to send yet",
+      band().walk().some((n) => n._text === "enviar la invitación"), false);
+
+T.S.guests = [{ email: "marta@ejemplo.es", here: false, name: null,
+                open: false, tema: "el cierre contable",
+                motivo: "llevó el cierre del año pasado" }];
+T.renderGuest();
+check("the justification is shown to the host first",
+      band().textContent.includes("llevó el cierre del año pasado") &&
+      band().textContent.includes("el cierre contable"), true);
+check("said to be exactly what the guest will read",
+      band().textContent.includes("antes de decidir"), true);
+check("and that nobody outside has seen it",
+      band().textContent.includes("sin enviar"), true);
+check("now it can be sent",
+      band().walk().some((n) => n._text === "enviar la invitación"), true);
+// ONCE SENT, there is nothing left to read or to send: what the guest is
+// deciding on is fixed.
+T.S.guests = [{ email: "marta@ejemplo.es", here: false, name: null,
+                open: true, tema: "el cierre contable",
+                motivo: "llevó el cierre del año pasado" }];
+T.renderGuest();
+check("a sent invitation offers no second send",
+      band().walk().some((n) => n._text === "enviar la invitación"), false);
+check("and stops calling itself unsent",
+      band().textContent.includes("sin enviar"), false);
+
 // TWO SIDES, BECAUSE AN INTERVIEW HAS TWO. A single line saying
 // "somebody is here" cannot be acted on when there are two of them, and
 // the one who has said their piece leaves while the other is still
 // answering -- so each gets its own way out.
-T.S.guests = [{ email: "marta@ejemplo.es", here: true, name: "marta.ruiz" },
-              { email: "carlos@ejemplo.es", here: true, name: "carlos.vega" }];
+T.S.guests = [{ email: "marta@ejemplo.es", here: true, name: "marta.ruiz",
+                open: true, motivo: "m", tema: "t" },
+              { email: "carlos@ejemplo.es", here: true, name: "carlos.vega",
+                open: true, motivo: "m", tema: "t" }];
 T.renderGuest();
 check("both are named", band().textContent.includes("marta.ruiz") &&
       band().textContent.includes("carlos.vega"), true);

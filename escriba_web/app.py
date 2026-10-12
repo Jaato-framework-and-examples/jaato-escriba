@@ -518,12 +518,24 @@ def _invited(request: Request) -> Tuple[Person, Invitation, str]:
 
 @app.post("/invitar")
 async def invitar(request: Request) -> dict:
-    """Open the door to one named colleague, and say so on the transcript.
+    """Name one colleague, and ask the escriba what to tell them.
+
+    NOTHING IS SENT HERE. This makes the invitation and asks the escriba
+    why that person is needed; `/invitar/enviar` is what lets anybody
+    see it. The host knows WHO can settle the question and knows their
+    address; the escriba has the overview of what the question is. So
+    each says the part it is the only one that can.
 
     THE HOST SEES IT STANDING OPEN. The address is shown back as it was
     typed, next to a cancel: a wrong one then sits there visibly wrong
     rather than failing silently, which is the one failure mode of
     naming somebody in advance instead of admitting them on arrival.
+
+    THE TURN IS NOT AWAITED. A model turn takes seconds and the band is
+    fed by the hub, so holding the response open for it would buy
+    nothing and time out on the slow case. The justification arrives on
+    the `room` frame, by the same route as everything else that changes
+    while the page is open.
     """
     person = await person_of(request)
     body = await request.json()
@@ -541,6 +553,35 @@ async def invitar(request: Request) -> dict:
     if going is not None:
         person.guest_gone(going.name or going.email, stage="guest-replaced")
     inv = ROOM.invite(person.principal, email)
+    person.drafting(inv.email)
+    asyncio.create_task(person.ask_why(inv.email))
+    return {"room": token(person.principal), "guests": _room_of(person)}
+
+
+@app.post("/invitar/enviar")
+async def enviar(request: Request) -> dict:
+    """The host read what the escriba wrote, and is sending it.
+
+    THE ONLY PLACE AN INVITATION BECOMES VISIBLE TO ANYBODY ELSE. Until
+    this runs, `Room.waiting_for` and `Room.find` both ignore it, so the
+    guest is neither offered the room nor able to force their way into
+    it by guessing the token.
+
+    IT IS A SEPARATE REQUEST, AND THAT IS THE POINT. The justification is
+    written by a model out of the host's own conversation and read by
+    somebody outside it — the only text in this feature that travels
+    that way. The person whose session it describes reads it first and
+    decides. A 409 rather than a quiet no-op when there is nothing to
+    send: the button should not exist in that state, and if it did, the
+    host would have to be told why pressing it did nothing.
+    """
+    person = await person_of(request)
+    body = await request.json()
+    email = str((body or {}).get("email") or "").strip().lower()
+    inv = ROOM.open_up(person.principal, email)
+    if inv is None:
+        raise HTTPException(409, "no invitation to that address is waiting to "
+                                 "be sent, or it has no justification yet")
     person.invited(inv.email)
     return {"room": token(person.principal), "guests": _room_of(person)}
 
@@ -579,7 +620,13 @@ async def invitacion(request: Request):
     principal = principal_of(request)                 # authenticated first
     email = request.headers.get("x-forwarded-email")
     rooms = [{"room": token(i.host), "host": PEOPLE[i.host].who,
-              "since": i.since.isoformat(timespec="seconds")}
+              "since": i.since.isoformat(timespec="seconds"),
+              # WHY THEY ARE WANTED, BEFORE THEY DECIDE. The whole
+              # reason the host's escriba writes this: somebody asked to
+              # step into a conversation they cannot see should know what
+              # it is about and what is wanted of them while they still
+              # have the choice, not after they are in the room.
+              "motivo": i.motivo, "tema": i.tema}
              for i in ROOM.waiting_for(email or "")
              # An invitation whose host has no live session is not an
              # invitation anywhere, and offering it would send the guest
