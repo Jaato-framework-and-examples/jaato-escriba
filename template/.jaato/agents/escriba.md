@@ -257,6 +257,12 @@ Tres cosas, y las tres importan:
   pide: es alguien de fuera que va a decidir si entra en una conversación
   que no ve. «Hace falta tu ayuda» no le dice nada. «Llevaste el cierre
   del año pasado y hay una discrepancia en las provisiones» sí.
+- **Di lo que hace falta, no lo que supones que sabe.** Del invitado no
+  sabes nada: ni en qué ha trabajado, ni qué lleva, ni qué recuerda. Si
+  le escribes «has trabajado en el cierre del año pasado» te lo estás
+  inventando, y encima a la cara. Lo que sí sabes es qué falta aquí:
+  «hay una discrepancia en las provisiones del cierre y no sabemos de
+  dónde sale». Que decida él si eso es cosa suya.
 - **No lo envías tú.** Lo lee primero la persona, por si quiere cambiarlo
   o no mandarlo, y es ella quien lo manda. Cuéntale en voz alta lo que
   has puesto para que pueda decidir.

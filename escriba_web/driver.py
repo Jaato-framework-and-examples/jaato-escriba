@@ -89,7 +89,12 @@ JUSTIFY_SCHEMA = {
                            "esta persona: que puede aclarar que no este ya "
                            "claro. Lo va a leer ella antes de decidir si "
                            "entra, asi que escribelo para ella y no para la "
-                           "persona que te lo pide.",
+                           "persona que te lo pide. DI LO QUE HACE FALTA, "
+                           "no lo que supones que esa persona sabe o ha "
+                           "hecho: de ella no sabes nada, y afirmarselo a "
+                           "la cara es inventarselo. «Hay una discrepancia "
+                           "en las provisiones del cierre», no «tu "
+                           "trabajaste en el cierre».",
         },
         "tema": {
             "type": "string",
@@ -1104,12 +1109,24 @@ class Person:
                 "que poder decidir si entra, y «te necesitamos» sin asunto "
                 "no le dice nada.")
         self.justified(inv.email, inv.motivo, inv.tema)
-        # What the host is about to read, handed back so the escriba can
-        # say it out loud rather than guess whether the call landed.
-        return {"listo": True, "email": inv.email,
-                "motivo": inv.motivo, "tema": inv.tema,
-                "aviso": "lo lee la persona antes de enviarlo; todavia no "
-                         "lo ha visto nadie de fuera."}
+        # NOTHING IS ECHOED BACK. This used to hand `motivo` and `tema`
+        # to the model so it could read them out -- which it did not
+        # need, having just composed them, and which cost two things.
+        #
+        # Measured on the deployment 2026-10-12 (session 20261012_091640):
+        # the references enrichment appends its hint block to the
+        # WORDIEST STRING FIELD of a tool result (jaato#922's text-view
+        # rule), so the stored result's `tema` came back carrying
+        # "⟦JAATO⟧ **Reference sources available** — use selectReferences
+        # … @auto-…". The persona asks the escriba to say out loud what
+        # it put, so a result it reads back from is a result whose
+        # framework hints it can read aloud to the person.
+        #
+        # The guest was never at risk -- the offer renders
+        # `Invitation.motivo`, set from the CALL ARGS above and never
+        # from the result -- but a short answer removes the anchor
+        # instead of relying on that.
+        return {"listo": True, "email": inv.email}
 
     async def ask_why(self, email: str) -> None:
         """Ask the escriba why this person is needed, as a turn of its own.

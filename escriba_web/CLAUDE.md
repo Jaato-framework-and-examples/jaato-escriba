@@ -138,6 +138,20 @@ sobre su equipo" is a plausible sentence, useful, and discloses something
 the host may not have meant to share. No schema can catch that, because
 the field is doing its job.
 
+MEASURED, 2026-10-12 (session 20261012_091640), the first time a real
+host used it: the escriba wrote "has trabajado con la implementación de
+harness para agentes de IA…" — a claim about the GUEST, asserted to
+their face, that the model had no way to know. Not a leak of the host's
+session, which is what this section was written expecting, but a
+fabrication about the person being invited. The host's review caught
+nothing, because it reads as perfectly reasonable.
+
+No schema can catch that, so it is said twice and at the point of use:
+in `JUSTIFY_SCHEMA`'s own description of `motivo`, which the model reads
+when it calls the tool, and in the persona. Say what is MISSING here —
+"hay una discrepancia en las provisiones del cierre" — not what the
+guest supposedly knows.
+
 So it is the host who decides, and the flow exists for that one reason:
 `POST /invitar` makes the invitation and asks the escriba why that person
 is needed; the band shows **the exact text the guest will read**; `POST

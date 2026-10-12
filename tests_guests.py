@@ -717,8 +717,13 @@ async def main() -> int:
                          "motivo": "llevó el cierre del año pasado",
                          "tema": "el cierre contable"})
     check("the escriba is told it landed", out["listo"], True)
-    check("and handed back what the host will read",
-          out["motivo"], "llevó el cierre del año pasado")
+    # NOT ECHOED BACK. The references enrichment appends its hint block
+    # to a result's wordiest string field (jaato#922), and the persona
+    # asks the escriba to say out loud what it put -- so a result
+    # carrying the text is a result whose framework hints can be read
+    # aloud. Measured on the deployment 2026-10-12.
+    check("and not handed the text back to read from",
+          "motivo" in out or "tema" in out, False)
     check("which is what was stored",
           ROOM.of_address(HOST, "marta@ejemplo.es").motivo,
           "llevó el cierre del año pasado")
