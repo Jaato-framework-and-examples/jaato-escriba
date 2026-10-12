@@ -491,12 +491,13 @@ def _invited(request: Request) -> Tuple[Person, Invitation, str]:
         # proxy. Measured on the deployment on 2026-10-12, the proxy
         # forwards the header (`escriba-oauth2-proxy` runs with
         # `--pass-user-headers=true`), so the only remaining cause was an
-        # account with no email address. The realm refuses one of those
-        # when somebody edits their own profile, and does NOT when an
-        # admin creates the account, which is the whole of the remaining
-        # gap: audited 2026-10-12, four accounts, none of them missing
-        # one. `CLAUDE.md` beside this file carries that measurement and
-        # what each of the two facts looks like when it regresses.
+        # account with no email address, and since 2026-10-12 the realm
+        # requires the attribute of an admin creating an account as well
+        # as of somebody editing their own profile, so that cause is
+        # closed too. Both of this feature's deployment facts therefore
+        # hold, and arriving here means one of them has regressed:
+        # `CLAUDE.md` beside this file names them and says what each one
+        # looks like when it does.
         raise HTTPException(403, "this request carries no email address, so "
                                  "there is nothing to match an invitation "
                                  "against")
