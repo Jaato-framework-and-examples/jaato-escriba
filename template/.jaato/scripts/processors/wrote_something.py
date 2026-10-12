@@ -18,6 +18,19 @@ the user's life in its first sentence.  So the gate demands a memory OR an
 explicit, reasoned declaration that there was nothing.  The declaration is
 visible in the payload, so abuse is auditable rather than silent.
 
+WHAT THE REFUSAL ASKS FOR IS PART OF THE GATE.  Measured 2026-10-12,
+session 20261012_194750: the person said "no, hoy quiero cambiar de tema,
+quiero hablar de la arquitectura RIP" -- a turn with one plainly durable
+fact in it, which topic they are moving to.  The scribe stored nothing,
+this gate refused, and the scribe satisfied it from the only other thing
+in its context: it stored a memory about the PREVIOUS topic, said that
+out loud, and closed.  The person heard their change of subject answered
+with a recap of the subject they had just dropped.
+
+So the refusal names the case now.  A gate that says "store something"
+and nothing more is answered with whatever is nearest, and what is
+nearest is the conversation that just ended.
+
 The error strings are Spanish because the scribe reads them.
 """
 from __future__ import annotations
@@ -118,6 +131,12 @@ def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
         "No has anotado nada en este turno. Si la persona te ha contado algo "
         "que le serviría a una sesión futura que lo ha olvidado todo, entra "
         "en `escribano` y guárdalo con `store_memory` antes de completar.\n\n"
+        "Y si lo que ha pasado es que ha CAMBIADO DE TEMA, eso es justo lo "
+        "que hay que guardar: en qué quiere trabajar ahora. No rellenes este "
+        "turno con lo que estabais hablando antes — aquello ya está anotado, "
+        "repetirlo lo cuenta dos veces, y deja sin guardar lo único nuevo que "
+        "has oído. Tampoco se lo cuentes otra vez en voz alta: acaba de "
+        "decirte que quiere dejarlo.\n\n"
         "Y si de verdad no había nada —un saludo, un «sí», un «sigue»— dilo "
         "con `nada_que_anotar: true` y explica en `anotado` por qué. Lo que "
         "no vale es completar en silencio: eso no se distingue de haberlo "

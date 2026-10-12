@@ -10,8 +10,12 @@ and the person finds out by going there and arriving nowhere.
 What is asserted here is the property, not the wording: that a source
 survives only when this turn's own tool ledger contains it.
 
-`wrote_something`, the other gate on this payload, has no suite yet.
-Saying so here because a file with this name implies otherwise.
+`wrote_something`, the other gate on this payload, is here too. Its
+property is narrower than it looks: not "a memory was stored" -- the
+model can always satisfy that -- but WHICH refusal the model is handed,
+because a refusal that says only "store something" is answered with
+whatever is nearest, and what is nearest is the conversation that just
+ended.
 
     python tests_scripts.py
 """
@@ -242,6 +246,65 @@ for profile in profiles:
         named.add(schema)
 for persona in sorted((HERE / "template/.jaato/agents").glob("*.md")):
     named.update(re.findall(r"\{\{!py\??:([^}]+)\}\}", persona.read_text()))
+
+# ------------------------------------------------------ the memory gate
+WROTE = HERE / "template/.jaato/scripts/processors/wrote_something.py"
+_spec = importlib.util.spec_from_file_location("wrote_something", WROTE)
+wrote = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(wrote)
+
+
+def gate(payload, *calls):
+    return wrote.validate(payload, Ledger(*calls))["errors"]
+
+
+STORED = call("store_memory", {"tags": ["rip"]}, {"id": "m1"})
+PAYLOAD = {"anotado": "algo", "documento_encargado": False}
+
+# ------------------------------------------------- the ledger, not the claim
+check("a turn that stored something is accepted", gate(PAYLOAD, STORED), [])
+check("a turn that stored nothing is refused", len(gate(PAYLOAD)), 1)
+# SAID AND JUSTIFIED IS ACCEPTED. Forcing a memory on every turn would
+# force one on "hello", and the only way to satisfy that is to invent.
+check("and saying there was nothing is accepted",
+      gate({**PAYLOAD, "nada_que_anotar": True}), [])
+# BOTH AT ONCE IS NOT: one of the two is untrue, and which one matters.
+check("but claiming nothing while having stored is refused",
+      len(gate({**PAYLOAD, "nada_que_anotar": True}, STORED)), 1)
+# A STORE THAT FAILED IS NOT A STORE, and the refusal has to say so
+# differently: "you did not write" sends the model to write again,
+# "your write failed" sends it to read the error.
+failed = gate(PAYLOAD, call("store_memory", {}, {"error": "x"}, success=False))
+check("a store that failed is told apart from no store at all",
+      "ninguna salió bien" in failed[0], True)
+
+# --------------------------------------------- WHAT THE REFUSAL ASKS FOR
+# MEASURED 2026-10-12, session 20261012_194750. The person said they were
+# dropping the subject and moving to RIP architecture. The scribe stored
+# nothing, this gate refused with "store something", and the scribe
+# satisfied it from the only other thing in context: it stored a memory
+# about the PREVIOUS topic and recited it out loud. The person heard
+# their change of subject answered with a recap of what they had dropped.
+#
+# The property is the refusal's CONTENT, because the content is what the
+# model acts on. Asserted on the behaviour it has to steer -- store the
+# new direction, not the old subject, and do not say the old one again --
+# rather than on a form of words.
+asked = gate(PAYLOAD)[0]
+check("the refusal names a change of subject as the thing to store",
+      "CAMBIADO DE TEMA" in asked, True)
+check("and says the new direction is what to keep",
+      "en qué quiere trabajar ahora" in asked, True)
+check("and that the old subject is not what to fill the turn with",
+      "ya está anotado" in asked, True)
+# IT WAS SAID ALOUD, which is the half the person actually suffered: the
+# recap was spoken, not merely stored.
+check("and that it must not be recited again either",
+      "en voz alta" in asked, True)
+# AND THE ESCAPE HATCH IS STILL OFFERED, after all that. A refusal that
+# only demands is answered by inventing something.
+check("while still offering the honest way out",
+      "nada_que_anotar: true" in asked, True)
 
 check("the profiles name some scripts", bool(named), True)
 for rel in sorted(named):
