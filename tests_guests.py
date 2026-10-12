@@ -42,6 +42,7 @@ import yaml                                              # noqa: E402
 import escriba_web.driver as _driver                     # noqa: E402
 from escriba_web.guests import ROOM, Room, label, reason, token   # noqa: E402
 from escriba_web.hub import Channel, Hub                  # noqa: E402
+from escriba_web import realm as _realm                   # noqa: E402
 
 fail = 0
 
@@ -108,16 +109,20 @@ class Req:
     """
 
     def __init__(self, principal=GUEST, email="marta@ejemplo.es",
-                 username="marta.ruiz", room="", **query) -> None:
+                 username="marta.ruiz", room="", payload=None, **query) -> None:
         self.headers = {k: v for k, v in (
             ("x-forwarded-user", principal),
             ("x-forwarded-email", email),
             ("x-forwarded-preferred-username", username)) if v is not None}
         self.query_params = {"room": room, **{k: str(v) for k, v in query.items()}}
         self._body = b""
+        self._json = payload
 
     async def body(self) -> bytes:
         return self._body
+
+    async def json(self):
+        return self._json
 
 
 # ------------------------------------------------------------ the name
@@ -138,6 +143,77 @@ check("what the escriba wrote is kept", reason("Llevó el cierre"),
       "Llevó el cierre")
 check("and bounded", len(reason("m" * 500)), 240)
 check("markup cannot escape the line", reason("<b>x</b>"), "bx/b")
+
+
+# ----------------------------------------------------- asking the realm
+# THE ANSWER IS RE-DERIVED FROM WHAT CAME BACK. `exact=true` is what
+# makes the users query a lookup rather than an infix search, so a realm
+# that ignored the flag would hand back somebody else's account and this
+# would call a stranger's address the host's colleague. Checked here
+# with the realm stubbed, because the filter IS the correctness.
+class _Answer:
+    """One canned HTTP response, as `urlopen` hands one over."""
+
+    def __init__(self, payload):
+        self._payload = json.dumps(payload).encode()
+
+    def read(self):
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _realm_says(found, asked=None):
+    """What `Directory._lookup` makes of a realm that returns `found`."""
+    def urlopen(req, timeout=None):
+        asked is None or asked.append(req.full_url)
+        # `get_method()` and not `.method`: the attribute is only set on
+        # a Request that was given one, so reading it raises on the GET.
+        return _Answer({"access_token": "t"}
+                       if req.get_method() == "POST" else found)
+    real, _realm.urllib.request.urlopen = _realm.urllib.request.urlopen, urlopen
+    try:
+        return _realm.Directory("https://auth/", "r", "c", "s")._lookup(
+            "marta@ejemplo.es")
+    finally:
+        _realm.urllib.request.urlopen = real
+
+
+urls = []
+check("an enabled account with that exact address is somebody",
+      _realm_says([{"email": "marta@ejemplo.es", "enabled": True}], urls), True)
+check("and the lookup is asked for it exactly",
+      "exact=true" in (urls[-1] if urls else ""), True)
+check("nobody at all is nobody", _realm_says([]), False)
+# A REALM THAT IGNORED `exact` would return the infix matches, and the
+# host would be told their typo belongs to somebody.
+check("a near miss the realm volunteered is not that address",
+      _realm_says([{"email": "otra-marta@ejemplo.es", "enabled": True}]), False)
+# DISABLED IS NOT FOUND: an account that cannot log in cannot arrive, so
+# an invitation to one fails the exact silent way this module ends.
+check("an account that cannot log in cannot be invited",
+      _realm_says([{"email": "marta@ejemplo.es", "enabled": False}]), False)
+
+# A FILE AND NOT AN ARGUMENT, because `--flag secret` puts a live
+# credential in `/proc/<pid>/cmdline` for anybody with an account on the
+# box. A file that is not what it should be refuses at startup rather
+# than at the first invitation.
+with tempfile.TemporaryDirectory() as _tmp:
+    _cred = Path(_tmp) / "client"
+    _cred.write_text("escriba-invites:s3cr3t\n", encoding="utf-8")
+    check("the service account is read from its one line",
+          _realm.read_client(_cred), ("escriba-invites", "s3cr3t"))
+    _cred.write_text("no-colon-here\n", encoding="utf-8")
+    try:
+        _realm.read_client(_cred)
+        check("a malformed credential file refuses", "was accepted", "refused")
+    except ValueError:
+        check("a malformed credential file refuses", "refused", "refused")
+
 check("and nothing is invented for an empty one", reason("   "), "")
 
 # ------------------------------------------- the tool the profile must allow
@@ -445,6 +521,118 @@ async def main() -> int:
                                      email="nadie@ejemplo.es")))["rooms"], [])
     check("and so is the guest once somebody else holds it",
           (await _app.invitacion(Req(principal=OTHER)))["rooms"], [])
+
+    # ----------------------------------- an address that is nobody's
+    # MEASURED, 2026-10-12: a host invited `tester@darumalabs.ai` and
+    # that account's address is `tester@example.invalid`. The addresses
+    # differed, `waiting_for` returned nothing, and BOTH sides were
+    # silent -- the guest saw their own escriba, the host saw an
+    # invitation standing open beside its cancel. These legs are the
+    # statement that the silence is gone, and they are about `/invitar`
+    # rather than about the realm: what matters here is that an address
+    # the realm does not know never becomes an invitation at all.
+    class Realm:
+        """The realm, as this route asks one: one address, one answer."""
+
+        def __init__(self, answer):
+            self.answer, self.asked = answer, []
+
+        async def holds(self, email):
+            self.asked.append(email)
+            if isinstance(self.answer, Exception):
+                raise self.answer
+            return self.answer
+
+    _app.PEOPLE[HOST] = host
+    real_person_of, _app.person_of = _app.person_of, lambda r: _done(host)
+    # `/invitar` fires the justification turn in the background and does
+    # not await it. There is no daemon here, so it is stubbed: what
+    # these legs are about is which addresses become invitations.
+    real_ask_why, host.ask_why = host.ask_why, lambda email: _done(None)
+    before = len(ROOM.of_host(HOST))
+    try:
+        # NOBODY HAS IT: refused where the host can still fix it, and
+        # NOT recorded. An invitation made and then found wrong would be
+        # exactly the state this exists to prevent, one route later.
+        nobody = Realm(False)
+        _app.CONFIG["realm"] = nobody
+        await refuses("an address no account has is refused",
+                      _app.invitar(Req(principal=HOST,
+                                       payload={"email": "nadie@ejemplo.es"})), 404)
+        check("and the realm was asked about exactly that address",
+              nobody.asked, ["nadie@ejemplo.es"])
+        check("and no invitation was made of it",
+              len(ROOM.of_host(HOST)), before)
+
+        # COULD NOT ASK IS NOT A NO, and it is not a yes either. Both
+        # refusals are refusals; they differ because they send the host
+        # to two different places, and a 503 reported as a 404 would
+        # send them to correct an address that may be perfectly right.
+        _app.CONFIG["realm"] = Realm(_realm.Unreachable("connection refused"))
+        await refuses("a realm that cannot be asked refuses too",
+                      _app.invitar(Req(principal=HOST,
+                                       payload={"email": "marta@ejemplo.es"})), 503)
+        check("and still makes no invitation",
+              len(ROOM.of_host(HOST)), before)
+
+        # AND A REAL ADDRESS GOES THROUGH, which is the leg that would
+        # catch a check that refuses everybody.
+        _app.CONFIG["realm"] = Realm(True)
+        await _app.invitar(Req(principal=HOST,
+                               payload={"email": "Nueva@Ejemplo.es"}))
+        check("an address the realm knows becomes an invitation",
+              [i.email for i in ROOM.of_host(HOST)][-1], "nueva@ejemplo.es")
+
+        # ABSENT IS OFF, STATED. A deployment that configures no realm
+        # gets what this route did before the lookup existed -- not a
+        # lookup that quietly passes everything.
+        _app.CONFIG["realm"] = None
+        await _app.invitar(Req(principal=HOST,
+                               payload={"email": "sin.realm@ejemplo.es"}))
+        check("with no realm configured the address is taken as typed",
+              [i.email for i in ROOM.of_host(HOST)][-1], "sin.realm@ejemplo.es")
+    finally:
+        _app.person_of = real_person_of
+        host.ask_why = real_ask_why
+        _app.CONFIG["realm"] = None
+        for i in list(ROOM.of_host(HOST)):
+            if i.email != "marta@ejemplo.es":
+                ROOM.revoke(HOST, i.email)
+
+    # ------------------------- the one line that would have named it
+    # The route already returned the asserted address to the browser and
+    # the page threw it away, so the two facts that disagreed were never
+    # in the same place. Now one of them is in the log.
+    import logging as _logging
+    said = []
+
+    class Catch(_logging.Handler):
+        def emit(self, record):
+            said.append(record.getMessage())
+
+    catcher = Catch()
+    web_log = _logging.getLogger("escriba.web")
+    # THE LEVEL IS PART OF THE LEG. A handler on a logger whose effective
+    # level is WARNING is never called, so without this the leg would
+    # pass on a line nobody would ever see. `main()` sets INFO on the
+    # root logger for exactly that reason; the suite has no `main()`.
+    #
+    # `setLevel` AND NOT `.level = `, which cost twenty minutes here:
+    # assigning the attribute leaves `Logger._cache` holding the answer
+    # `isEnabledFor(INFO)` gave the last time anything asked, so
+    # `log.info` goes on short-circuiting at the old level and the
+    # capture stays empty. `setLevel` clears that cache; the attribute
+    # does not.
+    was = web_log.level
+    web_log.setLevel(_logging.INFO)
+    web_log.addHandler(catcher)
+    try:
+        await _app.invitacion(Req(principal=OTHER, email="nadie@ejemplo.es"))
+    finally:
+        web_log.removeHandler(catcher)
+        web_log.setLevel(was)
+    check("the lookup is logged with the address it was made under",
+          any("nadie@ejemplo.es" in m and "0 waiting" in m for m in said), True)
 
     # ------------------------------------------- a guest route is not person_of
     # `person_of` takes the forwarded access token on EVERY request,

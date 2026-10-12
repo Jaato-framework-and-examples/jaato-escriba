@@ -31,26 +31,58 @@ of record:
 | A named address lets nobody in until the host sends it | `Invitation.open` is false until `Room.open_up`, and BOTH `waiting_for` and `find` ignore an invitation that is not open — so one flag closes the offer, the stream, the voice, the recording and the staged document, instead of each route remembering to check |
 | An invitation cannot be sent without a justification, and cannot be rewritten after | `Room.open_up` refuses one with either field empty; `Room.justify` refuses one already open. What the guest is deciding on is fixed from the moment they can see it |
 | The escriba cannot name a guest, and cannot let one in | `justificar_invitado` takes an address and matches it against one the HOST typed (`Room.of_address`); there is no tool that opens anything. An address the model has never read could only be invented |
+| An address that belongs to nobody never becomes an invitation | `/invitar` puts it to the realm (`realm.Directory`) BEFORE `Room.invite`, and refuses — 404 for "nobody has that", 503 for "could not ask", never one reported as the other, because they send the host to two different places. Configured with all three `--keycloak-*` flags or none: absent, the address is taken as typed, which is what this did before |
 | A failed recording cannot lock the room | the floor is a context manager (`Person._holding`), not a pair of calls around the turn's `try` — `_to_mp3` and `archive.heard` both sit inside it and both can raise |
 
-## Required of the deployment, because this code cannot check it
+## The address the host types, and the one the proxy asserts
 
-**Every account in the realm must have an email address.** The whole
-feature matches an identity the proxy asserted against an address the host
-typed, so an account carrying no address can be invited and can never
-arrive. That failure is silent on both sides, which is the reason it is
-written down here: `GET /invitacion` does not refuse such a person —
-`Room.waiting_for("")` returns `[]`, so they are offered nothing and never
-learn a room was waiting — while the host sees the invitation standing open
-beside its cancel, indistinguishable from one not claimed *yet*. It
-defeats exactly the promise `invitar` makes in its own docstring, that
-naming somebody in advance fails visibly rather than quietly.
+The whole feature matches an identity the proxy asserted against an
+address the host typed. When those two differ, nothing refuses: `GET
+/invitacion` offers that person nothing and never tells them a room was
+waiting, while the host sees the invitation standing open beside its
+cancel, indistinguishable from one not claimed *yet*. It defeats
+exactly the promise `invitar` makes in its own docstring, that naming
+somebody in advance fails visibly rather than quietly.
 
-It is not fixed in code because there is nothing here to fix: asking
-whether an address maps to an account means querying Keycloak from the
-invite path, and matching on the principal instead would be inventing an
-identity. It is made impossible upstream instead, and `_invited`'s 403 is
-what a regression looks like.
+**This section used to say the gap could not be closed here, and that
+the deployment would close it instead by requiring every account to have
+an email address. The realm was changed to require one. It did not
+help, and the reason is worth keeping.**
+
+MEASURED, 2026-10-12: a host invited `tester@darumalabs.ai`; that
+account's address is `tester@example.invalid` — RFC 2606's reserved
+placeholder. Both sides were silent exactly as described above, and the
+mismatch was found only by opening `/invitacion` by hand in the guest's
+own browser.
+
+PRESENCE WAS NEVER THE PROPERTY THIS FEATURE NEEDS. It needs the address
+to be the one a colleague would type, and a placeholder satisfies a
+required field perfectly. Requiring the field is in fact a mild pressure
+*toward* placeholders: an admin creating an account now has to put
+something there. An invariant that was measured true, enforced, and
+still let the failure through is the kind worth recording, because the
+next reader will otherwise re-derive it.
+
+So it IS asked here now, of the only thing that can answer it, at the
+only moment anybody can act on the answer — `realm.Directory`, from
+`/invitar`, while the host is still looking at what they typed. The
+credential is a service account with `view-users` and nothing else; it
+reads no wiki, opens no session and names no person to anybody, so the
+rule that kbwiki is read with the PERSON's own token is untouched.
+
+And when it is off, it is off: a deployment that configures no realm
+gets what this route did before, stated rather than defaulted. There is
+no half-configuration in which a missing piece is guessed at, and a
+realm that cannot be reached refuses the invitation rather than waving
+it through — an invitation allowed because the check failed is the
+silent acceptance this exists to end.
+
+`/invitacion` also logs the asserted address and how many rooms matched.
+The route already returned that address to the browser and the page
+threw it away, so the two facts that disagreed were never in the same
+place. One line puts one of them where an operator can read it.
+
+### The realm audit that prompted all this
 
 AUDITED AND THEN CLOSED ON THE DEPLOYMENT, 2026-10-12, so that the next
 reader starts from a measurement rather than from this file's intent.
@@ -81,7 +113,8 @@ process:
 | Fact | Where | What a regression looks like |
 |---|---|---|
 | The proxy forwards the user headers | `escriba-oauth2-proxy`, `--pass-user-headers=true` (confirmed on the deployment 2026-10-12) | every guest gets `_invited`'s 403, and the host waits on an invitation nobody can claim |
-| Every account has an email address | realm `jaato-web-coder-shell`, `required={roles:[admin, user]}` since 2026-10-12 | one particular guest is offered nothing by `/invitacion`, silently, while their host waits |
+| Every account has an email address | realm `jaato-web-coder-shell`, `required={roles:[admin, user]}` since 2026-10-12 | nothing, by itself — see above: this was measured true while the failure happened anyway. It is kept because an account with no address still cannot be invited, not because it is sufficient |
+| The invite lookup is configured | `--keycloak-url`, `--keycloak-realm`, `--keycloak-client-file` | every address is taken as typed again, and a wrong one fails the silent way this feature was changed to stop |
 
 ## Traced, because it cannot be enforced
 

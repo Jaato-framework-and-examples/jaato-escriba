@@ -804,6 +804,30 @@ T.renderGuest();
 check("and a reading we do not have is not shown as zero",
       band().textContent.includes("0.00"), false);
 
+// A REFUSAL THE HOST CAN READ. `invite()` used to `return` on a refused
+// press, so the address that was turned down sat in the field looking
+// exactly like one that had been accepted. The server now refuses an
+// address no account has -- and a refusal nobody can see would be no
+// refusal at all, which is the silence this whole change is about.
+T.S.guests = []; T.S.inviting = true; T.S.inviteError = null;
+T.renderGuest();
+check("the field alone says nothing about a refusal",
+      band().textContent.includes(ES["guest.unknown"]), false);
+// `ES[...]` and not a literal: the catalogue is what the page draws, so
+// a leg written against a copy of it would pass while the key was gone.
+T.S.inviteError = ES["guest.unknown"];
+T.renderGuest();
+check("an address nobody has is said so, beside the field",
+      band().textContent.includes(ES["guest.unknown"]), true);
+// TWO REFUSALS, NEVER ONE: "nobody has that address" sends the host to
+// fix a typo, "I could not ask" sends them to press again in a moment.
+T.S.inviteError = ES["guest.uncheckable"];
+T.renderGuest();
+check("and a realm that could not be asked says that instead",
+      band().textContent.includes(ES["guest.uncheckable"]) &&
+      !band().textContent.includes(ES["guest.unknown"]), true);
+T.S.inviting = false; T.S.inviteError = null;
+
 // WHO HOLDS THE TURN. The lock has always existed server-side; what is
 // new is that three people can race for it, and a press that silently
 // does nothing is the worst thing this page could do with one.

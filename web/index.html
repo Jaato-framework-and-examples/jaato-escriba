@@ -484,7 +484,7 @@ const S = {
   selfId: "",
   //: Rooms this person has been offered, and the invitation this person
   //: has issued.
-  invited: [], inviting: false,
+  invited: [], inviting: false, inviteError: null,
   //: EVERYBODY THE HOST HAS NAMED, and whether each is here yet. A list,
   //: because an interview has two sides: a host documenting a topic
   //: calls in two people so that one can correct the other, and the
@@ -1636,12 +1636,26 @@ function hush() {
 async function invite(field) {
   const email = ((field && field.value) || "").trim();
   if (!email.includes("@")) return;
+  S.inviteError = null;
   const res = await fetch("/invitar", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }) });
-  if (!res.ok) return;
+    body: JSON.stringify({ email }) }).catch(() => null);
+  // A REFUSAL THE HOST CAN READ. This used to `return` on a refusal, so
+  // a rejected address left the field exactly as it was: the press that
+  // was turned down and the press that worked looked identical, which
+  // is the same silence the lookup behind this exists to end. The three
+  // answers go three different places -- fix the address, try again in
+  // a moment, or something else entirely -- so they are three strings.
+  if (!res || !res.ok) {
+    S.inviteError = res && res.status === 404 ? tx("guest.unknown")
+                  : res && res.status === 503 ? tx("guest.uncheckable")
+                  : tx("guest.refused");
+    renderGuest();
+    return;
+  }
   S.guests = (await res.json()).guests || [];
   S.inviting = false;
+  S.inviteError = null;
   renderGuest();
 }
 
@@ -1787,9 +1801,10 @@ function renderGuest() {
     const go = el("button", "hbtn", tx("guest.invite"));
     go.onclick = () => invite(field);
     const no = el("button", "hbtn", tx("guest.cancel"));
-    no.onclick = () => { S.inviting = false; renderGuest(); };
+    no.onclick = () => { S.inviting = false; S.inviteError = null; renderGuest(); };
     form.append(field, go, no);
     band.append(form);
+    if (S.inviteError) band.append(el("span", "warn", S.inviteError));
     field.focus();
   } else {
     band.hidden = true;

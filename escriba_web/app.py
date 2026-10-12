@@ -44,6 +44,7 @@ import workspace as _workspace                                     # noqa: E402
 from .driver import FloorTaken, NothingHeard, NotReady, Person     # noqa: E402
 from .guests import ROOM, Invitation, label, token  # noqa: E402
 from .hub import frame                                             # noqa: E402
+from . import realm as _realm                                       # noqa: E402
 
 #: WHY THIS EXISTS.  Both `except` branches below answer the browser with
 #: an alert and used to swallow the exception whole, so a failure in this
@@ -539,6 +540,14 @@ async def invitar(request: Request) -> dict:
     rather than failing silently, which is the one failure mode of
     naming somebody in advance instead of admitting them on arrival.
 
+    AND THAT WAS NOT ENOUGH, measured on 2026-10-12: an address that is
+    nobody's looks exactly like one whose owner has not arrived yet, and
+    the host waited on an invitation that could never be claimed. So the
+    address is put to the realm BEFORE an invitation is made of it, when
+    the host is still looking at what they typed. `realm.Directory` is
+    the whole of that; absent, nothing is checked and nothing is
+    guessed, which is the behaviour this route had before it.
+
     THE TURN IS NOT AWAITED. A model turn takes seconds and the band is
     fed by the hub, so holding the response open for it would buy
     nothing and time out on the slow case. The justification arrives on
@@ -550,6 +559,21 @@ async def invitar(request: Request) -> dict:
     email = str((body or {}).get("email") or "").strip()
     if "@" not in email:
         raise HTTPException(400, "an email address")
+    # TWO REFUSALS, NEVER ONE. "nobody has that address" sends the host
+    # to fix a typo; "I could not ask" sends them to press the button
+    # again in a minute, and reporting the second as the first would
+    # send them to correct an address that may be perfectly right.
+    # Neither is silent, which is the entire point: an invitation this
+    # route accepted is one the guest can actually be offered.
+    directory = CONFIG.get("realm")
+    if directory is not None:
+        try:
+            known = await directory.holds(email)
+        except _realm.Unreachable as exc:
+            raise HTTPException(503, "the realm could not be asked whether "
+                                     "that address belongs to anybody") from exc
+        if not known:
+            raise HTTPException(404, "no account here has that address")
     # ONLY THE INVITATION TO THIS ADDRESS IS REPLACED, and if somebody
     # was holding it they are shown out through the same path a
     # withdrawal takes -- stream closed, transcript, manifest, and the
@@ -641,6 +665,18 @@ async def invitacion(request: Request):
              # to a 409 they can do nothing about. One already claimed by
              # somebody else is not theirs to see at all.
              if i.host in PEOPLE and i.guest in (None, principal)]
+    # THE ONE LINE THAT WOULD HAVE NAMED IT. On 2026-10-12 a guest was
+    # offered nothing and nobody could say why without opening this
+    # route by hand in a browser: the host saw an invitation standing
+    # open, the guest saw their own escriba, and the two facts that
+    # disagreed -- the address the host typed and the one the proxy
+    # asserts for this person -- were never in the same place.
+    #
+    # The address IS logged, deliberately. It is the whole content of
+    # the mismatch, it is already held beside the workspace in
+    # `person.json`, and a line saying only "0 waiting" answers nothing.
+    log.info("invitation check for %s under %s: %d waiting",
+             principal, email or "(the proxy asserted no address)", len(rooms))
     return {"rooms": rooms, "email": email}
 
 
@@ -839,6 +875,26 @@ def main(argv=None) -> int:
                    help="how to link one wiki page, with {id} where the "
                         "node id goes. Needs --kbwiki-url. Omitted, a wiki "
                         "page is shown as its id instead of as a link")
+    # THE THREE TOGETHER OR NONE OF THEM, the way the wiki pair above
+    # works and for the same reason: a URL this project invented would
+    # ask a realm nobody chose whether somebody's colleague exists, and
+    # a realm named with no credential cannot be asked at all. Omitted,
+    # the address is taken as the host typed it -- which is what this
+    # did before, stated rather than defaulted.
+    p.add_argument("--keycloak-url", metavar="URL",
+                   help="the Keycloak base URL whose realm holds the accounts "
+                        "a host may invite. With --keycloak-realm and "
+                        "--keycloak-client-file, an address that belongs to "
+                        "nobody is refused while the host is still looking at "
+                        "it. Omitted, nothing is checked")
+    p.add_argument("--keycloak-realm", metavar="NAME",
+                   help="the realm to ask. Needs --keycloak-url")
+    p.add_argument("--keycloak-client-file", metavar="PATH",
+                   help="file holding ONE line, <client-id>:<client-secret>, "
+                        "for a service account whose only grant is view-users "
+                        "on that realm. A FILE because an argument would put "
+                        "the secret in /proc/<pid>/cmdline. Needs "
+                        "--keycloak-url")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8080)
     args = p.parse_args(argv)
@@ -865,6 +921,22 @@ def main(argv=None) -> int:
     CONFIG["wiki"] = ({"url": args.kbwiki_url, "dir": args.token_dir,
                        "page": args.kbwiki_page}
                       if args.kbwiki_url else None)
+    keycloak = (args.keycloak_url, args.keycloak_realm, args.keycloak_client_file)
+    if any(keycloak) and not all(keycloak):
+        print("escriba_web: --keycloak-url, --keycloak-realm and "
+              "--keycloak-client-file are given together or not at all: a "
+              "realm with no credential cannot be asked, and a credential "
+              "with no realm has nothing to ask", file=sys.stderr)
+        return 2
+    CONFIG["realm"] = None
+    if all(keycloak):
+        try:
+            client, secret = _realm.read_client(Path(args.keycloak_client_file))
+        except (OSError, ValueError) as exc:
+            print(f"escriba_web: {exc}", file=sys.stderr)
+            return 2
+        CONFIG["realm"] = _realm.Directory(args.keycloak_url,
+                                           args.keycloak_realm, client, secret)
     if args.budget_file:
         try:
             CONFIG["limit"] = _housekeeping.ceiling(Path(args.budget_file))
