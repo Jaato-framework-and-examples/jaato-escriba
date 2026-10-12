@@ -22,6 +22,9 @@ import staging                                          # noqa: E402
 from fastapi import Request                              # noqa: E402
 from escriba_web.hub import VOICE_BACKLOG, Hub, frame                   # noqa: E402
 from escriba_web.driver import WebBoard, entry_json      # noqa: E402
+import run_escriba as _run                               # noqa: E402
+from jaato_sdk import AgentError                         # noqa: E402
+from jaato_sdk.client.convenience import Terminus        # noqa: E402
 
 fail = 0
 
@@ -634,6 +637,201 @@ async def main():
     relay = Relay()
     relay.speak(_Chunk(b"\x00" * piece))
     check("a relay with no hub publishes nothing", True, True)
+
+    # ------------------------------------- how a session ENDING is read
+    # MEASURED, 2026-10-12. A `budget_control` ceiling ended a session
+    # and nothing noticed: `complete` NEVER RAISES FOR A TERMINAL --
+    # settling is what it was asked to wait for -- so the turn came back
+    # looking ordinary and `Session.terminus`, which the SDK calls its
+    # only route to the reason (jaato #1007), was read nowhere in this
+    # repository. The person found out on their NEXT press, as
+    # `RunnerCallError: ... model loop`, and the handler that saw that
+    # text looked for the word "budget" in it, did not find one, and
+    # opened a fresh session with a FRESH BUDGET.
+    class Mouth:
+        recordings: list = []
+
+        def last(self):
+            return "lo que dijo"
+
+        def speak(self, ev):
+            pass
+
+    class Tui:
+        def __init__(self):
+            self.notes = []
+
+        def thinking(self, on):
+            pass
+
+        def spoke(self, *a, **k):
+            pass
+
+        def note(self, text):
+            self.notes.append(text)
+
+    class Scribe:
+        """A session as `_turn` drives one: complete, terminus, client."""
+
+        def __init__(self, terminus=None, raises=None):
+            self.terminus, self._raises = terminus, raises
+            self.client = type("C", (), {"subscribe": lambda *a, **k: (lambda: None)})()
+
+        async def complete(self, prompt, attachments=None, on_media=None):
+            if self._raises is not None:
+                raise self._raises
+            return {"anotado": "algo"}
+
+    async def ending(scribe):
+        """What `_turn` raises, or None if it returned."""
+        try:
+            await _run._turn(scribe, "hola", None, Mouth(), tui=Tui())
+        except _run.SessionGone as over:
+            return over
+        return None
+
+    # A CEILING UNDER A TURN THAT WENT PERFECTLY. The turn is not undone
+    # -- the person heard the reply and the manifest row is written --
+    # but the session is over and the next press has nowhere to go.
+    over = await ending(Scribe(terminus=Terminus(
+        "budget_exhausted", details={"dimension": "usd"}, session_ended=True)))
+    check("a ceiling ends the turn verb's silence",
+          over is not None, True)
+    check("named by the daemon", getattr(over, "reason", None), "budget_exhausted")
+    check("with what the terminal carried",
+          getattr(over, "details", None), {"dimension": "usd"})
+
+    # AND AN ORDINARY TURN IS STILL ORDINARY: `session_ended` is the
+    # question, not "is there a terminus".
+    check("a turn that ended nothing just returns",
+          await ending(Scribe(terminus=Terminus("natural", session_ended=False))), None)
+    check("and neither does one with no terminus at all",
+          await ending(Scribe()), None)
+
+    # THE DAEMON'S ACCOUNT BEATS THE MESSAGE. `_raise_if_needed` writes
+    # the terminus BEFORE it raises, so it is there to be read, and the
+    # text of this exception is exactly the one that fooled the old
+    # substring test.
+    loop_error = AgentError("RunnerCallError",
+                            "session.send_message failed: ToolError: "
+                            "session.send_message: model loop")
+    over = await ending(Scribe(terminus=Terminus("budget_exhausted",
+                                                 session_ended=True),
+                               raises=loop_error))
+    check("an error terminal is named by its reason, not by its wording",
+          getattr(over, "reason", None), "budget_exhausted")
+
+    # AND WHEN NOTHING TOLD US, that is a third state and not a guess:
+    # an RPC that died before the SDK could settle writes no terminus.
+    over = await ending(Scribe(raises=loop_error))
+    check("a transport that died is still the session gone",
+          over is not None, True)
+    check("with no reason invented for it",
+          getattr(over, "reason", "?"), None)
+    check("while a turn that merely failed to close is survivable",
+          await ending(Scribe(raises=AgentError("NudgeExhausted", "no close"))),
+          None)
+
+    # ------------------------------------- and what the driver does with it
+    ended_root = Path(tempfile.mkdtemp(prefix="escriba-ending-"))
+    them = Person("ending-sub-01", root=ended_root, identity={"username": "ana"})
+    said = []
+    them.hub.publish = lambda kind, data: said.append((kind, data))
+    resumed = []
+
+    async def _noop():
+        resumed.append(True)
+
+    them._resume = _noop
+
+    them._scribe = "the session"
+    them._ended(_run.SessionGone("budget_exhausted", reason="budget_exhausted"))
+    check("a ceiling is reported as a ceiling",
+          [d["kind"] for k, d in said if k == "alert"], ["budget"])
+    # THE WHOLE POINT. Opening another session with a fresh budget
+    # answers a limit by ignoring it, and that is what used to happen.
+    check("and the session is NOT quietly reopened", them._scribe, "the session")
+
+    said.clear()
+    them._ended(_run.SessionGone("gone", reason=None))
+    check("anything else is reported as what it was",
+          [d["kind"] for k, d in said if k == "alert"], ["session"])
+    check("and says so rather than leaving it blank",
+          bool([d["detail"] for k, d in said if k == "alert"][0]), True)
+    check("and that one IS repaired", them._scribe, None)
+    await asyncio.sleep(0)
+    check("by reopening exactly once", resumed, [True])
+
+    # THE INVERSE OF THE BUG, which no leg would have caught before: an
+    # ending whose MESSAGE says budget but whose reason does not must not
+    # be treated as a ceiling. The text is the thing we stopped reading.
+    said.clear()
+    them._scribe = "the session"
+    them._ended(_run.SessionGone("budget exhausted: presupuesto agotado",
+                                 reason="cascade_cancelled"))
+    check("a message that merely mentions a budget is not a ceiling",
+          [d["kind"] for k, d in said if k == "alert"], ["session"])
+
+    # ------------------------------------- the way back from a ceiling
+    # A budget ending is the one the driver refuses to repair, so without
+    # this the ceiling is enforced by making the escriba unusable until
+    # the service restarts. A reload does not help: `person_of` hands
+    # back the same cached `Person` with the same dead session.
+    back = Person("restart-sub-01",
+                  root=Path(tempfile.mkdtemp(prefix="escriba-restart-")),
+                  identity={"username": "ana"})
+    rows = []
+    back.archive.turn = lambda **kw: rows.append(kw)
+    # The reopen publishes a state frame, which reads the live session
+    # for its engines. These legs are about WHAT A RESTART DOES, not
+    # about what a snapshot contains, so the snapshot stands aside.
+    back.snapshot = lambda: {}
+
+    order = []
+
+    async def _opens():
+        order.append("open")
+        back._scribe = "a new session"
+
+    async def _closes():
+        pass
+
+    async def _curates():
+        order.append("consolidate")
+
+    back._open_session, back._close_session = _opens, _closes
+    back._consolidate = _curates
+    back._scribe = "the one the ceiling ended"
+    check("the person can start another session", await back.restart(), True)
+    check("and it is a new one", back._scribe, "a new session")
+    # THE WHOLE DIFFERENCE between a new session and a new session that
+    # knows anything. The scribe stores memories RAW and the inventory a
+    # session gets is rendered from the CURATED store at create, so a
+    # reopen that skips the curator hands back an escriba that has
+    # forgotten the conversation it was just having. ORDER, not
+    # presence: consolidating after the session is created is the same
+    # as not consolidating at all.
+    check("the curator runs, and before the session is created",
+          order, ["consolidate", "open"])
+    # A DECISION, NOT A REPAIR. The transcript is a 400-entry window; the
+    # manifest is what can still say, a month later, that this person was
+    # told a ceiling had been reached and chose to carry on.
+    check("recorded as their own decision",
+          [r.get("stage") for r in rows], ["session-restarted"])
+    check("and attributed to them, not to the machinery",
+          rows[-1].get("source"), "person")
+
+    async def _cannot():
+        raise RuntimeError("no daemon")
+
+    rows.clear()
+    order.clear()
+    back._open_session = _cannot
+    back._scribe = "the one the ceiling ended"
+    check("a restart that could not open says so", await back.restart(), False)
+    # WRITTEN ONLY IF IT HAPPENED: a row written first would record
+    # somebody choosing to spend again on a session that never opened.
+    check("and records nothing", rows, [])
 
     print("web backend OK" if not fail else f"{fail} failure(s)")
     return 1 if fail else 0

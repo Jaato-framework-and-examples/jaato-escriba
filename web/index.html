@@ -636,7 +636,7 @@ function renderPills() {
 // exactly like an audio UI waiting for you to speak.
 const ALERTS = {
   budget: (d) => [tx("alert.session.title"),
-    `Se alcanzó el límite de presupuesto de la sesión a las ${d.at || "—"}. Lo dicho hasta aquí está guardado.`],
+    tx("alert.budget.body", { at: d.at || "—" })],
   mic: () => [tx("alert.mic.title"),
     tx("alert.mic.body")],
   playback: (d) => [tx("alert.playback.title"),
@@ -646,7 +646,7 @@ const ALERTS = {
   // reading tx("alert.lost") on a first load goes looking for
   // a network fault that is not there.
   session: (d) => [tx("alert.session.title"),
-    `La sesión ha terminado: ${d.detail || "sin detalle"}. Lo dicho hasta aquí está guardado.`],
+    tx("alert.session.body", { detail: d.detail || tx("alert.no_reason") })],
   // NOT a permission problem, and saying "revisa el permiso" sends the
   // reader looking for a setting the browser is not offering: on an
   // insecure origin Chrome does not expose `navigator.mediaDevices` at
@@ -694,10 +694,35 @@ function renderAlert() {
   svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "2.25");
   svg.innerHTML = '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"></path>' +
                   '<path d="M12 9v4"></path><path d="M12 17h.01"></path>';
-  const ok = el("button", null, "entendido");
+  const ok = el("button", null, tx("alert.ok"));
   ok.onclick = () => { S.dismissed = S.alert.seq; renderAlert(); };
-  n.append(svg, el("div", "title", title), el("div", "body", body), ok);
+  n.append(svg, el("div", "title", title), el("div", "body", body));
+  // THE WAY BACK, offered only where there is one. A ceiling is the one
+  // ending the server deliberately does NOT repair -- reopening it by
+  // itself would answer a limit by ignoring it -- so this button is the
+  // only thing that starts another session, and pressing it is recorded.
+  //
+  // NOT TO A GUEST. They are subscribed to the HOST's hub, so the host's
+  // budget alert reaches their page too; a button there would offer them
+  // somebody else's ceiling, and press against their own session.
+  if (S.alert.kind === "budget" && !S.guest) {
+    const again = el("button", null, tx("alert.budget.again"));
+    again.onclick = () => restartSession(again);
+    n.append(again);
+  }
+  n.append(ok);
   slot.append(n);
+}
+
+// A NEW SESSION, BECAUSE THE PERSON ASKED FOR ONE. Nothing else reopens
+// one after a ceiling: a reload hands back the same person, server-side,
+// with the same dead session.
+async function restartSession(btn) {
+  btn.disabled = true;
+  const res = await fetch("/sesion/nueva", { method: "POST" }).catch(() => null);
+  if (!res || !res.ok) { btn.disabled = false; return; }
+  S.alert = null;
+  renderAlert();
 }
 
 // ---------------------------------------------------------------- days
@@ -2365,6 +2390,20 @@ function onEvent(kind, data) {
     // second tab, and the first one after a reconnect, agree.
     if (!S.guest && data.guests) S.guests = data.guests;
     renderGuest(); pttFace();
+  } else if (kind === "invitacion") {
+    // AN INVITATION THAT ARRIVED WHILE THIS PAGE WAS ALREADY OPEN.
+    // `/invitacion` is asked once, at boot, so somebody already sitting
+    // in their own escriba learned nothing: measured 2026-10-12, the
+    // page asked at 18:06 and the host sent at 18:14. The stream this
+    // page already has is the answer, and it carries the WHOLE list, so
+    // the same frame that offers a room withdraws one -- an offer left
+    // on screen after the host changed their mind is a button that
+    // 403s.
+    //
+    // No `connect()` here, unlike the "seguir en mi escriba" button:
+    // a page receiving this is by definition already connected.
+    S.invited = data.rooms || [];
+    renderGuest();
   } else if (kind === "closed") {
     // THE ROOM ENDED FROM THE OTHER SIDE: the host withdrew the
     // invitation or their session went away. Said in the server's own
@@ -2413,7 +2452,7 @@ function connect() {
   const es = source = new EventSource(api("/events"));
   for (const kind of ["state", "entry", "counts", "items", "status", "alert",
                       "days", "wiki", "consumo", "closing", "speech", "closed",
-                      "room"]) {
+                      "room", "invitacion"]) {
     es.addEventListener(kind, (m) => onEvent(kind, JSON.parse(m.data)));
   }
   es.onopen = () => {

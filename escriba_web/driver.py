@@ -28,6 +28,7 @@ import contextlib
 import json
 import re
 import sys
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -49,7 +50,8 @@ import voice                                                     # noqa: E402
 import yaml                                                      # noqa: E402
 import transcribe as _transcribe                                 # noqa: E402
 import workspace as _workspace                                   # noqa: E402
-from run_escriba import DRAIN, SessionGone, _reconcile, _turn   # noqa: E402
+from run_escriba import (BUDGET_ENDED, DRAIN, SessionGone,      # noqa: E402
+                         _reconcile, _turn)
 
 from . import kbwiki                                             # noqa: E402
 from . import wiki as _wiki                                      # noqa: E402
@@ -426,6 +428,13 @@ def who(record: Dict[str, Any], principal: str) -> str:
     return str(record.get("username") or record.get("email") or principal)
 
 
+#: The raw account of a failure belongs to whoever runs this, not to
+#: whoever is talking to it: `RunnerCallError: session.send_message
+#: failed: ToolError: ...` reached a person's transcript once, truncated
+#: at 90 characters and in English, and told them nothing.
+log = logging.getLogger("escriba.driver")
+
+
 class Person:
     """One authenticated person: a workspace, a session, a hub."""
 
@@ -473,6 +482,15 @@ class Person:
         #: purpose, because provisioning can already emit a note; this
         #: has no such reason and the order is the whole correctness.
         self.who = who(_workspace.identity(self.home), principal)
+        #: The address the proxy ASSERTS for this person, as of their
+        #: last request.  Not `who`, which is read from the record beside
+        #: the workspace on purpose: that one is for showing, and the
+        #: session living inside the workspace must not be able to
+        #: rewrite it.  This one is for MATCHING, and it has to be the
+        #: very value `Room.waiting_for` is given -- an invitation that
+        #: `/invitacion` would offer on load and a push would not is the
+        #: shape of bug this whole area keeps producing.
+        self.email = ""
         self.archive = _archive.Archive(
             self.ws, limit=limit,
             on_full=lambda m: self.board.note(f"· {m}"))
@@ -789,19 +807,116 @@ class Person:
         if state in ("RECONNECTING", "DISCONNECTED", "CLOSED"):
             self.board.note(self.say("note.connection_lost"))
 
-    async def _resume(self) -> None:
+    def _ended(self, over: SessionGone) -> None:
+        """The session is over.  Say which ending it was, and repair it.
+
+        THE DAEMON'S OWN WORD, COMPARED — never searched for.  This used
+        to decide by looking for "budget", "exhaust" or "presupuesto" in
+        the exception's text, and on 2026-10-12 the text was
+        `RunnerCallError: session.send_message failed: ToolError:
+        session.send_message: model loop`, which contains none of them.
+        So a ceiling was reported as a transport fault AND the branch
+        below ran, opening a fresh session with a fresh budget: the one
+        thing its own comment forbids. `Session.terminus.reason` is the
+        daemon's `SessionTerminatedEvent.reason`, carried here by
+        `SessionGone`, and `budget_exhausted` is a value to equal.
+
+        THE RAW TEXT GOES TO THE LOG, not to the person.  They cannot act
+        on `ToolError: session.send_message: model loop` and it is not in
+        their language; whoever runs this can act on it and needs all of
+        it, not ninety characters of it.
+        """
+        budget = over.reason == BUDGET_ENDED
+        log.warning("the session ended (reason=%s, details=%r): %s",
+                    over.reason or "none reported", over.details, over)
+        self.hub.publish("alert", {
+            "kind": "budget" if budget else "session",
+            "at": datetime.now().strftime("%H:%M"),
+            # The reason as the daemon named it, or the honest absence of
+            # one. The budget alert does not read this; the other does.
+            "detail": over.reason or self.say("alert.no_reason")})
+        if budget:
+            # NOT REPAIRED.  That session ended because a declared ceiling
+            # was reached, and quietly opening another one with a fresh
+            # budget answers a limit by ignoring it.
+            return
+        # AND REPAIR IT, which this did not used to do.  The transport
+        # handler no longer rebuilds the session when the connection
+        # returns — that was opening a second connection every time — so
+        # a turn failing is now the ONLY thing that replaces a dead
+        # session.  `TURN_TIMEOUT` already did it for a turn that hangs;
+        # a `SessionGone` fails fast instead, and without this the next
+        # press would fail the same way forever.
+        self._scribe = None
+        asyncio.create_task(self._resume())
+
+    async def restart(self) -> bool:
+        """A new session, because the person ASKED for one.
+
+        THE ONLY WAY BACK FROM A CEILING, and the reason this exists at
+        all. `_ended` refuses to repair a budget ending on purpose —
+        reopening one by itself answers a limit by ignoring it — and
+        nothing else will: a page reload hands back the same cached
+        `Person`, and `PEOPLE.pop` runs only for one that failed to
+        open. Without this the ceiling would be enforced by making the
+        escriba unusable until the service restarted, which is not a
+        limit, it is a wall.
+
+        RECORDED, AND ONLY IF IT HAPPENED. A row written before the
+        session exists would say somebody chose to spend again on a
+        session that never opened. The manifest is what can answer, a
+        month later, that this person was told a ceiling had been
+        reached and decided to carry on — the transcript is a
+        400-entry window and cannot.
+
+        AND IT CONSOLIDATES FIRST, which is the whole difference between
+        a new session and a new session that knows anything. The scribe
+        stores memories RAW; the curator is what judges them, and the
+        inventory a session is given is rendered from the store at
+        CREATE. Reopening without this hands the person an escriba that
+        has forgotten the conversation they were just having — the exact
+        state `_consolidate` records having been measured once already,
+        "2 raw, 0 curated, so the escriba woke up knowing none of it".
+        `open` does it in this same order and for this same reason.
+
+        It is NOT the verbatim transcript, and should not be: carrying
+        that into the new session means replaying history, which is what
+        made the session expensive enough to reach a ceiling. The
+        archive keeps the words for the person; the model gets what the
+        curator judged worth keeping.
+
+        Only here and not in `_resume`: that one fires from a background
+        task after a dropped connection, often mid-sentence, and its
+        value is being fast and quiet. This one happens because somebody
+        read an alert and pressed a button.
+        """
+        await self._consolidate()
+        self._scribe = None
+        if not await self._resume("note.session_restarted"):
+            return False
+        self.archive.turn(stage="session-restarted", source="person")
+        return True
+
+    async def _resume(self, note: str = "note.session_new") -> bool:
+        """Put a session back, and say whether there is one now.
+
+        The note is the caller's, because the two callers are not the
+        same event: one is a repair nobody asked for and the other is a
+        person pressing a button.
+        """
         async with self._opening:
             if self._scribe is not None:
-                return
+                return True
             try:
                 await self._close_session()
                 await self._open_session()
             except Exception as exc:                          # noqa: BLE001
                 self.board.note(self.say("note.reopen_failed",
                                          what=f"{type(exc).__name__}: {str(exc)[:90]}"))
-                return
-        self.board.note(self.say("note.session_new"))
+                return False
+        self.board.note(self.say(note))
         self.hub.publish("state", self.snapshot())
+        return True
 
     async def _close_session(self) -> None:
         """Let go of a session, whether or not the far end still exists."""
@@ -1160,13 +1275,32 @@ class Person:
             with self._holding(""):
                 lines = self._notices
                 self._notices = []
-                await asyncio.wait_for(
-                    _turn(self._scribe,
-                          "\n".join(lines + [self.say("agent.justify_guest",
-                                                      who=email)]),
-                          None, self._relay(),
-                          log=self.archive.turn, tui=self.board),
-                    timeout=TURN_TIMEOUT)
+                try:
+                    await asyncio.wait_for(
+                        _turn(self._scribe,
+                              "\n".join(lines + [self.say("agent.justify_guest",
+                                                          who=email)]),
+                              None, self._relay(),
+                              log=self.archive.turn, tui=self.board),
+                        timeout=TURN_TIMEOUT)
+                except SessionGone as over:
+                    # NOBODY IS AWAITING THIS. `/invitar` fires it and
+                    # returns, so an exception here has no caller to
+                    # reach and would surface as an unretrieved task.
+                    # The alert and the repair ARE the answer; the host
+                    # is looking at an address with nothing under it and
+                    # the band already says the escriba is writing.
+                    self._ended(over)
+
+    def seen_as(self, email: Optional[str]) -> None:
+        """Record the address the proxy asserted on this request.
+
+        Taken from EVERY request, for the reason `credential` is: the
+        proxy is the only thing that produces it, and a person whose
+        address changed upstream must not keep being matched on the old
+        one for as long as this process lives.
+        """
+        self.email = (email or "").strip().lower()
 
     def floor(self, who: Optional[str]) -> None:
         """Who is talking, or nobody.  Published, because three can race."""
@@ -1306,39 +1440,8 @@ class Person:
                     self._scribe = None
                     asyncio.create_task(self._resume())
                     raise NotReady(self.say("note.no_answer"))
-                except SessionGone as exc:
-                    # NAME THE REASON WE HAVE, not the one that sounds likely.
-                    # `SessionGone` covers an RPC closing, a session
-                    # terminating and a session not being found — see
-                    # `run_escriba._GONE` — and this used to report every one
-                    # of them as "se alcanzó el límite de presupuesto".  A
-                    # budget abort says so in its own text; anything else is
-                    # reported as what it was, because sending somebody to
-                    # raise a ceiling that was never reached wastes the one
-                    # piece of evidence they had.
-                    text = str(exc)
-                    budget = any(w in text.lower() for w in ("budget", "exhaust", "presupuesto"))
-                    self.hub.publish("alert", {
-                        "kind": "budget" if budget else "session",
-                        "at": datetime.now().strftime("%H:%M"), "detail": text[:200]})
-                    if not budget:
-                        # AND REPAIR IT, which this did not used to do.  The
-                        # transport handler no longer rebuilds the session
-                        # when the connection returns — that was opening a
-                        # second connection every time — so a turn failing
-                        # is now the ONLY thing that replaces a dead
-                        # session.  `TURN_TIMEOUT` already did it for a turn
-                        # that hangs; a `SessionGone` fails fast instead,
-                        # and without this the next press would fail the
-                        # same way forever.
-                        #
-                        # Not after a BUDGET ending: that session ended
-                        # because a declared ceiling was reached, and
-                        # quietly opening another one with a fresh budget
-                        # answers a limit by ignoring it.  The alert stands
-                        # and the person decides.
-                        self._scribe = None
-                        asyncio.create_task(self._resume())
+                except SessionGone as over:
+                    self._ended(over)
                     raise
 
     async def stage(self, filename: str, data: bytes,

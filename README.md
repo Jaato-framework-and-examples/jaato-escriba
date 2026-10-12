@@ -769,7 +769,7 @@ in every person's directory.
 
 | | |
 |---|---|
-| `run_escriba.py` | The driver. All the SDK is two sessions and three turns; the judge and the documenter are spawned, not driven. |
+| `run_escriba.py` | The driver. All the SDK is two sessions and three turns; the judge and the documenter are spawned, not driven. **How an ending is read lives here**: `complete()` never raises for a terminal — settling is what it was asked to wait for — so a `budget_control` ceiling hands back a normal-looking turn and `Session.terminus` is its only route to the reason (jaato #1007). `_turn` reads it and raises `SessionGone(reason, details)`; `_GONE` is the separate question of an ending nothing reported, where no terminus exists. |
 | `voice.py` | Ears and mouth: the thread↔asyncio bridge and the audio sink. |
 | `console.py` | The terminal side: the thinking spinner, and the only safe way to write while it runs. |
 | `board.py` | What the conversation looks like from outside, as state. No `rich`, no terminal. |

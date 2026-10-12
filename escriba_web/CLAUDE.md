@@ -32,6 +32,10 @@ of record:
 | An invitation cannot be sent without a justification, and cannot be rewritten after | `Room.open_up` refuses one with either field empty; `Room.justify` refuses one already open. What the guest is deciding on is fixed from the moment they can see it |
 | The escriba cannot name a guest, and cannot let one in | `justificar_invitado` takes an address and matches it against one the HOST typed (`Room.of_address`); there is no tool that opens anything. An address the model has never read could only be invented |
 | An address that belongs to nobody never becomes an invitation | `/invitar` puts it to the realm (`realm.Directory`) BEFORE `Room.invite`, and refuses — 404 for "nobody has that", 503 for "could not ask", never one reported as the other, because they send the host to two different places. Configured with all three `--keycloak-*` flags or none: absent, the address is taken as typed, which is what this did before |
+| An invitation sent while the invited person is already looking reaches them at once | `_offer` publishes to THEIR own hub on send, on replacement and on withdrawal. `/invitacion` is asked once, at boot, and measured on 2026-10-12 a page that asked at 18:06 was never told about an invitation sent at 18:14 |
+| A pushed offer and a reloaded one cannot disagree | both are built by `_offers`. The push is the half nobody asks for, so it is the half that would have drifted unnoticed |
+| An offer leaves by the path it arrived | the frame carries the WHOLE list rather than an event, so a withdrawal is the same frame with nothing in it. An offer still on screen after the host changed their mind is a button that 403s |
+| Inviting somebody is not a way to learn whether they are online | `_offer` returns nothing, and the route's answer is identical whether or not a `Person` matched. Asserted by comparing the two answers, not by reading the code |
 | A failed recording cannot lock the room | the floor is a context manager (`Person._holding`), not a pair of calls around the turn's `try` — `_to_mp3` and `archive.heard` both sit inside it and both can raise |
 
 ## The address the host types, and the one the proxy asserts

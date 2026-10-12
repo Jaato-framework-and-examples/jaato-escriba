@@ -522,6 +522,84 @@ async def main() -> int:
     check("and so is the guest once somebody else holds it",
           (await _app.invitacion(Req(principal=OTHER)))["rooms"], [])
 
+    # ------------------- an invitation that arrives while they are looking
+    # MEASURED, 2026-10-12: `/invitacion` is asked once, at boot. A page
+    # that booted at 18:06 was never told about an invitation sent at
+    # 18:14 -- the one question that would have answered it had been
+    # asked and answered eight minutes earlier. The invited person sat
+    # in their own escriba while the host waited for them.
+    lucia = Person(OTHER, root=root, identity={"username": "lucia",
+                                               "email": "lucia@ejemplo.es"})
+    # AS THE PROXY SENDS IT, unfolded, because that is what `person_of`
+    # passes: the match has to survive the same folding `waiting_for`
+    # does, or the push and the load would disagree about one address.
+    lucia.seen_as("  Lucia@Ejemplo.ES ")
+    check("the asserted address is folded the way the room folds one",
+          lucia.email, "lucia@ejemplo.es")
+    _app.PEOPLE[OTHER] = lucia
+    pushed = []
+    lucia.hub.publish = lambda kind, data: pushed.append((kind, data))
+
+    sent_to_host = []
+    host.hub.publish, keep_host = (
+        lambda kind, data: sent_to_host.append((kind, data)), host.hub.publish)
+
+    # `email=` ON A Req IS THE HEADER, not the body or the query -- the
+    # host's own asserted address. Getting that wrong here had dani
+    # "seen as" marta, and `_offer` then matched the host's own Person:
+    # the leg found a push that had gone to the wrong hub.
+    def host_req(**kw):
+        return Req(principal=HOST, email="dani@ejemplo.es", **kw)
+
+    ROOM.invite(HOST, "lucia@ejemplo.es")
+    ROOM.justify(HOST, "lucia@ejemplo.es", "conoce el expediente", "el expediente")
+    check("nothing reaches them while it is unsent", pushed, [])
+    answer = await _app.enviar(host_req(payload={"email": "lucia@ejemplo.es"}))
+    offers = [d for k, d in pushed if k == "invitacion"]
+    check("the moment it is sent, their own stream carries it",
+          len(offers), 1)
+    check("naming the room they would enter",
+          [r["room"] for r in (offers[-1] if offers else {}).get("rooms", [])],
+          [token(HOST)])
+    check("and what they are wanted for, before they decide",
+          (offers[-1]["rooms"][0] if offers else {}).get("tema"), "el expediente")
+    # ONE BUILDER, so the page cannot be shown one thing on load and
+    # another on a push. Compared rather than asserted field by field:
+    # the leg is that they are THE SAME, not that both look plausible.
+    check("and it is exactly what a reload would have been answered",
+          offers[-1]["rooms"] if offers else None,
+          (await _app.invitacion(Req(principal=OTHER,
+                                     email="lucia@ejemplo.es")))["rooms"])
+    check("the host's own stream is told nothing about it",
+          [k for k, _ in sent_to_host if k == "invitacion"], [])
+
+    # INVITING SOMEBODY MUST NOT BE A WAY TO FIND OUT WHO IS ONLINE. The
+    # answer the host gets is the same whether or not the person it was
+    # for turned out to be connected, so the two are compared directly.
+    _app.PEOPLE.pop(OTHER)
+    ROOM.revoke(HOST, "lucia@ejemplo.es")
+    ROOM.invite(HOST, "lucia@ejemplo.es")
+    ROOM.justify(HOST, "lucia@ejemplo.es", "conoce el expediente", "el expediente")
+    offline = await _app.enviar(host_req(payload={"email": "lucia@ejemplo.es"}))
+    check("a host learns nothing from whether the invited person is there",
+          offline, answer)
+
+    # AND IT LEAVES BY THE PATH IT ARRIVED. An offer still on screen
+    # after the host changed their mind is a button that 403s.
+    _app.PEOPLE[OTHER] = lucia
+    pushed.clear()
+    # THE QUERY STRING, which is where this route reads the address --
+    # `Req` keeps `email` for the header, so it is set here by hand.
+    drop = host_req()
+    drop.query_params["email"] = "lucia@ejemplo.es"
+    await _app.desinvitar(drop)
+    withdrawn = [d for k, d in pushed if k == "invitacion"]
+    check("withdrawing it takes the offer off their screen",
+          [d["rooms"] for d in withdrawn], [[]])
+
+    host.hub.publish = keep_host
+    _app.PEOPLE.pop(OTHER, None)
+
     # ----------------------------------- an address that is nobody's
     # MEASURED, 2026-10-12: a host invited `tester@darumalabs.ai` and
     # that account's address is `tester@example.invalid`. The addresses

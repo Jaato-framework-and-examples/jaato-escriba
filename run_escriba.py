@@ -49,7 +49,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from jaato_sdk.media_identity import ATTACHMENT_ID_KEY
 from jaato_sdk import AgentError, ClientType, EventType, IPCClient
@@ -124,13 +124,46 @@ SILENCE_S = 120.0
 VIEWER = "leaf"
 
 
+#: The daemon's own name for a session a declared ceiling ended.  It is
+#: `SessionTerminatedEvent.reason`, which the SDK records verbatim on
+#: `Session.terminus`, so this is a value to COMPARE and never a phrase to
+#: search for in a message.
+BUDGET_ENDED = "budget_exhausted"
+
+
 class SessionGone(RuntimeError):
-    """The scribe's session ended; there is nothing left to talk to."""
+    """The scribe's session ended; there is nothing left to talk to.
+
+    `reason` is the daemon's own account of the ending, taken from
+    `Session.terminus` -- `budget_exhausted`, `stopped`, `natural`,
+    `cascade_cancelled`, and whichever one is added next.  `details` is
+    what that terminal carried; for a ceiling, the exhausted dimension
+    and the usage that crossed it.
+
+    BOTH ARE `None` WHEN NOTHING TOLD US, and that is a third state
+    rather than a missing one: an RPC that died before the SDK could
+    settle the call writes no terminus, so "the daemon said why" and "we
+    never heard" are different facts and the caller may want to act
+    differently on them.
+    """
+
+    def __init__(self, message: str, reason: Optional[str] = None,
+                 details: Any = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.details = details
 
 
 #: Terminal markers in an AgentError that mean the session is gone rather
 #: than merely unhappy.  `NudgeExhausted` is deliberately NOT here: that
 #: turn did its work and the next one still runs.
+#:
+#: NOT A SECOND OPINION ABOUT AN ENDING THE DAEMON REPORTED.  `terminus`
+#: is consulted first and settles it whenever it exists; this covers the
+#: case where it does not -- a transport that died before the SDK could
+#: record anything, which is the 2026-09-09 hang this was written for.
+#: "the daemon told us how this ended" and "nothing told us anything" are
+#: different questions, and each is asked of the thing that can answer it.
 _GONE = ("runner RPC closed", "RunnerCallError", "session terminated",
          "SessionTerminated", "not found")
 
@@ -222,8 +255,16 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
         # session terminated, and the loop kept waiting for speech nobody
         # could answer.  Tell them, and let the caller wind down cleanly so
         # the consolidation still runs.
+        #
+        # ASKED OF `terminus` FIRST, which `_raise_if_needed` writes
+        # BEFORE it raises — so the daemon's account of the ending is
+        # already there whenever there is one, and reading the message
+        # instead would be inventing an answer next to a given one.
+        over = scribe.terminus
+        if over is not None and over.session_ended:
+            raise SessionGone(over.reason, reason=over.reason,
+                              details=over.details) from exc
         if _session_is_gone(exc):
-            (tui or _LINES).note(f"   ↳ the session ended: {str(exc)[:90]}")
             raise SessionGone(str(exc)) from exc
         (tui or _LINES).note(f"   ↳ (turn not closed: {str(exc)[:60]})")
         return
@@ -253,6 +294,22 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
             anotado=(payload or {}).get("anotado"))
         if getattr(mouth, "recordings", None):
             mouth.recordings.clear()
+    # AND THE SESSION MAY BE OVER, with this turn having gone perfectly.
+    # `complete` never raises for a terminal — settling is what it was
+    # asked to wait for — so a `budget_control` ceiling ends the session
+    # and hands back a normal-looking turn, which is why nothing here
+    # noticed one: jaato #1007, "the caller sees 'no payload', not
+    # 'budget exhausted'". `Session.terminus` is its only route to the
+    # reason and nothing in this repository read it.
+    #
+    # RAISED LAST, after the person has heard the reply and after the
+    # manifest row is written. The turn happened; it is the NEXT one that
+    # has nowhere to go, and losing this turn's record to say so would
+    # trade a fact for a warning.
+    over = scribe.terminus
+    if over is not None and over.session_ended:
+        raise SessionGone(over.reason, reason=over.reason,
+                          details=over.details)
 
 
 def _forget(ws: Path, assume_yes: bool) -> int:
@@ -565,9 +622,13 @@ async def main(ws: Path, assume_yes: bool = False,
                       await _turn(scribe, "", said, mouth, log=(tape.turn if tape is not None else None),
                                   tui=view if live else None)
                   view.note("· nobody on the other side")
-              except SessionGone:
-                  view.note("· the conversation cannot continue — consolidating "
-                            "what we have")
+              except SessionGone as over:
+                  view.note("· the session reached its budget ceiling"
+                            if over.reason == BUDGET_ENDED else
+                            f"· the session ended ({over.reason})"
+                            if over.reason else
+                            "· the conversation cannot continue")
+                  view.note("· consolidating what we have")
               except (KeyboardInterrupt, asyncio.CancelledError):
                   view.note("· goodbye")
 

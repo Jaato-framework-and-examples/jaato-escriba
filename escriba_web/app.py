@@ -139,6 +139,7 @@ async def person_of(request: Request) -> Person:
                         identity=identity, scribe=CONFIG.get("scribe"),
                         wiki=CONFIG.get("wiki"))
         PEOPLE[who] = person
+        person.seen_as(request.headers.get("x-forwarded-email"))
         # BEFORE the session is opened, so the first one already has a
         # token rather than reaching the wiki with none and learning it
         # on a 401.
@@ -151,6 +152,7 @@ async def person_of(request: Request) -> Person:
     # single request it handles once.  `credential` returns immediately
     # unless the value actually changed.
     await person.credential(request.headers.get("x-forwarded-access-token"))
+    person.seen_as(request.headers.get("x-forwarded-email"))
     return person
 
 
@@ -385,6 +387,27 @@ async def doc(request: Request, path: str) -> PlainTextResponse:
     return PlainTextResponse(target.read_text(encoding="utf-8"))
 
 
+@app.post("/sesion/nueva")
+async def nueva(request: Request) -> dict:
+    """Start another session, because the person asked for one.
+
+    THE ONE WAY BACK FROM A CEILING. A budget ending is deliberately not
+    repaired — see `Person._ended` — so this is what the alert offers
+    instead, and pressing it is a decision the manifest records.
+
+    NOT A GUEST ROUTE, and not reachable as one: a guest's page talks to
+    `/invitado/*`, and this resolves the CALLER's own person, so the
+    worst a guest could do by posting here is restart their own session.
+    The page does not offer it to them either — they see the host's
+    alerts through the host's hub, and a button there would be a button
+    about somebody else's ceiling.
+    """
+    person = await person_of(request)
+    if not await person.restart():
+        raise HTTPException(503, "a new session could not be opened")
+    return {"ok": True}
+
+
 @app.get("/days")
 async def days(request: Request):
     person = await person_of(request)
@@ -585,6 +608,11 @@ async def invitar(request: Request) -> dict:
     if going is not None:
         person.guest_gone(going.name or going.email, stage="guest-replaced")
     inv = ROOM.invite(person.principal, email)
+    # THE EARLIER ONE IS GONE, so an offer this person may already be
+    # looking at goes with it: `ROOM.invite` closed it, and the new one
+    # is not open yet. The same frame that delivers an offer withdraws
+    # one, because it carries the whole list rather than an event.
+    _offer(inv.email)
     person.drafting(inv.email)
     asyncio.create_task(person.ask_why(inv.email))
     return {"room": token(person.principal), "guests": _room_of(person)}
@@ -615,6 +643,10 @@ async def enviar(request: Request) -> dict:
         raise HTTPException(409, "no invitation to that address is waiting to "
                                  "be sent, or it has no justification yet")
     person.invited(inv.email)
+    # AND THE PERSON IT IS FOR, if they are already looking at a page.
+    # Without this the offer waits for their next load, which is how an
+    # invitation sent at 18:14 reached a page that had asked at 18:06.
+    _offer(inv.email)
     return {"room": token(person.principal), "guests": _room_of(person)}
 
 
@@ -632,7 +664,68 @@ async def desinvitar(request: Request) -> dict:
             else ROOM.cancel(person.principal))
     for inv in [i for i in gone if i is not None]:
         person.guest_gone(inv.name or inv.email, stage="guest-revoked")
+        # An invitation withdrawn before it was claimed leaves no stream
+        # to close, so this is the only thing that takes the offer off
+        # the invited person's screen. `Room._close` covers the other
+        # case, where somebody was already inside.
+        _offer(inv.email)
     return {"room": token(person.principal), "guests": _room_of(person)}
+
+
+def _offers(principal: str, email: str) -> list:
+    """Every room waiting for this person, as the page draws one.
+
+    ONE BUILDER, TWO CALLERS: `/invitacion` answers with it on load, and
+    `_offer` pushes it when something changes while the page is already
+    open. Two copies would drift, and the half that drifted would be the
+    one nobody notices -- the push, which nothing asks for.
+    """
+    return [{"room": token(i.host), "host": PEOPLE[i.host].who,
+             "since": i.since.isoformat(timespec="seconds"),
+             # WHY THEY ARE WANTED, BEFORE THEY DECIDE. The whole reason
+             # the host's escriba writes this: somebody asked to step
+             # into a conversation they cannot see should know what it is
+             # about and what is wanted of them while they still have the
+             # choice, not after they are in the room.
+             "motivo": i.motivo, "tema": i.tema}
+            for i in ROOM.waiting_for(email or "")
+            # An invitation whose host has no live session is not an
+            # invitation anywhere, and offering it would send the guest
+            # to a 409 they can do nothing about. One already claimed by
+            # somebody else is not theirs to see at all.
+            if i.host in PEOPLE and i.guest in (None, principal)]
+
+
+def _offer(email: str) -> None:
+    """Tell the invited person NOW, if their page is already open.
+
+    MEASURED, 2026-10-12: `/invitacion` is asked once, on load. A guest
+    whose page was already open when the host pressed send learned
+    nothing -- their page booted at 18:06 and the invitation went out at
+    18:14, so the one question that would have told them had been asked
+    and answered eight minutes earlier. They sat in their own escriba
+    while the host waited, which is the same silence twice over.
+
+    They already have a stream: whoever has their own session open is
+    subscribed to their OWN hub. So the offer goes down it, and this is
+    also what WITHDRAWS one -- the frame carries the whole list, so a
+    revoked invitation leaves by the same path it arrived, instead of an
+    offer that stays on screen and 403s when pressed.
+
+    IT TELLS THE HOST NOTHING. The caller's answer does not change by one
+    byte whether or not the invited person turned out to be connected:
+    inviting somebody must not become a way to find out who is online.
+
+    Somebody who is currently a guest in another room is subscribed to
+    THAT host's hub, not their own, so this cannot reach them -- and it
+    does not need to: they are already in a conversation.
+    """
+    folded = (email or "").strip().lower()
+    guest = next((p for p in PEOPLE.values() if p.email == folded), None)
+    if guest is None:
+        return
+    guest.hub.publish("invitacion",
+                      {"rooms": _offers(guest.principal, guest.email)})
 
 
 def _room_of(person: Person) -> list:
@@ -651,20 +744,7 @@ async def invitacion(request: Request):
     """
     principal = principal_of(request)                 # authenticated first
     email = request.headers.get("x-forwarded-email")
-    rooms = [{"room": token(i.host), "host": PEOPLE[i.host].who,
-              "since": i.since.isoformat(timespec="seconds"),
-              # WHY THEY ARE WANTED, BEFORE THEY DECIDE. The whole
-              # reason the host's escriba writes this: somebody asked to
-              # step into a conversation they cannot see should know what
-              # it is about and what is wanted of them while they still
-              # have the choice, not after they are in the room.
-              "motivo": i.motivo, "tema": i.tema}
-             for i in ROOM.waiting_for(email or "")
-             # An invitation whose host has no live session is not an
-             # invitation anywhere, and offering it would send the guest
-             # to a 409 they can do nothing about. One already claimed by
-             # somebody else is not theirs to see at all.
-             if i.host in PEOPLE and i.guest in (None, principal)]
+    rooms = _offers(principal, email or "")
     # THE ONE LINE THAT WOULD HAVE NAMED IT. On 2026-10-12 a guest was
     # offered nothing and nobody could say why without opening this
     # route by hand in a browser: the host saw an invitation standing

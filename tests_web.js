@@ -880,6 +880,47 @@ check("and nothing is offered to somebody invited nowhere",
       offer().hidden, true);
 T.S.guest = false;
 
+// AN INVITATION THAT ARRIVES WHILE THE PAGE IS ALREADY OPEN. `/invitacion`
+// is asked once, at boot, so a page that booted at 18:06 was never told
+// about an invitation sent at 18:14 and the invited person sat in their
+// own escriba while the host waited. The stream they already have is
+// what carries it now.
+T.onEvent("invitacion", { rooms: [{ room: "r9", host: "dani",
+                                    tema: "el expediente",
+                                    motivo: "conoce el expediente" }] });
+check("an invitation sent while the page was open is shown at once",
+      offer().hidden, false);
+check("with what they are wanted for, before they decide",
+      offer().textContent.includes("el expediente"), true);
+// AND IT LEAVES BY THE PATH IT ARRIVED: the frame carries the whole list,
+// so a withdrawal is the same frame with nothing in it. An offer left on
+// screen after the host changed their mind is a button that 403s.
+T.onEvent("invitacion", { rooms: [] });
+check("and a withdrawn one goes off the screen the same way",
+      offer().hidden, true);
+
+// THE WAY BACK FROM A CEILING. A budget ending is the one the server
+// deliberately does not repair, so the alert is the only place that
+// offers another session -- and without the offer the limit would be
+// enforced by making the escriba unusable rather than by asking.
+const slot = () => byId.get("alert-slot");
+const again = () => slot().walk().some((n) => n._text === ES["alert.budget.again"]);
+T.S.guest = false;
+T.onEvent("alert", { kind: "budget", at: "18:14" });
+check("a ceiling offers another session", again(), true);
+check("and says when it was reached",
+      slot().textContent.includes("18:14"), true);
+T.onEvent("alert", { kind: "session", detail: "stopped" });
+check("an ordinary ending offers nothing to press", again(), false);
+// NOT TO A GUEST: they are subscribed to the HOST's hub, so the host's
+// ceiling reaches their page too, and a button there would press against
+// their own session about somebody else's limit.
+T.S.guest = true;
+T.onEvent("alert", { kind: "budget", at: "18:14" });
+check("and a guest is not offered somebody else's ceiling", again(), false);
+T.S.guest = false;
+T.S.alert = null;
+
 // ------------------------------------------- where the answer came from
 // The escriba may not read a URL aloud — a dictated address helps nobody
 // who is listening — so this row is the ONLY way the person gets one.
