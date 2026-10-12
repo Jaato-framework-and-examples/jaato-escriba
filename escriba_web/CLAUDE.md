@@ -110,6 +110,20 @@ show, tell — in one call. They were two, and a test found that a caller
 could do one without the other and leave the manifest saying the opposite
 of the truth.
 
+## This is the channel, not an adjunct to one
+
+The people in a room hear each other **through this page** — the host's
+microphone is tapped twice, once for the model and once as raw PCM fanned
+out to whoever else is in the room. They are not expected to be on a
+call elsewhere at the same time, and nothing here should be designed as
+though they were.
+
+Written down because a control was once built on the opposite
+assumption: a mute for "the other person, who is already audible some
+other way". Nobody asked for it, nothing established it, and it was
+removed. A feature whose premise is not in the requirements is a feature
+to delete, not one to find a better argument for.
+
 ## The one thing that travels outward
 
 Everything else a guest receives is withheld by construction:
