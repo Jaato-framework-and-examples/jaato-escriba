@@ -114,6 +114,61 @@ check("a node from a listing is not an opened page",
                       {"total": 1}))),
       1)
 
+# --------------------------------------- a lookup the wiki refused
+# THE PRODUCTION FAILURE, session 20261012_220833.  An MCP tool reports
+# its own failure INSIDE the result, as `isError`, and the framework's
+# `success` does not read it (jaato#1654) -- so the call that found no
+# page arrives here looking exactly like the call that found one.  The
+# model reached this gate with an invented id, was refused, opened the
+# invented id because the refusal told it to, and was then let through.
+MISS = call("mcp__kbwiki__kb_get_node", {"id": "rip-host-record-contract"},
+            {"tool": "kb_get_node", "isError": True,
+             "content": ["no node 'rip-host-record-contract'"]})
+gone = errors({"fuentes": [{"nombre": "la página",
+                            "nodo": "rip-host-record-contract"}]}, MISS)
+check("a node whose lookup the wiki refused is not opened", len(gone), 1)
+check("and the refusal says the wiki denied it",
+      "no existe ninguna página" in gone[0], True)
+# THE RETRY INVITATION IS GONE.  "Open it and then cite it" is an
+# instruction a model can satisfy while still being wrong, and with the
+# flag above unread that is exactly what it did.
+check("the refusal no longer tells it to open the id",
+      "kb_get_node" in gone[0], False)
+
+check("an isError that arrived as a JSON string is still caught",
+      len(errors({"fuentes": [{"nombre": "p", "nodo": "rip-x"}]},
+                 call("mcp__kbwiki__kb_get_node", {"id": "rip-x"},
+                      json.dumps({"isError": True, "content": ["no node"]})))),
+      1)
+
+# ------------------------------------------------- a page the librarian cited
+# An id the librarian names in `[ref:<id>]` is an id that exists: it read
+# the page to answer.  Accepting those is what turns the failure above
+# from a dropped source into the right link, because the correct id was
+# in the turn all along -- cited twice, while the model wrote it stripped.
+SAID = call("mcp__kbwiki__ask_librarian", {"prompt": "¿y el contrato?"},
+            {"content": ["Según [ref:feat-rip-host-record-contract], el "
+                         "copybook se genera en el build padre."]})
+check("a node the librarian cited is accepted without opening it",
+      errors({"fuentes": [{"nombre": "el contrato",
+                           "nodo": "feat-rip-host-record-contract"}]}, SAID),
+      [])
+stripped = errors({"fuentes": [{"nombre": "el contrato",
+                                "nodo": "rip-host-record-contract"}]}, SAID)
+check("the same id with its prefix removed is refused", len(stripped), 1)
+check("and the refusal hands it the one that was cited",
+      "feat-rip-host-record-contract" in stripped[0], True)
+
+# CITATIONS COME FROM ANSWERS, NEVER FROM ARGUMENTS.  Reading them out of
+# `args` too -- as URLs deliberately are -- would let the model cite any
+# id it liked by writing it into its own prompt first.
+check("a ref the model wrote in its own prompt is not a citation",
+      len(errors({"fuentes": [{"nombre": "x", "nodo": "inventado"}]},
+                 call("mcp__kbwiki__ask_librarian",
+                      {"prompt": "háblame de [ref:inventado]"},
+                      {"content": ["No tengo nada sobre eso."]}))),
+      1)
+
 # -------------------------------------------------------------- the shape
 check("a source with neither url nor nodo is refused",
       len(errors({"fuentes": [{"nombre": "suelta"}]}, NODE)), 1)
