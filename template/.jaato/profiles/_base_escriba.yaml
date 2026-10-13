@@ -200,11 +200,22 @@ plugins:
   # NAMED AGAINST THE SERVER, not against a plausible list.  A tool
   # named here that the server does not serve is simply absent, with
   # nothing said anywhere -- which is how `request_upload` nearly
-  # shipped: it exists on another kbwiki and not on this one.  The
-  # authoritative list is that deployment's `mcp.yaml` `tools:`, which
-  # its startup line ("serving 27 tool(s)") agrees with, and
+  # shipped.  The authoritative list is that deployment's `mcp.yaml`
+  # `tools:`, which its startup line's count agrees with, and
   # `execute_command("mcp", ["list"])` reads it back from a live
   # session.  Check there before adding one.
+  #
+  # ABSENT FOR THE CALLER IS NOT ABSENT FROM THE SERVER, and this
+  # comment used to say otherwise -- that `request_upload` "exists on
+  # another kbwiki and not on this one".  There is no other one.
+  # MEASURED 2026-10-13: the deployed escriba is started with
+  # `--kbwiki-url https://kbwiki.darumalabs.ai/mcp`, which is also the
+  # host a Claude session on the same machine reaches; that server
+  # does not carry `request_upload` in its `tools:`; the escriba is
+  # never served it, and the other caller IS.  Why one caller gets a
+  # tool the configured list does not hold is NOT traced, so do not
+  # reason from it -- read it only as the reason to check from the
+  # session that will run the tool, rather than from any other.
   #
   # The names are the MCP plugin's, not kbwiki's: `_normalize_tool_name`
   # funnels every tool through `mcp__<server>__<tool>` (mcp/plugin.py:629)
