@@ -129,7 +129,7 @@ def main() -> int:
         print("  note  the browser legs were NOT run: playwright is not "
               "installed here (pip install playwright && playwright install "
               "chromium)")
-        print("browser OK (0 of 5 legs run)")
+        print("browser OK (0 of 7 legs run)")
         return 0
 
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Stub)
@@ -140,7 +140,7 @@ def main() -> int:
         if br is None:
             print(f"  note  the browser legs were NOT run: {why}")
             print("  note  name one with ESCRIBA_BROWSER=/usr/bin/google-chrome")
-            print("browser OK (0 of 5 legs run)")
+            print("browser OK (0 of 7 legs run)")
             return 0
         pg = br.new_context(permissions=["microphone"]).new_page()
         pg.goto(f"http://127.0.0.1:{PORT}/")
@@ -172,6 +172,56 @@ def main() -> int:
             check("the page reports no failure",
                   pg.evaluate("(document.querySelector('.upload .bad')||{})"
                               ".textContent || ''"), "")
+
+        # ------------------------------------ the page fills the window
+        # `.page` named three rows above FIVE children, so the row that
+        # stretches landed on `#guest-offer` instead of `main` -- and the
+        # banner was there to take it because an id rule's `display:flex`
+        # outranks the UA's `[hidden]`, leaving a hidden element laid out.
+        # An empty banner swallowed 630px; `main` sat in an implicit row
+        # the height of its own content.  Invisible until the transcript
+        # was short enough to leave slack, which is to say after a reset.
+        for shown in ([], ["guest-band"], ["guest-band", "guest-offer"]):
+            said = "+".join(shown) or "no banner"
+            dead = pg.evaluate(
+                """(ids) => {
+                  const kids = [...document.querySelector('.page').children];
+                  for (const el of kids)
+                    if (el.id === 'guest-band' || el.id === 'guest-offer') {
+                      el.hidden = !ids.includes(el.id);
+                      el.textContent = 'alguien mas esta aqui';
+                    }
+                  return kids.filter(el => el.hidden &&
+                           el.getBoundingClientRect().height > 0).map(el => el.id);
+                }""", shown)
+            check(f"nothing hidden takes space ({said})", dead, [])
+
+            # AND THE SLACK IS MAIN'S.  "Hidden takes no space" passes on a
+            # page where a SHOWN banner eats the free height instead, which
+            # is what the same misplaced row did with a guest in the room.
+            # So ask the only question that separates them: make the window
+            # taller and see who grew.
+            before = pg.evaluate(
+                "[...document.querySelector('.page').children]"
+                ".map(el => el.getBoundingClientRect().height)")
+            size = pg.viewport_size
+            pg.set_viewport_size({"width": size["width"],
+                                  "height": size["height"] + 200})
+            pg.wait_for_timeout(200)
+            after = pg.evaluate(
+                "[...document.querySelector('.page').children]"
+                ".map(el => el.getBoundingClientRect().height)")
+            pg.set_viewport_size(size)
+            pg.wait_for_timeout(200)
+            grew = [round(b - a) for a, b in zip(before, after)]
+            check(f"a taller window is main's, nobody else's ({said})",
+                  grew, [0, 0, 0, 0, 200])
+
+        pg.evaluate("""() => {
+          for (const id of ['guest-band', 'guest-offer'])
+            { const el = document.getElementById(id);
+              el.hidden = true; el.textContent = ''; }
+        }""")
 
         # ------------------------------------- the space bar reaches a button
         # A focused control is activated by the space bar; push-to-talk used

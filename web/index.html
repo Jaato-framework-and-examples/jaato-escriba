@@ -63,11 +63,14 @@
 :root[data-theme="light"]{color-scheme:light}
 
 *{box-sizing:border-box}
+/* hidden is the markup saying the element is not there. Said here so no
+   id rule can outrank it and leave an invisible element taking space. */
+[hidden]{display:none !important}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--font)}
 a{color:var(--accent)} a:hover{color:var(--accent-ink)}
 button{font-family:inherit}
 button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.page{height:100vh;display:grid;grid-template-rows:auto auto minmax(0,1fr)}
+.page{height:100vh;display:flex;flex-direction:column}
 
 /* ---------------------------------------------------------------- header */
 header{background:var(--panel);display:flex;flex-wrap:wrap;align-items:stretch;border-bottom:1px solid var(--line)}
@@ -113,7 +116,8 @@ header{background:var(--panel);display:flex;flex-wrap:wrap;align-items:stretch;b
 .alert button{background:var(--panel);border:1px solid var(--bad);color:var(--bad);padding:6px var(--space-3);
               border-radius:8px;font-weight:500;cursor:pointer}
 
-main{display:grid;grid-template-columns:clamp(120px,16vw,220px) minmax(0,1fr) clamp(240px,28vw,400px);min-height:0}
+main{display:grid;grid-template-columns:clamp(120px,16vw,220px) minmax(0,1fr) clamp(240px,28vw,400px);
+     flex:1 1 auto;min-height:0}
 
 /* ------------------------------------------------------------------ days */
 nav{border-right:1px solid var(--line);overflow:auto;display:flex;flex-direction:column}
