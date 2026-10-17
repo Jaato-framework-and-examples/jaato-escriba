@@ -1515,6 +1515,128 @@ class Person:
                     self._ended(over)
                     raise
 
+    def demo_opened(self, ident: str) -> None:
+        """Tell the escriba a demonstration has started recording.
+
+        A NOTICE AND NOT A TURN, which is `stage`'s rule rather than
+        `ask_why`'s, and for a reason particular to this: the person has
+        just left this page for the window they are demonstrating. A
+        turn here would be the escriba talking into the ear of somebody
+        who is no longer listening, over the top of the narration they
+        are recording. The notice rides whatever they say next.
+
+        WHY TELL IT AT ALL, then. Because the gap between starting and
+        finishing is minutes long, and during it the person may come
+        back and say something. An escriba that does not know a
+        recording is running would answer that as if nothing were
+        happening.
+        """
+        self._notices.append(self.say("agent.demo_started"))
+        self.board.note(self.say("note.demo_started"))
+
+    async def demo_closed(self, manifest: Dict[str, Any]) -> None:
+        """A demonstration is finished: commission the document, then say so.
+
+        A TURN, for `ask_why`'s reason and against `stage`'s. Staging a
+        document answers no question, because the person uploads it and
+        then says what they want done with it. Recording a demonstration
+        and stopping it IS the question — nobody records their screen for
+        minutes in order to leave it on disk — so the escriba's reply
+        belongs in the transcript beside it.
+
+        AND IT KEEPS THE PERSONA'S RULE INTACT. `escriba.md` says
+        documentation is commissioned "solo cuando lo pide", never
+        offered or launched on the escriba's own initiative. That rule
+        holds here because this is the asking, relayed: the prompt says
+        so in as many words, so the escriba is not deciding to document
+        anything, it is being told that the person did.
+
+        NOBODY AWAITS THIS. The route fires it and answers the page at
+        once; a turn can take the full `TURN_TIMEOUT`, and a person who
+        has just pressed stop should not watch a spinner for it.
+
+        TWO TURNS, AND THE SECOND ONE IS THE POINT OF THE SPLIT.
+        Commissioning happens in `escribano`, and `escriba.yaml` says of
+        that tier, in the text the model itself reads, "AQUI NO SE OYE":
+        `voz` is "el unico tier que el usuario oye". A single turn that
+        asked for both put the sentence in the wrong one.
+
+        MEASURED, 2026-10-17 (session 20261017_223809, a real 49-frame
+        demonstration). The turn entered `escribano` at 22:40:33.937,
+        spawned the documentalista at 22:40:36.942, and said "he
+        encargado al documentalista..." at 22:40:46 -- still there. The
+        return to `voz` came at 22:40:46.526, at turn end, AFTER the
+        words. The transcript row carried `audio: None, seconds: None`
+        and the page sat on "audio llegando..." forever, because a
+        spoken row with no attachment has no other state to be in.
+
+        Ordering it in the prompt would be prose about something that
+        has to be true every time. A turn of its own cannot drift: the
+        session's `initial` tier is `voz`, this prompt enters no other,
+        so the sentence is spoken where she can hear it by construction.
+
+        THE FIRST TURN'S FAILURE AND THE SECOND'S ARE DIFFERENT, and are
+        reported differently. Nothing commissioned means the document
+        will never exist and she has to ask for it herself. Commissioned
+        but unannounced means the document IS being written and the
+        escriba merely failed to say so -- `note.turn_timeout` for that,
+        the same line every other unanswered turn uses.
+        """
+        self.board.note(self.say("note.demo_saved", frames=manifest["frames"]))
+        if self._scribe is None:
+            # NOT SILENT: the demonstration is on disk and nothing is
+            # going to write it up, and the one place the person is
+            # looking is the transcript.
+            self.board.note(self.say("note.demo_unwritten"))
+            return
+        # NAMED, NOT DESCRIBED. The documentalista's `file_edit` is
+        # subset to `[writeNewFile, updateFile, readFile]`, so it cannot
+        # list a directory: a prompt that points at the folder sends it
+        # to read the folder. MEASURED on the same session: 98 readFile
+        # calls, every one answering `Not a file: demo/<id>/`, until the
+        # `tool_calls: 100` ceiling aborted it with no document written.
+        # `frames.jsonl` is the index this module already writes, and it
+        # is a file, so the one tool it has is enough.
+        narration = (
+            self.say("agent.demo_narration", root=manifest["root"],
+                     audio=manifest["audio"])
+            if manifest["audio"] else self.say("agent.demo_no_narration"))
+        async with self._turn_lock:
+            with self._holding(""):
+                lines = self._notices
+                self._notices = []
+                try:
+                    await asyncio.wait_for(
+                        _turn(self._scribe,
+                              "\n".join(lines + [
+                                  self.say("agent.demo_done",
+                                           frames=manifest["frames"],
+                                           root=manifest["root"],
+                                           narration=narration)]),
+                              None, self._relay(),
+                              log=self.archive.turn, tui=self.board),
+                        timeout=TURN_TIMEOUT)
+                except asyncio.TimeoutError:
+                    # The demonstration is stored either way; what is
+                    # lost is the commission, and the person has to be
+                    # able to ask for it themselves.
+                    self.board.note(self.say("note.demo_unwritten"))
+                    return
+                except SessionGone as over:
+                    self._ended(over)
+                    return
+                try:
+                    await asyncio.wait_for(
+                        _turn(self._scribe, self.say("agent.demo_said"),
+                              None, self._relay(),
+                              log=self.archive.turn, tui=self.board),
+                        timeout=TURN_TIMEOUT)
+                except asyncio.TimeoutError:
+                    self.board.note(self.say("note.turn_timeout",
+                                             secs=int(TURN_TIMEOUT)))
+                except SessionGone as over:
+                    self._ended(over)
+
     async def stage(self, filename: str, data: bytes,
                     by: str = "") -> Dict[str, Any]:
         """Put a document the person uploaded in front of the escriba.

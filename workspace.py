@@ -48,7 +48,7 @@ DEFAULT_ROOT = Path("/home/escriba/workspaces")
 RUNTIME = (
     ".jaato/sessions", ".jaato/logs", ".jaato/.cache", ".jaato/memory",
     ".jaato/references", ".jaato/forgotten", ".jaato/.artifact_tracker.json",
-    ".home", ".tmp", ".git", "docs", "audio", "staged",
+    ".home", ".tmp", ".git", "docs", "audio", "staged", "demo",
 )
 
 #: Everything a workspace needs before a session can open in it.

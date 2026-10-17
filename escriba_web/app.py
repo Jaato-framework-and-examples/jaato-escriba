@@ -31,13 +31,14 @@ from typing import Dict, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile    # noqa: E402
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile  # noqa: E402
 from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse  # noqa: E402
 
 import i18n                                                      # noqa: E402
 import archive as _archive                                         # noqa: E402
 import housekeeping as _housekeeping                               # noqa: E402
 import transcribe as _transcribe                                   # noqa: E402
+import demo as _demo                                              # noqa: E402
 import staging as _staging                                        # noqa: E402
 import workspace as _workspace                                     # noqa: E402
 
@@ -348,6 +349,90 @@ async def stage(request: Request, document: UploadFile):
         return await person.stage(document.filename or "", blob)
     except _staging.TooLarge as exc:
         raise HTTPException(413, f"{exc}") from exc
+
+
+@app.post("/demo/abrir")
+async def demo_open(request: Request) -> dict:
+    """Start recording a demonstration, and answer with its id.
+
+    REFUSED WHILE THE SERVER IS CLOSING, where a frame is not.  The rule
+    `/talk` states for a turn applies with the sides swapped: what is
+    already recording has minutes of somebody's screen behind it and is
+    let finish, and what must not happen is something NEW beginning
+    seconds before the process goes away.
+    """
+    if CLOSING.is_set():
+        raise HTTPException(503, "el escriba se está reiniciando; "
+                                 "inténtalo de nuevo en un momento")
+    person = await person_of(request)
+    try:
+        ident = _demo.open_demo(person.ws)
+        person.demo_opened(ident)
+        return {"id": ident}
+    except _demo.AlreadyOpen as exc:
+        # 409 AND NOT 400: nothing was malformed. Somebody is already
+        # recording, which is a state the page can show rather than an
+        # error it has to explain.
+        raise HTTPException(409, f"{exc}") from exc
+
+
+@app.post("/demo/{ident}/fotograma")
+async def demo_frame(request: Request, ident: str, frame: UploadFile,
+                     at_ms: int = Form(0)) -> dict:
+    """One frame of a demonstration in progress.
+
+    NO FILENAME IS READ from the upload.  `/stage` has to guard the name
+    the browser chose because it becomes a path; frames arrive in order
+    and `demo` numbers them, so there is nothing here to guard.
+
+    THE REFUSAL FOR A FRAME THE MODEL WOULD NOT TAKE IS 422, carrying
+    jaato's own words.  It is the one failure the page can act on while
+    the demo is still running -- a page scaling to the wrong size learns
+    it on frame one instead of at document time, when the demo is over.
+    """
+    person = await person_of(request)
+    try:
+        return _demo.frame(person.ws, ident, await frame.read(), at_ms)
+    except _demo.NotAFrame as exc:
+        raise HTTPException(422, f"{exc}") from exc
+    except _demo.TooLarge as exc:
+        raise HTTPException(413, f"{exc}") from exc
+    except _demo.NoSuchDemo as exc:
+        raise HTTPException(404, "no hay ninguna demostración abierta con ese id") from exc
+
+
+@app.post("/demo/{ident}/cerrar")
+async def demo_close(request: Request, ident: str,
+                     audio: UploadFile | None = None,
+                     suffix: str = Form("webm")) -> dict:
+    """Stop recording: store the narration and seal the manifest.
+
+    The narration is OPTIONAL. A demo whose microphone was refused is
+    still a sequence of screens somebody can be asked about, and losing
+    the frames because the audio never arrived would be the expensive
+    way to report a missing permission.
+    """
+    person = await person_of(request)
+    try:
+        manifest = _demo.close_demo(person.ws, ident,
+                                    await audio.read() if audio else b"", suffix)
+    except _demo.TooLarge as exc:
+        raise HTTPException(413, f"{exc}") from exc
+    except _demo.NoSuchDemo as exc:
+        raise HTTPException(404, "no hay ninguna demostración abierta con ese id") from exc
+    # FIRED, NOT AWAITED, as `/invitar` fires `ask_why`: commissioning the
+    # document is a whole turn, and the page is holding a button down
+    # waiting for this answer. What the browser needs back is that the
+    # demonstration was stored.
+    asyncio.create_task(person.demo_closed(manifest))
+    return manifest
+
+
+# NO GUEST ROUTE, deliberately. A demonstration is the host's own
+# screen, captured on the host's own machine; nothing in the feature
+# needs a second browser, and `escriba_web/CLAUDE.md`'s rule is that a
+# guest receives what is BUILT for them rather than what is left
+# unguarded.
 
 
 def _recording(person: Person, att_id: str) -> FileResponse:

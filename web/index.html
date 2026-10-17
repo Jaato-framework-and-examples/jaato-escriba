@@ -206,6 +206,20 @@ nav .note code{font-family:var(--mono)}
 .ptt .t{display:flex;flex-direction:column;gap:2px;min-width:0}
 .ptt .title{font-weight:600;font-size:clamp(18px,2.2vw,30px);letter-spacing:-.01em;line-height:1.1}
 .ptt .sub{font-size:14px;opacity:.9}
+.tray-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--space-3);align-items:stretch}
+/* THE MICROPHONE'S OWN LANGUAGE -- same radius, same filled shape -- in
+   the `wait` colour and at about a third of the width. It is the second
+   thing this tray does, and it should read as second without reading as
+   an afterthought. */
+.demo{padding:var(--space-4) var(--space-5);border:1px solid var(--wait);border-radius:12px;
+      background:var(--wait);color:var(--on-strong);cursor:pointer;font-weight:600;
+      font-size:clamp(13px,1.1vw,16px);line-height:1.15;text-align:center;
+      width:clamp(130px,22vw,230px);user-select:none}
+.demo[disabled]{opacity:.55;cursor:default}
+/* Recording: inverted, so the tray says which of the two is live. */
+.demo.on{background:var(--panel);color:var(--wait)}
+.demo-note{margin-top:6px;font-size:13px;color:var(--muted);text-align:center}
+.demo-note.bad{color:var(--bad)}
 .ptt .time{font-weight:600;font-size:clamp(24px,3vw,40px);font-variant-numeric:tabular-nums}
 .ptt.rec{background:var(--bad);border-color:var(--bad);color:var(--on-strong)}
 .ptt.idle-speaking{background:var(--panel);border-color:var(--line-strong);color:var(--ink)}
@@ -378,6 +392,7 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
       <div class="scroll" id="scroll"></div>
       <button class="jump" id="jump" hidden></button>
       <div class="tray">
+        <div class="tray-row">
         <button class="ptt" id="ptt" aria-pressed="false">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="square" aria-hidden="true">
@@ -388,6 +403,9 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
             <span class="sub" id="ptt-sub"></span></span>
           <span class="time" id="ptt-time"></span>
         </button>
+        <button class="demo" id="demo-btn"></button>
+        </div>
+        <div class="demo-note" id="demo-note"></div>
       </div>
     </section>
 
@@ -441,6 +459,11 @@ const S = {
   //: rather than in the DOM because the panel is rebuilt wholesale every
   //: two seconds and a message written into it would vanish mid-read.
   staging: { busy: false, msg: "" },
+  // A DEMONSTRATION IN PROGRESS. `id` is the server's, and it is the
+  // only thing that says one is running: the page cannot be the record
+  // of that, because the share can be stopped from the browser's own
+  // bar with this script never asked.
+  demo: { id: null, frames: 0, busy: false, msg: "", bad: false },
   //: The upload ceiling, in MB, as the server declares it. Unknown until
   //: the first snapshot: a number typed here would be a second copy of
   //: `staging.MAX_BYTES`, free to drift from the one that does the
@@ -1315,6 +1338,7 @@ function uploader() {
   b.onclick = () => input.click();
   box.append(input, b, el("div", "note", tx("stage.hint")));
   if (S.staging.msg) box.append(el("div", "bad", S.staging.msg));
+
   return box;
 }
 
@@ -1349,6 +1373,224 @@ async function stageDocument(file) {
   } finally {
     S.staging.busy = false;
     renderPanel();
+  }
+}
+
+// ------------------------------------------------------------ demos
+//
+// A DEMONSTRATION: the person's screen and their voice, recorded while
+// they show how something is done, for the escriba to write up as a
+// procedure.
+//
+// WHY IT IS A MODE AND NOT A PRESS.  Push-to-talk is `pointerdown` on
+// the button and Space on `window`, and BOTH need this page to have
+// focus.  While somebody is operating the application they are
+// demonstrating, this page has none — so there is no press to bracket an
+// utterance with, and the capture has to run unattended between one
+// start and one stop.  What does NOT need focus is the capture itself:
+// `getDisplayMedia` and `getUserMedia` keep delivering to a page nobody
+// is looking at.
+//
+// ONE CADENCE, FIXED, AND IT IS THE THING BEING MEASURED.  Sampling on
+// change would need a threshold nobody has calibrated, and filtering
+// here would destroy the only evidence of how many frames a real
+// demonstration produces — which is what decides whether the frames are
+// triaged by a model, by a diff, or not at all.
+const FRAME_MS = 2000;
+
+// WHAT THE MODEL WILL ACCEPT, and the reason the page resizes at all.
+// `decide` refuses an image outside these bounds and never resizes one
+// itself, so a frame has to arrive already inside them. The server
+// checks the same numbers from the SDK; these are here so a frame is not
+// uploaded only to be refused.
+const FRAME_MAX_SIDE = 1568;
+const FRAME_MIN_SIDE = 280;
+
+// RE-ENTRANCY HAS ITS OWN FLAG, and `S.demo.busy` stays what it looks
+// like: whether the button is disabled. They were one, and the share
+// being stopped from the browser's bar DURING the start -- the window
+// where `busy` is still true -- made `stopDemo` return without closing
+// anything, leaving the demo open on the server and every later start
+// refused with a 409 the person has no way to clear.
+let demoClosing = false;
+let demoShare = null;        // the display stream
+let demoRec = null;          // MediaRecorder over the microphone
+let demoChunks = [];
+let demoTimer = null;
+let demoVideo = null;
+let demoStartedAt = 0;
+
+// The longest edge down to `FRAME_MAX_SIDE`, and nothing enlarged.
+//
+// RETURNS NULL RATHER THAN A BEST EFFORT when the shape cannot satisfy
+// both bounds — an edge under 280 px after scaling, which takes a screen
+// past 5.6:1. Cropping to fit would invent a framing nobody chose, and
+// sending it unscaled would be refused at the door; so the demo says it
+// cannot capture this screen instead of quietly capturing it wrong.
+function frameSize(w, h) {
+  if (!w || !h) return null;
+  const scale = Math.min(1, FRAME_MAX_SIDE / Math.max(w, h));
+  const out = { w: Math.round(w * scale), h: Math.round(h * scale) };
+  if (Math.min(out.w, out.h) < FRAME_MIN_SIDE) return null;
+  return out;
+}
+
+// WHAT THE BUTTON SAYS, from `S.demo` alone. A sibling of `pttFace`
+// rather than part of `renderPanel`: it lives in the tray now, which
+// nothing else redraws.
+function demoFace() {
+  const b = $("demo-btn");
+  const note = $("demo-note");
+  if (!b || !note) return;
+  const on = !!S.demo.id;
+  b.textContent = on ? tx("demo.recording", { n: S.demo.frames }) : tx("demo.start");
+  b.className = on ? "demo on" : "demo";
+  b.disabled = S.demo.busy;
+  note.textContent = S.demo.msg || tx(on ? "demo.stop" : "demo.hint");
+  note.className = S.demo.msg && S.demo.bad ? "demo-note bad" : "demo-note";
+}
+
+async function demoFrame() {
+  if (!S.demo.id || !demoVideo) return;
+  const size = frameSize(demoVideo.videoWidth, demoVideo.videoHeight);
+  // CLOSED, not abandoned: what was captured is worth keeping and a
+  // demo left open blocks the next one. Only the message is the fault's.
+  if (!size) { await stopDemo(tx("demo.shape")); return; }
+  const canvas = document.createElement("canvas");
+  canvas.width = size.w; canvas.height = size.h;
+  canvas.getContext("2d").drawImage(demoVideo, 0, 0, size.w, size.h);
+  const blob = await new Promise((r) => canvas.toBlob(r, "image/png"));
+  if (!blob) return;
+  const body = new FormData();
+  body.append("frame", blob, "frame.png");
+  body.append("at_ms", String(Math.round(performance.now() - demoStartedAt)));
+  let res;
+  try {
+    res = await fetch(api("/demo/" + S.demo.id + "/fotograma"),
+                      { method: "POST", body });
+  } catch (e) {
+    return;        // one dropped frame is one frame; the demo goes on
+  }
+  if (res.status === 413) {
+    // FULL IS NOT BROKEN. What was captured is kept, and the demo closes
+    // the ordinary way so the manifest is written.
+    await stopDemo(tx("demo.full"));
+  } else if (res.status === 422) {
+    // THE PAGE SCALED WRONG, and it will scale the next one wrong too —
+    // every later frame is refused and the demonstration ends up with no
+    // screens at all. Stopping loudly beats recording nothing quietly.
+    await stopDemo(tx("demo.failed"));
+  } else if (res.ok) {
+    S.demo.frames += 1;
+    demoFace();
+  }
+}
+
+async function startDemo() {
+  if (S.demo.id || S.demo.busy) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    S.demo.msg = tx("demo.unsupported"); S.demo.bad = true; demoFace(); return;
+  }
+  S.demo.busy = true; S.demo.msg = ""; S.demo.bad = false; demoFace();
+  try {
+    if (MOCK) { S.demo.id = "mock"; S.demo.frames = 0; return; }
+    // THE PICKER FIRST, before the server is told anything. It is the
+    // one step the person can refuse, and a demo opened before they
+    // cancel is an empty directory nothing will ever close.
+    //
+    // `cursor: "always"` composites the pointer into the pixels. It is
+    // the only way the pointer is observable at all — a page is never
+    // told where the mouse is outside it — and it is what lets a model
+    // be asked where the person was pointing.
+    demoShare = await navigator.mediaDevices.getDisplayMedia(
+      { video: { cursor: "always" } });
+    const mine = await mic();
+    const res = await fetch(api("/demo/abrir"), { method: "POST" });
+    if (!res.ok) throw new Error(res.status);
+    S.demo.id = (await res.json()).id;
+    S.demo.frames = 0;
+
+    demoVideo = document.createElement("video");
+    demoVideo.muted = true;
+    demoVideo.srcObject = demoShare;
+    await demoVideo.play();
+
+    demoChunks = [];
+    demoRec = new MediaRecorder(mine);
+    demoRec.ondataavailable = (ev) => { if (ev.data && ev.data.size) demoChunks.push(ev.data); };
+    demoRec.start();
+
+    // STOPPED FROM THE BROWSER'S OWN BAR is the ordinary way a person
+    // ends a share, and this script is not asked first. Closing on it
+    // is what keeps the manifest written rather than leaving a demo
+    // open forever.
+    for (const t of demoShare.getVideoTracks()) t.onended = () => { stopDemo(""); };
+
+    demoStartedAt = performance.now();
+    demoTimer = setInterval(demoFrame, FRAME_MS);
+    demoFrame();                 // one at the start, before anything moves
+  } catch (err) {
+    const denied = err && err.name === "NotAllowedError";
+    // OPENED ON THE SERVER AND THEN FAILED HERE is the one branch that
+    // must talk to the server on its way out: a demo nothing closes
+    // stays open, and the next start is refused with a 409 for as long
+    // as the workspace lives. Tearing down locally is not enough.
+    if (S.demo.id) {
+      S.demo.busy = false;
+      await stopDemo(denied ? tx("demo.denied") : tx("demo.failed"));
+      return;
+    }
+    S.demo.msg = denied ? tx("demo.denied") : tx("demo.failed");
+    S.demo.bad = true;
+    await teardownDemo();
+  } finally {
+    S.demo.busy = false;
+    demoFace();
+  }
+}
+
+// Everything local, released, with nothing said to the server: used when
+// the demo never opened, and by both endings below.
+async function teardownDemo() {
+  clearInterval(demoTimer); demoTimer = null;
+  if (demoRec && demoRec.state !== "inactive") { try { demoRec.stop(); } catch (e) {} }
+  if (demoShare) { for (const t of demoShare.getTracks()) t.stop(); }
+  demoShare = null; demoVideo = null;
+}
+
+// The ordinary ending: the narration is posted and the manifest sealed.
+async function stopDemo(msg) {
+  const id = S.demo.id;
+  if (!id || demoClosing) return;
+  demoClosing = true;
+  S.demo.busy = true; demoFace();
+  clearInterval(demoTimer); demoTimer = null;
+  const audio = await new Promise((done) => {
+    if (!demoRec || demoRec.state === "inactive") return done(null);
+    demoRec.onstop = () => done(new Blob(demoChunks, { type: demoRec.mimeType || "audio/webm" }));
+    try { demoRec.stop(); } catch (e) { done(null); }
+  });
+  try {
+    if (!MOCK) {
+      const body = new FormData();
+      // A DEMO WITH NO NARRATION IS STILL A DEMO, so an absent blob is
+      // sent as an absent part rather than as an empty one: the route
+      // declares it optional and an empty file is not the same thing.
+      if (audio && audio.size) body.append("audio", audio, "narration.webm");
+      body.append("suffix", "webm");
+      const res = await fetch(api("/demo/" + id + "/cerrar"), { method: "POST", body });
+      if (!res.ok) throw new Error(res.status);
+    }
+    S.demo.msg = msg || tx("demo.saved", { n: S.demo.frames });
+    S.demo.bad = false;
+  } catch (e) {
+    S.demo.msg = tx("demo.failed"); S.demo.bad = true;
+  } finally {
+    await teardownDemo();
+    S.demo.id = null;
+    S.demo.busy = false;
+    demoClosing = false;
+    demoFace();
   }
 }
 
@@ -2242,6 +2484,12 @@ function tapStop() {
 
 async function startRec() {
   if (S.recording || S.micReason) return;
+  // NOT WHILE A DEMONSTRATION IS RECORDING. The microphone is already
+  // being captured for the whole demo, and a turn taken mid-demo would
+  // put the escriba's voice into the narration it is about to document.
+  // This is the mode's own premise: a demonstration is shown first and
+  // discussed afterwards.
+  if (S.demo.id) return;
   if (!player.paused) player.pause();         // talking over the reply stops it
   hush();   // and so does talking over one that is still arriving
   if (MOCK) { S.recording = true; S.rec = 0; tick(); return; }
@@ -2706,10 +2954,11 @@ function mockTurn(seconds) {
 function renderAll() {
   applyTheme();                 // its label is a string like any other
   renderLangs(); renderPills(); renderCounts(); renderTabs(); renderPanel();
-  renderDays(); renderTranscript(); renderEngines(); pttFace();
+  renderDays(); renderTranscript(); renderEngines(); pttFace(); demoFace();
   renderGuest(); renderScratch();
   // The static markup carries no Spanish any more, so the parts of the
   // chrome that are not redrawn by a renderer are set here.
+  $("demo-btn").onclick = () => (S.demo.id ? stopDemo("") : startDemo());
   $("guest-btn").onclick = () => { S.inviting = !S.inviting; renderGuest(); };
   $("audit-btn").title = tx("header.ids.title");
   $("audit-btn").textContent = tx("header.ids");

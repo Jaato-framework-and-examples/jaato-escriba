@@ -23,6 +23,7 @@ Spanish; the code around it is English, like the rest of the repo.
 """
 from __future__ import annotations
 
+import pathlib
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -51,6 +52,49 @@ def _age(iso: str | None) -> tuple[float, str]:
     return (days, f"hace {int(days / 30)} meses")
 
 
+#: What the person can SHOW, as opposed to tell.
+#:
+#: HERE AND NOT IN THE PERSONA, because it is a count and the persona
+#: cannot hold one.  The scribe has to be able to say "¿me lo enseñas?"
+#: instead of "cuéntamelo", and it cannot offer a capability it was
+#: never told exists -- measured 2026-10-17, when a person said they
+#: wanted to show an application and the scribe answered by asking which
+#: aspect they would like to DESCRIBE first.
+def _demos(context) -> str:
+    """How many demonstrations are recorded, and that there can be more."""
+    offer = ("La persona puede ENSEÑARTE algo en vez de contártelo: hay un "
+             "botón para grabar una demostración —su pantalla y lo que vaya "
+             "explicando mientras maneja la aplicación—, y cuando la termina "
+             "se documenta sola. Si lo que quiere es mostrarte cómo se hace "
+             "algo, ofrécelo: «si quieres, grábamelo y lo documento».")
+    root = getattr(context, "workspace_path", None)
+    if not root:
+        return offer
+    folder = pathlib.Path(root) / "demo"
+    if not folder.is_dir():
+        return offer
+    # A demonstration is finished when its manifest exists; one still
+    # recording is not something to count or to offer to document.
+    done = [d for d in folder.iterdir() if (d / "demo.json").is_file()]
+    if not done:
+        return offer
+    # NAMED, NOT COUNTED.  The scribe cannot list a directory and nor can
+    # the documentalista, so "they are in demo/" is not an address either
+    # of them can act on: a demonstration it cannot name is one it cannot
+    # be asked to document.  The newest few, because this text is read on
+    # every waking and a person with fifty recordings should not pay for
+    # the other forty-five.
+    names = sorted(d.name for d in done)
+    shown = names[-5:]
+    more = ("" if len(names) == len(shown)
+            else f" (y {len(names) - len(shown)} más, antiguas)")
+    return (f"{offer}\n\nYa te ha grabado {len(done)} demostración(es). "
+            f"Las últimas: {', '.join('demo/' + n for n in shown)}{more}. "
+            "El índice de capturas de cada una es «<carpeta>/frames.jsonl»; "
+            "ESE es el camino que le pasas al `documentalista`, porque no "
+            "tiene con qué listar una carpeta.")
+
+
 def render(context, args) -> str:
     plugin = context.registry.get_plugin("memory")
     if plugin is None:
@@ -67,13 +111,16 @@ def render(context, args) -> str:
                 if getattr(m, "maturity", "") == "validated"]
 
     if not memories:
+        # THE CAPABILITY SURVIVES THE EMPTY CASE. Knowing nothing about
+        # the person is exactly when being shown something is worth
+        # most, and this branch returns before everything below it.
         return ("NADA. No sabes absolutamente nada de esta persona: es la "
                 "primera vez que despiertas, o aún no se ha validado nada de "
                 "lo que anotaste.\n\n"
                 "No tienes NINGÚN tema que OFRECER — cualquiera que se te "
                 "ocurra ahora te lo estarías inventando. Pero puedes "
                 "aprender lo que sea: saluda, di que empezáis de cero, y "
-                "pregunta por dónde quiere empezar.")
+                "pregunta por dónde quiere empezar.\n\n" + _demos(context))
 
     by_topic: dict[str, list] = defaultdict(list)
     for m in memories:
@@ -136,4 +183,5 @@ def render(context, args) -> str:
         lines += ["", "Lo más flojo, por si quieres tirar de ahí:", ""]
         detail(lines, thin)
 
+    lines += ["", _demos(context)]
     return "\n".join(lines)
