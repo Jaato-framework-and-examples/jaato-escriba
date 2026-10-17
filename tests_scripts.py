@@ -376,5 +376,105 @@ else:
     for rel in sorted(named):
         check(f"{rel} is committed", f"template/.jaato/{rel}" in files, True)
 
+# ------------------------------------------------ capturas_reales
+#
+# THE DOCUMENT THAT PROMPTED IT, reproduced: eight captures described in
+# confident prose, none of them ever opened, every `decide` call carrying
+# `images=0`.  `docs_are_real` passed it -- the files existed, the links
+# resolved, the citations were real.  Everything was real except what it
+# said.
+import shutil                                            # noqa: E402
+import tempfile                                          # noqa: E402
+
+CAP = HERE / "template/.jaato/scripts/processors/capturas_reales.py"
+_spec = importlib.util.spec_from_file_location("capturas_reales", CAP)
+capturas = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(capturas)
+
+
+class Space:
+    """A workspace with a tool ledger, which `capturas_reales` needs both of."""
+
+    def __init__(self, ws, *calls):
+        self.workspace_path = str(ws)
+        self.tool_calls = list(calls)
+
+
+def _demo_space():
+    ws = Path(tempfile.mkdtemp(prefix="escriba-caps-"))
+    frames = ws / "demo" / "20261017_231345_581922"
+    frames.mkdir(parents=True)
+    for n in range(1, 4):
+        (frames / f"{n:04d}.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    page = ws / "docs" / "demo" / "index.md"
+    page.parent.mkdir(parents=True)
+    return ws, page, frames
+
+
+def caps(payload, ws, *calls):
+    return capturas.validate(payload, Space(ws, *calls))["errors"]
+
+
+_ws, _page, _frames = _demo_space()
+try:
+    REL = "../../demo/20261017_231345_581922"
+    _page.write_text(
+        f"# Demo\n\n![Captura 1]({REL}/0001.png)\n\nSe observa la "
+        f"interfaz inicial.\n\n![Captura 2]({REL}/0002.png)\n")
+    paid = {"ficheros": ["docs/demo/index.md"], "raiz": "docs/demo/index.md"}
+
+    check("nothing claimed, nothing to check", caps({}, _ws), [])
+
+    # THE MEASURED FAILURE: decide was called, and answered, with no
+    # images -- the frames were named in the state and never sent.
+    blind = call("decide", {"model": "vista", "state": "{{image:F0001}}",
+                            "images": []},
+                 {"answers": [{"id": "F0001", "level": 7}]})
+    got = caps(paid, _ws, blind)
+    check("a capture only NAMED to decide is not a capture it saw",
+          len(got), 1)
+    check("and the refusal names the ones it has not seen",
+          "0001.png" in got[0] and "0002.png" in got[0], True)
+    check("and says what sending it actually means",
+          "`images`" in got[0], True)
+
+    # The same call with the frames actually attached IS a look.
+    seeing = call("decide", {"model": "vista", "state": "{{image:F0001}}",
+                             "images": [
+                                 {"name": "F0001",
+                                  "path": "demo/20261017_231345_581922/0001.png"},
+                                 {"name": "F0002",
+                                  "path": "demo/20261017_231345_581922/0002.png"}]},
+                  {"answers": []})
+    check("a capture sent inside `images` is one it saw",
+          caps(paid, _ws, seeing), [])
+
+    # So is one it opened itself.
+    opened = [call("readFile",
+                   {"path": f"demo/20261017_231345_581922/{n:04d}.png"},
+                   {"content": "..."}) for n in (1, 2)]
+    check("a capture opened with readFile is one it saw",
+          caps(paid, _ws, *opened), [])
+
+    # A call that FAILED is not a look, however it is reported.
+    check("a readFile that failed is not a look",
+          len(caps(paid, _ws, call("readFile", {"path": f"{REL}/0001.png"},
+                                   {"error": "nope"}, success=False))), 1)
+    check("nor is one the tool flagged isError",
+          len(caps(paid, _ws, call("decide", {"images": [
+              {"name": "F", "path": "demo/20261017_231345_581922/0001.png"}]},
+              {"isError": True}))), 1)
+
+    # Links that are not captures are none of this gate's business.
+    _page.write_text("# Demo\n\n[otra página](otra.md)\n![logo](logo.png)\n")
+    check("a link that is not a capture is ignored", caps(paid, _ws), [])
+
+    # A file it never wrote is `docs_are_real`'s refusal, not this one's:
+    # the same mistake reported twice in different words reads as two.
+    check("a missing document is left to the gate that owns it",
+          caps({"ficheros": ["docs/demo/falta.md"]}, _ws), [])
+finally:
+    shutil.rmtree(_ws)
+
 print("scripts OK" if not fail else f"{fail} failure(s)")
 sys.exit(1 if fail else 0)

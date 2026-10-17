@@ -69,6 +69,14 @@ completion_processors:
     # held up over a convenience.
     on_exhausted: allow
 
+# The decision model that looks at a demonstration's frames, bound by
+# NAME: the persona says `vista` and never the model, so this can move
+# without touching a word of prose. It is outside the tier ladder and
+# cannot be a tier -- it answers typed questions and cannot chat.
+decision_models:
+  vista:
+    model: typesafe/jev-1.14
+
 plugins:
   # Only TWO tools, and eagerly.
   #
@@ -102,6 +110,22 @@ plugins:
   # going.  Not `close_subagent` or `cancel_subagent`: it finishes on its
   # own, and a voice model with a cancel button is a way to lose work.
   - "subagent(mode:preload, tools:[spawn_subagent, list_active_subagents])"
+  # To CHOOSE the frames of a demonstration before handing it over.
+  #
+  # Here and not on the documentalista, which had it first. Measured
+  # 2026-10-17: given the index, the scores and an explicit instruction
+  # that reading the chosen frames was not optional, the documentalista
+  # scored them and then wrote without opening one -- twice, once
+  # inventing what the screens showed and once, with that blocked, saying
+  # nothing about them at all. Selecting and writing are two jobs, and
+  # the one it kept skipping was the handover between them. Done here,
+  # the documentalista's task NAMES the files and there is no step left
+  # to skip.
+  #
+  # `decide` takes images by PATH, so the frames never enter this
+  # conversation either: the voice tier is the expensive one and a
+  # screenshot in its history would be re-sent on every later turn.
+  - "decision(mode:preload, tools:[decide])"
   # Declared for the SUBAGENT's sake, not its own. A subagent shares the
   # parent's PluginRegistry, so the permission plugin the documentalista
   # meets is THIS session's instance — configured from this profile.
@@ -401,6 +425,9 @@ plugin_configs:
           - web_fetch
           - spawn_subagent
           - list_active_subagents
+          # NOT auto-approved by its plugin, deliberately: "a call spends
+          # money and sends workspace content to a decision model".
+          - decide
           # The kbwiki tools, named one by one.  `plugins:` decides what
           # the model can SEE and this decides what it may RUN; with
           # `defaultPolicy: deny` a tool missing from here is offered and

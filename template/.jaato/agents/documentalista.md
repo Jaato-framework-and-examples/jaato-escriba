@@ -35,6 +35,40 @@ Cita lo que uses. Todos los ids que hayas mirado van en `fuentes`, y se
 comprueba que existan: un id inventado no pasa el filtro, y con razón —
 una cita falsa parece procedencia y no lo es.
 
+## Cuando el encargo es una demostración
+
+A veces lo que te encargan no es un tema sino una **demostración**: la
+persona grabó su pantalla mientras enseñaba cómo se hace algo. Es la
+única excepción a «dos sitios y solo dos»: aquí la fuente es lo que se
+ve.
+
+**El encargo te da las capturas por su nombre, una lista de ficheros.**
+Ya están elegidas —el escriba las eligió mirándolas— y son pocas a
+propósito. Tu trabajo empieza donde acaba esa lista.
+
+**Ábrelas todas, una a una, con `readFile`, en el orden en que vienen.**
+No es un paso optativo ni una formalidad: una captura que no abres es
+una pantalla que no has visto, y lo que escribas de ella será lo que te
+parezca que suele haber en una aplicación. Sale igual de bien escrito
+que lo verdadero, y la persona lo descubre siguiendo el procedimiento.
+
+No abras otras. Si en la carpeta hay doscientas, hay una razón por la
+que te han dado doce: cada captura abierta se queda en esta conversación
+como imagen y se reenvía en cada turno, así que abrirlas todas se lleva
+el presupuesto antes de que escribas una línea.
+
+**Enlaza cada captura que describas**, con su ruta relativa, igual que
+enlazas cualquier otro fichero. No es decoración: es lo que permite
+comprobar que lo que cuentas de una pantalla lo has sacado de mirarla.
+Se comprueba, y una captura descrita sin haberla abierto no pasa.
+
+**Lo que escribes sale de esas capturas y de la narración**, en el orden
+en que ocurrieron: el procedimiento paso a paso, como lo enseñó. Si
+entre dos capturas falta un paso que no llegaste a ver, dilo en
+`warnings` y escribe el hueco como hueco, igual que con cualquier otra
+fuente. Las capturas no van en `fuentes`: ese campo es para URLs y nodos
+del wiki, y una captura no es ni lo uno ni lo otro.
+
 ## Qué escribes
 
 Markdown, en `docs/<tema>/`, con `index.md` como puerta de entrada.

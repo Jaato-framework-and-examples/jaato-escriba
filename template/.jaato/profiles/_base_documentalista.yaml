@@ -90,6 +90,15 @@ completion_processors:
     on_error: fail_completion
     max_refusals: 3
     on_exhausted: allow
+  # A capture it DESCRIBES has to be one it LOOKED AT. `docs_are_real`
+  # cannot catch this: on 2026-10-17 a document describing eight screens
+  # nobody had opened passed every one of its four checks, because the
+  # files existed, the links resolved and the citations were real.
+  - script: scripts/processors/capturas_reales.py
+    name: capturas_reales
+    on_error: fail_completion
+    max_refusals: 3
+    on_exhausted: allow
 
 plugin_configs:
   # NO TELEMETRY FROM A PERSON'S SECOND BRAIN.
@@ -160,6 +169,9 @@ plugin_configs:
       # model can actually see.
       defaultPolicy: deny
       whitelist:
+        # No `decide` here: choosing a demonstration's frames is the
+        # scribe's job now, and this agent is handed the ones it must
+        # open. See `_base_escriba.yaml` for why the split.
         tools: [writeNewFile, updateFile]
 
 # ---------------------------------------------------------------- isolation

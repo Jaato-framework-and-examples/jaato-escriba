@@ -364,8 +364,16 @@ async def _commission() -> None:
         check("commissioning and announcing are two turns", len(said), 2)
         check("the first names the index, not the folder",
               "frames.jsonl" in said[0], True)
-        check("and says the documentalista cannot list a folder",
-              "listar una carpeta" in said[0], True)
+        # CHOOSE FIRST, HAND OVER SECOND.  The scribe picks the frames
+        # and the documentalista is given their NAMES; a commission that
+        # points at the folder leaves it with nothing it can open,
+        # because it has no way to list a directory.
+        check("the commission puts choosing before handing over",
+              said[0].index("PRIMERO") < said[0].index("DESPUÉS"), True)
+        check("and says to name the paths, not the folder",
+              "caminos en orden" in said[0], True)
+        check("and what handing over a folder costs",
+              "no encontrará nada" in said[0], True)
         check("the first keeps quiet, because it is not heard there",
               "No hables en este turno" in said[0], True)
         check("the narration is named by file, so it can be opened",
@@ -407,6 +415,88 @@ async def _commission() -> None:
 
 
 asyncio.run(_commission())
+
+# ------------------------------------------------ who chooses the frames
+#
+# SELECTING AND WRITING ARE TWO JOBS, AND THE SPLIT IS LOAD-BEARING.
+# The documentalista had `decide` first. Measured 2026-10-17, twice: given
+# the index, the scores and "reading the chosen frames is not optional",
+# it scored them and wrote without opening one -- the first time
+# inventing what the screens showed, the second, with that blocked,
+# saying nothing about them at all. So the scribe chooses and hands over
+# NAMES, and the step that kept being skipped no longer exists.
+#
+# Each half reads fine alone. The failure when they disagree is silent:
+# a decision model bound under one name and called under another is a
+# refusal, and a scribe that hands over a folder instead of names leaves
+# the documentalista with nothing it can open.
+import yaml as _yaml                                     # noqa: E402
+
+_here = Path(__file__).resolve().parent
+
+
+def _profile(name):
+    return _yaml.safe_load(
+        (_here / f"template/.jaato/profiles/_base_{name}.yaml")
+        .read_text(encoding="utf-8"))
+
+
+def _agent(name):
+    return (_here / f"template/.jaato/agents/{name}.md").read_text(encoding="utf-8")
+
+
+_escriba, _documentalista = _profile("escriba"), _profile("documentalista")
+_e_persona, _d_persona = _agent("escriba"), _agent("documentalista")
+
+# ---- the scribe chooses
+check("the scribe binds exactly one decision model",
+      sorted(_escriba.get("decision_models") or {}), ["vista"])
+check("and names it in its own instructions", "`vista`" in _e_persona, True)
+check("decide is preloaded, not left to discovery",
+      "decision(mode:preload, tools:[decide])" in " ".join(_escriba["plugins"]), True)
+
+# `decide` is NOT auto-approved by its plugin, deliberately ("a call
+# spends money and sends workspace content to a decision model"), and the
+# policy is defaultPolicy: deny -- absent from the whitelist, every call
+# is refused.
+_allowed = (((_escriba.get("plugin_configs") or {}).get("permission") or {})
+            .get("policy") or {}).get("whitelist", {}).get("tools") or []
+check("and the scribe's whitelist lets it through", "decide" in _allowed, True)
+
+# ---- the documentalista does not
+check("the documentalista binds no decision model",
+      _documentalista.get("decision_models"), None)
+_d_allowed = (((_documentalista.get("plugin_configs") or {}).get("permission") or {})
+              .get("policy") or {}).get("whitelist", {}).get("tools") or []
+check("and cannot call decide", "decide" in _d_allowed, False)
+check("its instructions tell it to OPEN what it is handed",
+      "Ábrelas todas" in _d_persona, True)
+check("and to link what it describes, which is what gets checked",
+      "Enlaza cada captura" in _d_persona, True)
+
+# ---- the two numbers the scribe must not invent
+#
+# A `score` takes 2..10 levels: the first cut said "de 0 a 10" -- eleven --
+# and every call came back "score takes 2..10 levels, got 11". And nothing
+# told it to pass `images`, so it called decide with `images=0`: the ledger
+# recorded 8 questions on 907 input tokens, a text-only call, and Jev
+# scored the frames from their FILE NAMES. With the images attached the
+# same 8 questions cost 14,500.
+from jaato_sdk.plugins.model_provider.decisions import (  # noqa: E402
+    MAX_IMAGES, MAX_SCORE_LEVELS, MIN_SCORE_LEVELS)
+
+check("the SDK still allows 64 images a call", MAX_IMAGES, 64)
+check("and 2..10 score levels", (MIN_SCORE_LEVELS, MAX_SCORE_LEVELS), (2, 10))
+check("the scribe batches by the question limit, not the image one",
+      "32 capturas" in _e_persona, True)
+check("asks for a legal number of levels",
+      "1 a 10" in _e_persona and "de 0 a 10" not in _e_persona, True)
+check("attaches the images rather than only naming them",
+      "`images`" in _e_persona and '"path"' in _e_persona, True)
+check("says what an imageless call costs",
+      "Sin `images` no se ve nada" in _e_persona, True)
+check("and caps what reaches the documentalista",
+      "12 mejores" in _e_persona, True)
 
 # ------------------------------------------------- page against server
 #

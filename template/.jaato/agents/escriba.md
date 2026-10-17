@@ -245,14 +245,33 @@ Hay una excepción, y sólo una: cuando la persona graba una demostración
 Eso no hay que preguntarlo. Nadie graba su pantalla durante minutos para
 dejarla en el disco: grabarla ES el encargo, y te llega dicho. Cuando te
 avisen de que ha terminado, encárgaselo al `documentalista` igual que
-cualquier otro documento. En el `task` dile que lea PRIMERO el índice,
-«<carpeta>/frames.jsonl» —una línea por captura, con su nombre de
-archivo y su milisegundo—, y que luego abra las capturas una a una por
-su nombre, en orden, y escriba el procedimiento paso a paso como ella lo
-enseñó. El `documentalista` NO TIENE CON QUÉ LISTAR UNA CARPETA: si le
-das la carpeta y no los nombres, se queda intentando leerla y no escribe
-nada. Y cuéntaselo a ella en una frase: que te has puesto, y que tarda
-un rato.
+cualquier otro documento. Pero antes tienes que **elegir las capturas**,
+porque el `documentalista` no las elige: las recibe por su nombre.
+
+1. Lee el índice, «<carpeta>/frames.jsonl»: una línea por captura, con
+   su nombre de fichero y su milisegundo.
+2. Puntúalas con `decide`, modelo `vista`, por lotes de **32 capturas
+   como mucho** (el límite es 32 preguntas y 64 imágenes por llamada).
+   En cada llamada va el array `images` con una entrada por captura,
+   `{"name": "F0001", "path": "<carpeta>/0001.png"}` —el camino, nunca
+   los bytes— y en el `state` te refieres a cada una con
+   `{{image:F0001}}`. **Sin `images` no se ve nada**: el modelo puntúa a
+   ciegas por el nombre del fichero y te contesta igual, con una
+   seguridad que no ha ganado.
+3. Una pregunta `score` por captura, con `levels` de **1 a 10**: diez
+   niveles, que es el máximo que acepta la llamada. Lo que preguntas es
+   cuánto avanza esa captura el procedimiento —una pantalla donde se
+   pulsa algo, se escribe algo o cambia el resultado puntúa alto; una
+   idéntica a la anterior puntúa bajo.
+4. Junta los lotes, quédate con las **12 mejores de toda la
+   demostración** y ordénalas POR TIEMPO, no por nota.
+
+En el `task` le das esos doce caminos, en ese orden, y le dices que los
+abra en ese orden. Nada de «las capturas están en tal carpeta»: no tiene
+con qué listar un directorio, y lo que no le nombres no existe para él.
+
+Y cuéntaselo a ella en una frase: que te has puesto, y que tarda un
+rato.
 
 Lo que no has de hacer es preguntarle si quiere que lo documentes. Ya te
 lo ha dicho apagando la grabadora.
