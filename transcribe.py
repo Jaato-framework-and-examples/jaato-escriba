@@ -121,6 +121,32 @@ class Transcriber:
             samples, language=language or self.language, vad_filter=True)
         return " ".join(s.text.strip() for s in segments).strip()
 
+    def segments(self, samples, prime: Optional[str] = None,
+                 language: Optional[str] = None) -> list:
+        """The transcript in pieces, each with the seconds it spans.
+
+        FOR A LISTENER AND NOT FOR THE ARCHIVE.  `transcribe` joins the
+        pieces and returns one string, which is what a record of what
+        somebody said should be.  `backchannel` needs WHERE each piece
+        sits, because it is looking for the moment a sentence ended.
+
+        SAMPLES AND NOT A PATH, for the same reason: the live narration
+        arrives as raw PCM in half-second pieces and never becomes a
+        file.  The decode that `transcribe` does with ffmpeg has already
+        happened upstream.
+
+        `prime` IS THE PUNCTUATION LEVER.  Whisper follows the style of
+        its `initial_prompt`, and the punctuation is the whole signal
+        here: measured on 2026-10-18, one recording yielded ONE full
+        stop unprimed and EIGHT primed, and another four against eleven.
+        Unprimed, a listener would have gone silent through a whole
+        demonstration.
+        """
+        got, _info = self._load().transcribe(
+            samples, language=language or self.language, vad_filter=False,
+            initial_prompt=prime)
+        return [(s.start, s.end, s.text.strip()) for s in got]
+
     def write(self, recording: Path, language: Optional[str] = None) -> Optional[str]:
         """Transcribe and store beside the recording, once.
 
