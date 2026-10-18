@@ -169,7 +169,7 @@ async def person_of(request: Request) -> Person:
                     "email": request.headers.get("x-forwarded-email")}
         person = Person(who, root=Path(str(CONFIG["root"])), limit=CONFIG.get("limit"),
                         identity=identity, scribe=CONFIG.get("scribe"),
-                        wiki=CONFIG.get("wiki"))
+                        draft=CONFIG.get("draft"), wiki=CONFIG.get("wiki"))
         PEOPLE[who] = person
         person.seen_as(request.headers.get("x-forwarded-email"))
         # BEFORE the session is opened, so the first one already has a
@@ -1153,6 +1153,13 @@ def main(argv=None) -> int:
     p.add_argument("--dev-principal", metavar="NAME",
                    help="run with no proxy in front and treat every request as "
                         "this person. For a developer's own machine")
+    p.add_argument("--transcribe-draft", metavar="MODEL",
+                   help="show a FASTER model's reading of each utterance "
+                        "while --transcribe's is still being read, then "
+                        "replace it. `tiny` takes about half as long as "
+                        "`base`. The archive still keeps only "
+                        "--transcribe's. Needs --transcribe; omitted, "
+                        "nothing is drafted")
     p.add_argument("--transcribe", metavar="MODEL",
                    help="transcribe each utterance locally with this whisper "
                         "model: tiny (~75 MB), base (~145 MB), small (~480 MB), "
@@ -1213,6 +1220,21 @@ def main(argv=None) -> int:
     CONFIG["limit"] = None
     CONFIG["scribe"] = (_transcribe.Transcriber(args.transcribe)
                         if args.transcribe else None)
+    # A DRAFT IS NOT A TRANSCRIPT, so it is refused on its own.  What it
+    # is for is the WAIT: measured 2026-10-18, the configured model takes
+    # 1,7 to 2,6 s on an utterance with `base` and three times that with
+    # `small`, which is longer than the escriba takes to answer -- so the
+    # person reads the reply before their own words appear.  Alone, this
+    # model would be the one the archive keeps, which is the opposite of
+    # what the flag means.
+    if args.transcribe_draft and not args.transcribe:
+        print("escriba_web: --transcribe-draft needs --transcribe: the draft "
+              "is shown while the real transcript is read and then replaced "
+              "by it, so on its own it would BE the transcript the archive "
+              "keeps", file=sys.stderr)
+        return 2
+    CONFIG["draft"] = (_transcribe.Transcriber(args.transcribe_draft)
+                       if args.transcribe_draft else None)
     if bool(args.kbwiki_url) != bool(args.token_dir):
         print("escriba_web: --kbwiki-url and --token-dir are given together "
               "or not at all: a wiki with nowhere to put the token cannot be "

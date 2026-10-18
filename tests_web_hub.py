@@ -913,6 +913,87 @@ async def main():
     check("holding none of the recordings", again.holdings()["recordings"], 0)
 
     print("web backend OK" if not fail else f"{fail} failure(s)")
+    # --------------------------------------------------- the draft transcript
+    #
+    # WHAT THIS IS FOR.  Measured 2026-10-18, the configured model takes
+    # 1,7 to 2,6 s on an utterance with `base` and about three times that
+    # with the `small` the deployed box runs -- longer than the escriba
+    # takes to answer, so the person reads the reply before their own
+    # words appear.  A faster model fills the row and is then replaced.
+    #
+    # THE ONE THING THAT MUST NOT HAPPEN is the draft becoming the
+    # record: two models are two answers to "what did this person say",
+    # and only one of them can be the archive's.
+    from escriba_web.driver import Person as _Person
+
+    async def settled(row, deadline: float = 5.0):
+        """Wait for both passes, which run in THREADS and not on the loop.
+
+        An earlier version of these legs spun `asyncio.sleep(0)` a fixed
+        number of times, which yields the event loop without giving a
+        thread any wall clock: it passed alone and failed in the full
+        suite, which is the worst way for a leg to be wrong.
+        """
+        for _ in range(int(deadline / 0.02)):
+            if row.text and not row.transcribing:
+                return
+            await asyncio.sleep(0.02)
+
+    class Said:
+        def __init__(self, text=""):
+            self.text = text
+            self.transcribing = False
+
+    class Model:
+        """Stands in for a Transcriber, and says which verb was called."""
+
+        def __init__(self, text):
+            self.text = text
+            self.called = []
+
+        def transcribe(self, recording, language=None):
+            self.called.append("transcribe")
+            return self.text
+
+        def write(self, recording, language=None):
+            self.called.append("write")
+            return self.text
+
+    drafter = _Person("draft-sub-01",
+                      root=Path(tempfile.mkdtemp(prefix="escriba-draft-")))
+    drafter.scribe = Model("lo que de verdad dije")
+    drafter.draft = Model("lo que parece que dije")
+    entry = Said()
+    drafter._transcribing(entry, "att_1")
+    await settled(entry)
+    check("the row ends with the configured model's words", entry.text,
+          "lo que de verdad dije")
+    # THE DRAFT NEVER TOUCHES `in_<att>.txt`: `write` keeps whatever it
+    # finds there, so a draft written to disk would be kept FOREVER and
+    # the archive would hold the guess.
+    check("the draft is only transcribed, never written",
+          drafter.draft.called, ["transcribe"])
+    check("while the real one is written", drafter.scribe.called, ["write"])
+    check("and nothing is left waiting", entry.transcribing, False)
+
+    # A ROW THAT ALREADY HAS WORDS IS NOT OVERWRITTEN BY A DRAFT.  `write`
+    # returns a transcript an earlier run wrote, so a slow draft landing
+    # afterwards would replace the record's words with a guess.
+    drafter.draft = Model("una conjetura que llega tarde")
+    already = Said("lo que ya estaba escrito")
+    drafter._transcribing(already, "att_2")
+    await settled(already)
+    check("a draft does not overwrite words already on the row",
+          already.text, "lo que de verdad dije")
+
+    # NO DRAFT CONFIGURED IS THE ORDINARY CASE, and it must not change.
+    drafter.draft = None
+    plain = Said()
+    drafter._transcribing(plain, "att_3")
+    await settled(plain)
+    check("with no draft, the transcript is still written", plain.text,
+          "lo que de verdad dije")
+
     return 1 if fail else 0
 
 

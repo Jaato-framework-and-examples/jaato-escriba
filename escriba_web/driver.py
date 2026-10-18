@@ -446,10 +446,16 @@ class Person:
     def __init__(self, principal: str, root: Path, limit: Optional[int] = None,
                  identity: Optional[dict] = None,
                  scribe: Optional["_transcribe.Transcriber"] = None,
+                 draft: Optional["_transcribe.Transcriber"] = None,
                  wiki: Optional[dict] = None) -> None:
         #: Shared across everyone on this process: one loaded model, not
         #: one per person.  It is hundreds of megabytes.
         self.scribe = scribe
+        #: A faster model whose reading fills the row while `scribe`'s is
+        #: still being read.  Display only: what the archive keeps is
+        #: `scribe`'s, because two models are two answers to "what did
+        #: this person say" and only one of them can be the record.
+        self.draft = draft
         self.principal = principal
         # The hub is handed `self.snapshot`, not a snapshot: it calls it
         # whenever a browser connects, so a reconnecting page is answered
@@ -1879,6 +1885,29 @@ class Person:
         self.board._refreshed()
 
         async def run() -> None:
+            if self.draft is not None:
+                # FIRST AND THROWN AWAY.  `transcribe` and not `write`:
+                # this never touches `in_<att>.txt`, so the archive is
+                # not holding a draft when the real pass is still
+                # running -- and `write` would keep the draft forever,
+                # since it declines to re-transcribe bytes it has
+                # already answered for.
+                try:
+                    early = await asyncio.to_thread(
+                        self.draft.transcribe, recording, self.locale)
+                except Exception as exc:                      # noqa: BLE001
+                    # A draft that fails costs nothing: the row keeps
+                    # waiting for the transcript that is still coming.
+                    self.journal.note("draft.failed", att=att,
+                                      error=type(exc).__name__)
+                    early = None
+                if early and not entry.text:
+                    # NOT OVER AN ANSWER ALREADY GIVEN: `write` can
+                    # return a transcript this conversation wrote
+                    # earlier, and a draft landing after it would
+                    # replace the record's words with a guess.
+                    entry.text = early
+                    self.board._refreshed()
             try:
                 # This person's language, not the host's: the model is
                 # shared, the language is not.
