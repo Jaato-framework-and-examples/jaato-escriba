@@ -55,6 +55,7 @@ do not have.
 from __future__ import annotations
 
 import re
+import subprocess
 import unicodedata
 from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
@@ -66,6 +67,11 @@ from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 PRIME = ("Aquí tenemos la aplicación. Este es el menú lateral. "
          "Vamos a ver los bundles, ¿de acuerdo? Cada uno tiene cuatro "
          "pestañas. ¿Me explico?")
+
+#: The `i18n` keys the acknowledgements live under.  Named here
+#: because the runtime is what plays them; `backchannel_audio`
+#: borrows it to decide what to render.
+ACK_PREFIX = "back.ack"
 
 #: What ends an idea.
 STOPS = ".!…"
@@ -93,6 +99,14 @@ SNAP_SECONDS = 1.5
 #: counts as a pause -- that is the idea `cadence.py` buried -- but the
 #: room needed for a word to land without colliding with the next one.
 ROOM_SECONDS = 0.20
+
+#: What the VAD is asked instead of its own defaults, in
+#: milliseconds, and the rate everything here works at.  Named here
+#: rather than imported from `cadence`: that module is an instrument
+#: and this is the runtime, and a runtime reaching into a measuring
+#: tool for its own sample rate has the dependency backwards.
+MIN_SILENCE_MS = 200
+RATE = 16000
 
 #: The shortest gap between two acknowledgements, in seconds.  This is
 #: the chattiness dial, and it is a POLICY rather than a measurement:
@@ -203,6 +217,54 @@ def due(boundaries: Sequence[Boundary], after: Optional[float] = None,
         out.append(b)
         last = b.at
     return out
+
+
+#: The window the listener reads, and how often it reads one.  The
+#: window has to be long enough to hold a whole idea; the step is how
+#: soon a boundary at the window's end is noticed, and overlapping
+#: windows are why `Listener` remembers what it has answered.
+WINDOW_SECONDS = 24.0
+STEP_SECONDS = 8.0
+
+
+def samples(wav: bytes):
+    """One WAV, as the float32 mono the transcriber and the VAD want.
+
+    THROUGH ffmpeg, for `transcribe._decode`'s reason -- `faster-whisper`
+    decodes through PyAV and the pair that resolves today does not work
+    together -- and because the browser's rate is its own: 48 kHz at
+    whatever channel count the tap has, which has to be resampled rather
+    than decimated.  ffmpeg is a hard requirement of this project
+    already, and `demo_live.Narration.wav` hands us a real WAV header to
+    give it.
+    """
+    import numpy as np
+
+    out = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+         "-f", "f32le", "-ac", "1", "-ar", str(RATE), "pipe:1"],
+        input=wav, capture_output=True)
+    if out.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg could not decode the narration window: "
+            f"{out.stderr.decode('utf-8', 'replace')[:200]}")
+    return np.frombuffer(out.stdout, dtype=np.float32)
+
+
+def silences(audio, offset: float = 0.0) -> List[Tuple[float, float]]:
+    """Every gap between two stretches of speech: (when it starts, how long).
+
+    ASKED WITH `cadence`'s OPTIONS and not the VAD's own, which merge
+    anything under two seconds and pad each segment by 400 ms: with its
+    defaults every recording this project has reports ZERO gaps.
+    """
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    spoken = get_speech_timestamps(
+        audio, VadOptions(min_silence_duration_ms=MIN_SILENCE_MS,
+                          speech_pad_ms=0))
+    return [(a["end"] / RATE + offset, (b["start"] - a["end"]) / RATE)
+            for a, b in zip(spoken, spoken[1:])]
 
 
 class Listener:

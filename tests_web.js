@@ -193,7 +193,7 @@ vm.runInContext(blocks[blocks.length - 1] +
   "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, " +
   "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows, api, " +
   "renderGuest, renderScratch, renderTranscript, pttFace, paintSequence, " +
-  "seqGrip};",
+  "seqGrip, sayBack, BACK};",
   ctx);
 const T = sandbox.__test;
 
@@ -1173,6 +1173,47 @@ const seqFailed = new El("div");
 T.paintSequence(seqFailed, null);
 check("and an answer that never came says that instead",
       seqFailed.children[0].textContent, "No se pudo leer la secuencia.");
+
+// ------------------------------------------------------- the backchannel
+//
+// The escriba acknowledging a demonstration while it is still recording.
+// The server says WHICH clip; these legs are about what the page does
+// with that, because both failures are silent: a leaked element every
+// twenty seconds, or a reconnect replaying a word the person already
+// heard.
+{
+  const plays = [];
+  let made = 0;
+  const RealAudio = sandbox.Audio;
+  sandbox.Audio = function () {
+    made += 1;
+    return {
+      preload: "", set src(v) { plays.push(v); }, play: () => Promise.resolve(),
+    };
+  };
+  // ONE ELEMENT, REUSED.  A demonstration is minutes long with a
+  // boundary every twenty seconds.
+  T.sayBack({ clip: "voz/es/back.ack1.ogg" });
+  T.BACK.last = 0;                       // a boundary later, not a replay
+  T.sayBack({ clip: "voz/es/back.ack3.ogg" });
+  check("one audio element serves every acknowledgement", made, 1);
+  check("and each clip is played by name", plays,
+        ["/voz/es/back.ack1.ogg", "/voz/es/back.ack3.ogg"]);
+
+  // A SECOND FRAME IN THE SAME SECOND IS A RECONNECT, not the escriba
+  // speaking twice: the server thins boundaries to one per fifteen
+  // seconds, so anything closer came from the page's own stream.
+  const before = plays.length;
+  T.sayBack({ clip: "voz/es/back.ack2.ogg" });
+  check("a frame replayed within the second is ignored", plays.length, before);
+
+  // A FRAME WITH NO CLIP DOES NOTHING, which is what an older server
+  // publishing a shape this page does not know looks like.
+  T.sayBack({});
+  T.sayBack(null);
+  check("a frame with no clip is dropped", plays.length, before);
+  sandbox.Audio = RealAudio;
+}
 
 console.log(fail ? `${fail} failure(s)` : "web page renders OK");
 process.exit(fail ? 1 : 0);

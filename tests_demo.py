@@ -549,6 +549,14 @@ async def _live_route(ws: Path) -> None:
     person = Person.__new__(Person)
     person.ws = ws
     person._demo_voice = None
+    # NO TRANSCRIBER, which is a deployment that named no `--transcribe`
+    # model.  The acknowledgements are read off a transcript, so this is
+    # the case where the escriba follows a demonstration without ever
+    # interrupting it -- and the point of the legs below is that it says
+    # so rather than looking broken.
+    person.scribe = None
+    person._ears = None
+    person._listening = None
     # A REAL JOURNAL, not a stand-in: the narration arriving is one of
     # the three things the daemon cannot see, so the row it writes is
     # part of what these routes are for.
@@ -595,6 +603,14 @@ async def _live_route(ws: Path) -> None:
     # joined at the `demo.open` row instead of being mixed into this one.
     voiced = [r for r in person.journal.rows() if r["kind"] == "demo.voice"]
     check("and the sequence records it arriving", len(voiced), 1)
+    # STATED, NOT DEFAULTED.  `transcribe`'s rule is that a model is
+    # named or nothing is, so a deployment with none gets no
+    # acknowledgements -- and the row is how somebody finds out why the
+    # escriba never spoke, instead of wondering.
+    deaf = [r for r in person.journal.rows() if r["kind"] == "demo.deaf"]
+    check("with no transcriber, the silence is recorded", len(deaf), 1)
+    check("and names the reason", deaf[0]["why"], "no transcriber")
+    check("and nothing is left listening", person._listening, None)
     check("with how much of the demo has been heard", voiced[0]["heard"], 0.01)
     # THE RING IS MADE ON THE FIRST PIECE, asked of the DIRECTORY rather
     # than of what the process remembers -- so a server restarted

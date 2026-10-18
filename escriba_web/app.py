@@ -60,6 +60,9 @@ log = logging.getLogger("escriba.web")
 
 HERE = Path(__file__).resolve().parent
 PAGE = HERE.parent / "web" / "index.html"
+#: The acknowledgement clips, beside the page: one directory per
+#: locale, one file per `i18n` key, written by `backchannel_audio`.
+VOICE = HERE.parent / "web" / "voz"
 
 #: An attachment id as the framework mints it: `att_` and sixteen hex.
 #: Matched rather than sanitised — a filename is built from this, and the
@@ -216,6 +219,32 @@ async def _open(person: Person) -> None:
 @app.get("/")
 async def page() -> FileResponse:
     return FileResponse(PAGE, media_type="text/html")
+
+
+@app.get("/voz/{locale}/{name}")
+async def backchannel_clip(locale: str, name: str) -> FileResponse:
+    """One acknowledgement clip, for the page to play over a narration.
+
+    NO PRINCIPAL AND NO INVITATION, deliberately: these twelve files are
+    the application's own assets, the same for everybody, and carry
+    nothing about anybody's conversation.  A guest hears the escriba
+    already (`escriba_web/CLAUDE.md`), so a route that refused them would
+    make the host's demonstration sound different in the second browser.
+
+    BOTH SEGMENTS ARE CHECKED AGAINST WHAT EXISTS rather than cleaned.
+    `locale` and `name` arrive from a URL, and the rule this project
+    already applies to a locale -- `i18n.pick`, which answers with the
+    default rather than touching the filesystem -- is the same rule:
+    compare against the set we published and 404 anything else, so no
+    path fragment reaches `/` at all.
+    """
+    if locale not in i18n.available():
+        raise HTTPException(status_code=404)
+    found = VOICE / locale / name
+    if name not in {f.name for f in (VOICE / locale).glob("*.ogg")}:
+        raise HTTPException(status_code=404)
+    return FileResponse(found, media_type="audio/ogg",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 def _sse(request: Request, hub, queue: asyncio.Queue,

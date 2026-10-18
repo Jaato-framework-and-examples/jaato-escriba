@@ -3011,6 +3011,8 @@ function onEvent(kind, data) {
     // and hooking it alone left the sheet showing whatever was true
     // when it was opened.
     if (seqBody) drawSequence(seqBody);
+  } else if (kind === "backchannel") {
+    sayBack(data);
   } else if (kind === "counts") {
     S.counts = data; renderCounts();
   } else if (kind === "consumo") {
@@ -3107,12 +3109,52 @@ let lost = null;
 //: dropped keeps delivering — two streams patching rows by id into one
 //: transcript, which reads as the escriba answering itself.
 let source = null;
+// ---------------------------------------------------------------- backchannel
+//
+// The escriba acknowledging a demonstration while it is still being
+// recorded: the server says WHICH of the twelve clips, and the browser
+// plays it over the narration rather than into a gap.  See
+// BACKCHANNEL.md -- a blind listening test preferred this to every
+// version that waited for a pause.
+//
+// ONE ELEMENT, REUSED, and the clips are cached after the first play, so
+// the word starts sounding without a fetch.  A new Audio() per boundary
+// leaks one element every twenty seconds for the length of a demo.
+const BACK = { el: null, last: 0 };
+
+function sayBack(data) {
+  if (!data || !data.clip) return;
+  // A GUEST HEARS IT TOO, deliberately: they already hear the escriba,
+  // and a demonstration that sounds different in the second browser
+  // would be the surprise.  What a guest must not do is write a
+  // playback claim into the host's record, and this writes nothing.
+  const now = Date.now();
+  // TWO IN THE SAME SECOND IS A RECONNECT REPLAYING, not the escriba
+  // speaking twice: the server already thins boundaries to one per
+  // fifteen seconds, so anything closer than a second came from here.
+  if (now - BACK.last < 1000) return;
+  BACK.last = now;
+  if (!BACK.el) {
+    BACK.el = new Audio();
+    BACK.el.preload = "auto";
+  }
+  BACK.el.src = api("/" + data.clip);
+  // AUTOPLAY IS ALLOWED HERE because a demonstration cannot start
+  // without the person having clicked to record, which is the gesture
+  // the browser wants.  It can still refuse -- a muted tab, a policy --
+  // and a refused acknowledgement is nothing to report: the
+  // demonstration is unaffected and the transcript never claimed it was
+  // heard.
+  const played = BACK.el.play();
+  if (played && played.catch) played.catch(() => {});
+}
+
 function connect() {
   if (source) { try { source.close(); } catch (e) {} }
   const es = source = new EventSource(api("/events"));
   for (const kind of ["state", "entry", "counts", "items", "status", "alert",
                       "days", "wiki", "consumo", "closing", "speech", "closed",
-                      "room", "invitacion"]) {
+                      "room", "invitacion", "backchannel"]) {
     es.addEventListener(kind, (m) => onEvent(kind, JSON.parse(m.data)));
   }
   es.onopen = () => {

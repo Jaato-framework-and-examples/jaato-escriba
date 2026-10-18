@@ -50,11 +50,13 @@ from typing import Dict, List, Optional, Tuple
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import backchannel as _backchannel                        # noqa: E402
 import i18n as _i18n                                      # noqa: E402
 
-#: The keys this renders, by prefix.  `backchannel` chooses between them
-#: at a boundary; which one it picks is not this module's business.
-PREFIX = "back.ack"
+#: The keys this renders.  Borrowed from `backchannel` rather than
+#: spelled again: the runtime is what plays them, and two copies of
+#: the prefix is a rename that breaks the playback silently.
+PREFIX = _backchannel.ACK_PREFIX
 
 #: Where the clips land, relative to the project.
 OUT = Path("web/voz")

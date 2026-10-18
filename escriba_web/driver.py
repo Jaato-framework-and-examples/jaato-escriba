@@ -26,6 +26,7 @@ import asyncio
 import base64
 import contextlib
 import json
+import random
 import re
 import sys
 import logging
@@ -50,6 +51,7 @@ import voice                                                     # noqa: E402
 import yaml                                                      # noqa: E402
 import transcribe as _transcribe                                 # noqa: E402
 import demo as _demo                                             # noqa: E402
+import backchannel as _backchannel                              # noqa: E402
 import demo_live as _live                                        # noqa: E402
 import journal as _journal                                      # noqa: E402
 import workspace as _workspace                                   # noqa: E402
@@ -523,6 +525,11 @@ class Person:
         #: ceiling bounds what the demonstration COSTS THEM on disk,
         #: which a transport buffer has no business spending.
         self._demo_voice: Optional[Tuple[str, _live.Narration]] = None
+        #: Reads the live narration for somewhere to say "ya veo", and the
+        #: task that keeps asking.  Both exist only while a demonstration
+        #: is recording, and only where a transcriber was configured.
+        self._ears: Optional[_backchannel.Listener] = None
+        self._listening: Optional[asyncio.Task] = None
         #: How full the window is, from ContextUpdatedEvent, and what the
         #: session has spent, from the daemon's own consumption report.
         #: Two questions with two sources, never merged into one number:
@@ -1567,12 +1574,104 @@ class Person:
             if _demo.open_id(self.ws) != ident:
                 raise _demo.NoSuchDemo(ident)
             self._demo_voice = (ident, _live.Narration())
+            self._listen(ident)
         self._demo_voice[1].add(pcm, rate, channels)
         held = self._demo_voice[1]
         self.journal.note("demo.voice", ident=ident,
                           ms=round(len(pcm) / (rate * channels * _live.WIDTH)
                                    * 1000),
                           held=round(held.held, 3), heard=round(held.heard, 3))
+
+    def _listen(self, ident: str) -> None:
+        """Start following this demonstration for somewhere to speak.
+
+        SILENT WITHOUT A TRANSCRIBER, and it says so in the journal
+        rather than defaulting to one.  `--transcribe` names the model or
+        nothing does (`transcribe`'s own rule: no default, no silent
+        download), and the acknowledgements are read off a transcript --
+        so a deployment that configured none gets a demonstration that
+        records, documents itself, and is not interrupted.  What must not
+        happen is somebody wondering why the escriba never speaks.
+        """
+        if self.scribe is None:
+            self.journal.note("demo.deaf", ident=ident, why="no transcriber")
+            return
+        self._ears = _backchannel.Listener(self.scribe)
+        self._listening = asyncio.create_task(self._backchannels(ident))
+
+    async def _backchannels(self, ident: str) -> None:
+        """Ask every few seconds whether there is somewhere to speak.
+
+        A TIMER AND NOT AN EVENT, for `_reconcile`'s reason in reverse:
+        the pieces arrive every 500 ms and a transcription costs about
+        two seconds, so reacting to each piece would queue work faster
+        than it finishes.  The window overlaps the last one by design --
+        a boundary at a window's edge is only half heard -- which is why
+        `Listener` remembers what it has already answered.
+
+        THE WHOLE STEP IS OFF THE EVENT LOOP.  ffmpeg and the model
+        together take one to two seconds, and this process is also
+        serving the page, the hub and the conversation.
+        """
+        while not self._stop.is_set():
+            await asyncio.sleep(_backchannel.STEP_SECONDS)
+            held = self._demo_voice
+            if held is None or held[0] != ident or self._ears is None:
+                return
+            # SNAPSHOT ON THIS THREAD, read on the other: the ring is
+            # being appended to from every `POST /demo/{id}/voz`, and
+            # framing a WAV is a copy rather than work.
+            window = held[1].wav(_backchannel.WINDOW_SECONDS)
+            heard = held[1].heard
+            if not window:
+                continue
+            start = max(0.0, heard - min(_backchannel.WINDOW_SECONDS,
+                                         held[1].held))
+            try:
+                found = await asyncio.to_thread(self._boundaries, window, start)
+            except Exception as exc:                      # noqa: BLE001
+                # A window that will not decode costs its own turn and
+                # not the demonstration: the recording is on disk either
+                # way, and the escriba going quiet is survivable where
+                # the recording failing is not.
+                self.journal.note("demo.unheard", ident=ident,
+                                  error=type(exc).__name__)
+                continue
+            for boundary in found:
+                self._acknowledge(ident, boundary)
+                self._ears.said(boundary)
+
+    def _boundaries(self, window: bytes, start: float) -> list:
+        """Decode, find the silences, and ask where to speak. Off-thread."""
+        audio = _backchannel.samples(window)
+        return self._ears.heard(audio, _backchannel.silences(audio, start),
+                                offset=start)
+
+    def _acknowledge(self, ident: str, boundary) -> None:
+        """Play one short word over the narration.
+
+        THE PAGE IS TOLD WHICH CLIP, not sent the audio: the twelve files
+        are published beside it and the browser has them cached after the
+        first one, so the frame is a few bytes and the word starts
+        sounding without a fetch.
+
+        PICKED AT RANDOM FROM THE SIX, and the KIND of boundary does not
+        choose it.  A vocabulary per kind is a plausible improvement and
+        an untested one -- nothing measured says "vale" suits a cue
+        better than it suits a full stop -- so the kind is recorded and
+        left for a listening test to decide.
+        """
+        keys = sorted(k for k in i18n.catalogue(self.locale)
+                      if k.startswith(_backchannel.ACK_PREFIX))
+        if not keys:
+            return
+        key = random.choice(keys)
+        self.journal.note("demo.backchannel", ident=ident, key=key,
+                          at=boundary.at, kind=boundary.kind,
+                          room=boundary.room)
+        self.hub.publish("backchannel", {
+            "clip": f"voz/{self.locale}/{key}.ogg", "kind": boundary.kind,
+            "at": boundary.at, "said": self.say(key)})
 
     def demo_heard(self, seconds: float) -> bytes:
         """The last `seconds` of the live narration, as a WAV file.
@@ -1666,6 +1765,13 @@ class Person:
         # and complete, so keeping a lossy window of it in memory until
         # the next demonstration would be holding the worse copy.
         self._demo_voice = None
+        self._ears = None
+        if self._listening is not None:
+            # CANCELLED RATHER THAN AWAITED: it is asleep between windows
+            # most of the time, and `demo_closed` is already the slowest
+            # thing the person waits for.
+            self._listening.cancel()
+            self._listening = None
         self.journal.note("demo.close", ident=manifest["id"],
                           frames=manifest["frames"],
                           narrated=bool(manifest["audio"]))
