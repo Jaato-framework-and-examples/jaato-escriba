@@ -51,6 +51,7 @@ import yaml                                                      # noqa: E402
 import transcribe as _transcribe                                 # noqa: E402
 import demo as _demo                                             # noqa: E402
 import demo_live as _live                                        # noqa: E402
+import journal as _journal                                      # noqa: E402
 import workspace as _workspace                                   # noqa: E402
 from run_escriba import (BUDGET_ENDED, DRAIN, SessionGone,      # noqa: E402
                          _reconcile, _turn)
@@ -497,6 +498,16 @@ class Person:
             self.ws, limit=limit,
             on_full=lambda m: self.board.note(f"· {m}"))
         self.board.recording_to(str(self.archive.dir))
+        #: THE SEQUENCE, beside the archive's manifest and not in it: see
+        #: `journal`'s own docstring for why evidence and instrument are
+        #: two files.  Opened with the person rather than with a session,
+        #: so the rows that bracket a session being dropped and reopened
+        #: are in the same file as the ones inside it.
+        self.journal = _journal.Journal(self.archive.dir)
+        #: The way back out of the event subscriptions, so a reopened
+        #: session is not recorded twice -- once through its own client
+        #: and once through the client it replaced.
+        self._unwatch: Optional[Any] = None
         self.opened = datetime.now()
         self._scribe = None
         self._stack: Optional[Any] = None
@@ -771,6 +782,10 @@ class Person:
         self._watcher.attach(self._scribe.client)
         self._consulted.attach(self._scribe.client)
         self._scribe.client.subscribe(EventType.CONTEXT_UPDATED, self._context)
+        if self._unwatch is not None:
+            self._unwatch()
+        self._unwatch = self.journal.watch(self._scribe.client)
+        self.journal.note("session.open", session_id=self._scribe.session_id)
 
     def _connection(self, status) -> None:
         """The transport's state changed, reported from the SDK's thread.
@@ -1542,6 +1557,11 @@ class Person:
                 raise _demo.NoSuchDemo(ident)
             self._demo_voice = (ident, _live.Narration())
         self._demo_voice[1].add(pcm, rate, channels)
+        held = self._demo_voice[1]
+        self.journal.note("demo.voice", ident=ident,
+                          ms=round(len(pcm) / (rate * channels * _live.WIDTH)
+                                   * 1000),
+                          held=round(held.held, 3), heard=round(held.heard, 3))
 
     def demo_heard(self, seconds: float) -> bytes:
         """The last `seconds` of the live narration, as a WAV file.
@@ -1574,6 +1594,12 @@ class Person:
         """
         self._notices.append(self.say("agent.demo_started"))
         self.board.note(self.say("note.demo_started"))
+        # THE ORIGIN THE PAGE'S OWN SERIES IS JOINED TO.  `frames.jsonl`
+        # times every capture from the moment the demo opened, on the
+        # page's clock; this row is that moment on the journal's, which
+        # is what lets a renderer put both on one axis without either
+        # file pretending to the other's clock.
+        self.journal.note("demo.open", ident=ident)
 
     async def demo_closed(self, manifest: Dict[str, Any]) -> None:
         """A demonstration is finished: commission the document, then say so.
@@ -1629,6 +1655,9 @@ class Person:
         # and complete, so keeping a lossy window of it in memory until
         # the next demonstration would be holding the worse copy.
         self._demo_voice = None
+        self.journal.note("demo.close", ident=manifest["id"],
+                          frames=manifest["frames"],
+                          narrated=bool(manifest["audio"]))
         self.board.note(self.say("note.demo_saved", frames=manifest["frames"]))
         if self._scribe is None:
             # NOT SILENT: the demonstration is on disk and nothing is

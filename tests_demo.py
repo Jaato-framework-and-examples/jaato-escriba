@@ -328,6 +328,7 @@ finally:
 import escriba_web.driver as _driver                     # noqa: E402
 from escriba_web.driver import Person                     # noqa: E402
 import demo_live as _live                                 # noqa: E402
+import journal as _journal                                # noqa: E402
 
 MANIFEST = {"id": "20261017_223855_438804", "frames": 49,
             "root": "demo/20261017_223855_438804",
@@ -548,6 +549,10 @@ async def _live_route(ws: Path) -> None:
     person = Person.__new__(Person)
     person.ws = ws
     person._demo_voice = None
+    # A REAL JOURNAL, not a stand-in: the narration arriving is one of
+    # the three things the daemon cannot see, so the row it writes is
+    # part of what these routes are for.
+    person.journal = _journal.Journal(ws)
 
     class Req:
         def __init__(self, body=b"", **query):
@@ -585,6 +590,12 @@ async def _live_route(ws: Path) -> None:
     await _app.demo_voice(Req(b"\x01\x02" * 480, rate=48000, channels=1), ident)
     check("a piece of live narration is held",
           len(person.demo_heard(1.0)) - 44, 960)
+    # ON THE JOURNAL'S CLOCK, which is what lets the microphone lane sit
+    # beside lanes the daemon reports: the page's own `at_ms` series is
+    # joined at the `demo.open` row instead of being mixed into this one.
+    voiced = [r for r in person.journal.rows() if r["kind"] == "demo.voice"]
+    check("and the sequence records it arriving", len(voiced), 1)
+    check("with how much of the demo has been heard", voiced[0]["heard"], 0.01)
     # THE RING IS MADE ON THE FIRST PIECE, asked of the DIRECTORY rather
     # than of what the process remembers -- so a server restarted
     # mid-recording does not refuse the rest of a demonstration that is
