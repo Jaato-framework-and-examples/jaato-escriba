@@ -72,6 +72,24 @@ NAME = "journal.jsonl"
 #: the content is.
 SHAPED = ("tool_args",)
 
+#: The tools whose arguments are NAMES, kept verbatim rather than shaped.
+#:
+#: THE ONE EXCEPTION, AND WHY IT IS SAFE.  `enter_tier` takes the name of
+#: a tier -- `voz`, `escribano` -- and a tier name is not content: the
+#: profile publishes it, the framework renders it into the tool's own
+#: schema for the model to read, and the page already shows all of them
+#: to the person in the engines panel.  Shaped, it became `{"chars": 9}`,
+#: which is how a drawing ended up with a bar labelled `enter_tier` and
+#: no way to tell which tier was entered -- the single most useful fact
+#: about that call.
+#:
+#: KEPT WHOLE RATHER THAN BY KEY, deliberately: the argument's NAME is
+#: the framework's and could be `tier` or `tier_name`, and a journal
+#: that guessed wrong would record nothing while looking correct.  What
+#: this module knows is which TOOL's arguments are safe, which is a
+#: property of the tool and not of the framework's spelling.
+ARGS_ARE_NAMES = ("enter_tier",)
+
 #: What is kept from each event this watches, field by field.
 #:
 #: THIRTEEN EVENTS AND NOT ALL 172.  "Subscribe to everything and see
@@ -151,15 +169,20 @@ def _shape(value: Any) -> Any:
     return {"type": type(value).__name__}
 
 
-def _value(name: str, value: Any) -> Any:
+def _value(name: str, value: Any, tool: Any = None) -> Any:
     """One field, as it goes into the row.
 
     Three kinds, and the field's NAME decides which: an argument bag is a
     shape; the framework's own `UsageBreakdown` is a model of numbers and
     goes in whole; everything else on `WATCHED`'s lists was chosen BY
     NAME as an identifier or a measurement, so it travels as it is.
+
+    `tool` is the call's own name where there is one, and it is read for
+    exactly one purpose: `ARGS_ARE_NAMES` above.
     """
     if name in SHAPED:
+        if tool in ARGS_ARE_NAMES and isinstance(value, dict):
+            return dict(value)
         return _shape(value)
     dump = getattr(value, "model_dump", None)
     if callable(dump):
@@ -212,7 +235,8 @@ class Journal:
         return off
 
     def _event(self, event: Any, names: Tuple[str, ...], ev: Any) -> None:
-        fields = {name: _value(name, getattr(ev, name))
+        tool = getattr(ev, "tool_name", None)
+        fields = {name: _value(name, getattr(ev, name), tool)
                   for name in names if hasattr(ev, name)}
         self.note(event.value, **fields)
 

@@ -71,7 +71,20 @@ TICK = "▪"
 
 
 def _secs(ms: float) -> str:
-    """Spanish decimal comma, like everything the person reads."""
+    """How long something took, in the unit that can actually say it.
+
+    MILLISECONDS UNDER A SECOND, because one decimal place cannot: a
+    44 ms `enter_tier` and a 4 ms one both printed "0,0 s", which reads
+    as "no time at all" rather than as "fast" — and the difference
+    between those two is the whole reason a tier switch gets a bar.
+
+    Spanish decimal comma above a second, like everything else the
+    person reads. The page formats the same numbers the same way; the
+    rule is short enough that one copy each is cheaper than putting
+    presentation on the wire.
+    """
+    if ms < 1000:
+        return f"{round(ms)} ms"
     return f"{ms / 1000:.1f}".replace(".", ",") + " s"
 
 
@@ -104,9 +117,29 @@ def _detail(row: Dict[str, Any]) -> str:
     if isinstance(tokens, int):
         return f"{_thousands(tokens)} tok"
     if row.get("kind") == "demo.close":
-        narrated = "con narración" if row.get("narrated") else "sin narración"
-        return f"{row.get('frames')} capturas · {narrated}"
+        return f"{row.get('frames')} capturas"
     return ""
+
+
+def _called(row: Dict[str, Any]) -> str:
+    """What to call a tool call, which for `enter_tier` is where it went.
+
+    A BAR LABELLED `enter_tier` AND NOTHING ELSE names the act and hides
+    its only interesting part: a reader cannot tell whether the session
+    went somewhere silent or came back to be heard, which is the whole
+    question a tier switch raises. The destination is in the call's own
+    arguments, kept whole by `journal.ARGS_ARE_NAMES`.
+
+    READ BY VALUE AND NOT BY KEY, for that module's reason: the
+    argument's name belongs to the framework and this does not need to
+    know it.
+    """
+    name = row.get("tool_name") or "?"
+    if name != "enter_tier":
+        return name
+    where = [v for v in (row.get("tool_args") or {}).values()
+             if isinstance(v, str) and v]
+    return f"{name} → {where[0]}" if where else name
 
 
 def spans(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -116,6 +149,11 @@ def spans(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     span first, so a turn is listed before the calls inside it.
     """
     out: List[Dict[str, Any]] = []
+    #: Every tier change that ACTUALLY HAPPENED, in order: (when, where).
+    #: Read from `result_status`, which the framework sets to `switched`
+    #: or `already_at_tier` -- so a call that asked for the tier it was
+    #: already in is known to be a no-op rather than assumed to be one.
+    switches: List[Tuple[int, str]] = []
     #: `call_id` -> the span it opened, so its end can close it.
     open_calls: Dict[str, Dict[str, Any]] = {}
     #: `agent_id` -> the span of that agent's life, for the subagents.
@@ -132,7 +170,7 @@ def spans(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         agent = row.get("agent_id")
 
         if kind == "tool.call_start":
-            span = {"t0": t, "t1": t, "label": row.get("tool_name") or "?",
+            span = {"t0": t, "t1": t, "label": _called(row),
                     "agent": agent, "detail": _detail(row), "sub": False}
             open_calls[row.get("call_id") or f"anon-{t}"] = span
             out.append(span)
@@ -148,6 +186,18 @@ def spans(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             measured = row.get("duration_seconds")
             span["t1"] = (t if not isinstance(measured, (int, float))
                           else span["t0"] + round(measured * 1000))
+            if row.get("tool_name") == "enter_tier":
+                status = row.get("result_status")
+                where = span["label"].split("→")[-1].strip()
+                if status == "already_at_tier":
+                    # SAID, NOT HIDDEN. The model asks for the tier it is
+                    # already in often enough that the profile measured
+                    # it -- 74% of `enter_tier(voz)` before the persona
+                    # rule, 30% after -- and a bar that looks like a
+                    # switch and was not is the drawing lying quietly.
+                    span["detail"] = "ya estaba ahí"
+                elif status == "switched":
+                    switches.append((span["t0"], where))
         elif kind == "turn.completed":
             seconds = row.get("duration_seconds")
             length = round(seconds * 1000) if isinstance(
@@ -182,22 +232,59 @@ def spans(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         elif kind == "demo.close":
             if demo is not None:
                 demo["t1"] = t
-                demo["detail"] = _detail(row)
-                demo["label"] += f" · {voiced} piezas de voz"
+                demo["detail"] = _detail(row) + f" · {voiced} piezas de voz"
 
     # THE DERIVED ONE, and the only one: time inside a turn before its
     # first `enter_tier` is time spent in the tier the turn OPENED in.
+    #
+    # IT NAMES THAT TIER, from the `session.open` row the driver writes
+    # out of the session's own frozen profile. "en el tier de entrada"
+    # was true and useless -- a person reading it cannot tell whether
+    # two seconds went to the model they can hear or to one they cannot,
+    # which is the only reason the span is drawn at all.
+    entry = next((r.get("initial_tier") for r in rows
+                  if r.get("kind") == "session.open"), None)
+    switches.sort()
+
+    def tier_at(when: int) -> Optional[str]:
+        """Which tier was active then.
+
+        REPLAYED, NOT ASSUMED. This used to label every turn with the
+        SESSION's initial tier, which is only true of the first one: a
+        tier is left by `exit_on: completion` or by another
+        `enter_tier`, so by turn five the session may be anywhere. The
+        switches are in the journal, so the answer is read rather than
+        guessed.
+        """
+        been = [where for at, where in switches if at <= when]
+        return been[-1] if been else entry
+
     for agent, mine in turns.items():
         for turn in mine:
-            first = min((s for s in out
-                         if s["label"] == "enter_tier" and s["agent"] == agent
-                         and turn["t0"] <= s["t0"] <= turn["t1"]),
-                        key=lambda s: s["t0"], default=None)
+            # THE FIRST REAL SWITCH, not the first `enter_tier`: a call
+            # that lands on the tier it is already in changes nothing,
+            # so the time before it was not "time before switching".
+            first = next((at for at, _ in switches
+                          if turn["t0"] <= at <= turn["t1"]), None)
             if first is None:
                 continue
-            out.append({"t0": turn["t0"], "t1": first["t0"], "agent": agent,
-                        "label": "en el tier de entrada", "sub": False,
-                        "detail": "antes del primer enter_tier"})
+            was = tier_at(turn["t0"])
+            out.append({"t0": turn["t0"], "t1": first, "agent": agent,
+                        "label": f"en {was}" if was else "en el tier inicial",
+                        "sub": False,
+                        "detail": "antes de cambiar de tier"})
+
+    # A SUBAGENT STILL WORKING IS NOT A SUBAGENT THAT TOOK NO TIME.
+    # `agent.completed` is what closes its block, and tonight none of
+    # three arrived -- so the documenter drew as a 0 ms tick above forty
+    # seconds of its own turns. Where the end is unknown, it is the last
+    # thing that agent was seen doing, which is a measurement rather
+    # than a guess about when it will finish.
+    for agent, block in agents.items():
+        if block["t1"] > block["t0"]:
+            continue
+        seen = [s["t1"] for s in out if s.get("agent") == agent]
+        block["t1"] = max(seen) if seen else block["t0"]
 
     out.sort(key=lambda s: (s["t0"], -(s["t1"] - s["t0"])))
     _parent(out, turns, agents)
@@ -213,13 +300,30 @@ def _parent(out: List[Dict[str, Any]], turns, agents) -> None:
     agents, which is what keeps a documenter that outlives its
     commission from swallowing the turn that came after it.
     """
+    # THE ROOT AGENT: the one with turns of its own and no block, which
+    # is exactly one in a session. It is needed because the framework
+    # does NOT name it the same way twice -- measured on a live run,
+    # `turn.completed` and `tool.call_start` carry `agent_id: "escriba"`
+    # while `agent.created` reports the subagent's `parent_agent_id` as
+    # `"main"`. Resolving the second to the first is unambiguous, and
+    # without it every subagent hung at the top level beside the
+    # conversation that commissioned it.
+    root = next((a for a in turns if a not in agents), None)
+
     def holding(agent, at) -> Optional[Dict[str, Any]]:
         inside = [s for s in turns.get(agent, []) if s["t0"] <= at <= s["t1"]]
         return max(inside, key=lambda s: s["t0"], default=None)
 
     for span in out:
         if span.get("parent_agent"):                      # a subagent block
-            span["parent"] = holding(span["parent_agent"], span["t0"])
+            # THE ALIAS IS RESOLVED HERE AND NOWHERE ELSE. `holding`
+            # stays strict: a subagent's own calls belong to its own
+            # turns, and letting the root stand in for a missing agent
+            # there sent the documenter's `readFile` calls to the
+            # scribe's turn instead of to the documenter.
+            owner = (span["parent_agent"] if span["parent_agent"] in turns
+                     else root)
+            span["parent"] = holding(owner, span["t0"])
         elif span.get("is_turn"):                         # a turn
             span["parent"] = agents.get(span.get("agent"))
         elif span.get("agent"):                           # a call
@@ -272,18 +376,45 @@ def _depth_first(ordered: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def outline(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The waterfall as DATA, ready to draw in any surface.
+
+    ONE SPAN BUILDER AND ONE ORDERING, shared by the text renderer below
+    and by the page: a second implementation in JavaScript would be a
+    second set of answers to "what nests under what", and the two would
+    disagree exactly when a run was interesting enough to look at.  So
+    the page is handed this and draws it.
+
+    `parent` is NOT in the result and cannot be: the spans point at each
+    other, so a span graph is a cycle and `json.dumps` would recurse
+    until it gave up.  The nesting survives as `depth` plus the order,
+    which is all a drawing needs.
+    """
+    ordered = _depth_first(spans(rows))
+    opened = next((r for r in rows if r.get("kind") == "journal.open"), {})
+    if not ordered:
+        return {"wall": opened.get("wall"), "total": 0, "spans": []}
+    first = min(s["t0"] for s in ordered)
+    last = max(s["t1"] for s in ordered)
+    return {
+        "wall": opened.get("wall"),
+        "total": max(last - first, 1),
+        "spans": [{"label": s["label"], "depth": s["depth"],
+                   "t0": s["t0"] - first, "t1": s["t1"] - first,
+                   "detail": s["detail"], "sub": bool(s["sub"])}
+                  for s in ordered],
+    }
+
+
 def render(rows: List[Dict[str, Any]], width: int = BAR) -> str:
     """The waterfall, as text."""
-    ordered = _depth_first(spans(rows))
+    drawn = outline(rows)
+    ordered = drawn["spans"]
     if not ordered:
         return "nothing in this journal yet"
 
-    opened = next((r for r in rows if r.get("kind") == "journal.open"), {})
-    first = min(s["t0"] for s in ordered)
-    last = max(s["t1"] for s in ordered)
-    total = max(last - first, 1)
-
-    lines = [f"{opened.get('wall', 'sin hora')}   ·   {_secs(total)} en total",
+    first, total = 0, drawn["total"]
+    lines = [f"{drawn['wall'] or 'sin hora'}   ·   {_secs(total)} en total",
              ""]
     for span in ordered:
         label = ("  " * span["depth"]) + span["label"]

@@ -40,6 +40,7 @@ import housekeeping as _housekeeping                               # noqa: E402
 import transcribe as _transcribe                                   # noqa: E402
 import demo as _demo                                              # noqa: E402
 import demo_live as _live                                         # noqa: E402
+import sequence as _sequence                                      # noqa: E402
 import staging as _staging                                        # noqa: E402
 import workspace as _workspace                                     # noqa: E402
 
@@ -528,6 +529,33 @@ async def doc(request: Request, path: str) -> PlainTextResponse:
     if docs not in target.parents or not target.is_file():
         raise HTTPException(404, "no such document")
     return PlainTextResponse(target.read_text(encoding="utf-8"))
+
+
+@app.get("/secuencia")
+async def secuencia(request: Request) -> dict:
+    """This conversation's sequence, as the page draws it.
+
+    BUILT HERE AND NOT IN THE BROWSER.  `sequence.outline` decides what
+    nests under what -- a call under a turn of its own agent, a subagent
+    under the turn that created it -- and a second implementation of
+    that in JavaScript would be a second set of answers, disagreeing
+    exactly when a run was interesting enough to be looked at.  So the
+    page is handed the spans and draws them.
+
+    NO GUEST ROUTE, for the reason the demonstration has none and more
+    so: this is the whole shape of the host's conversation — every tool
+    it called, what it spent — and a colleague invited for ten minutes
+    of an interview is owed none of it.  `guest_snapshot` is BUILT key
+    by key for exactly this reason, and a route the guest page never
+    calls is the same discipline one layer down.
+
+    AN EMPTY ANSWER IS AN ANSWER.  A journal with nothing in it yet is a
+    conversation that has not had a turn, which the page says in a line
+    rather than treating as a failure.
+    """
+    person = await person_of(request)
+    return _sequence.outline(_sequence.read(person.journal.path)
+                             if person.journal.path.exists() else [])
 
 
 @app.post("/sesion/nueva")

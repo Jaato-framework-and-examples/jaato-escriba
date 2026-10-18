@@ -53,6 +53,11 @@ class El {
   removeAttribute(k) { delete this.attrs[k]; }
   addEventListener() {}
   focus() {}
+  remove() {
+    if (!this.parent) return;
+    this.parent.children = this.parent.children.filter((c) => c !== this);
+    this.parent = null;
+  }
   get classList() {
     const self = this;
     const has = (c) => self.className.split(/\s+/).includes(c);
@@ -187,7 +192,9 @@ const ctx = vm.createContext(sandbox);
 vm.runInContext(blocks[blocks.length - 1] +
   "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, " +
   "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows, api, " +
-  "renderGuest, renderScratch, renderTranscript, pttFace};", ctx);
+  "renderGuest, renderScratch, renderTranscript, pttFace, paintSequence, " +
+  "seqGrip};",
+  ctx);
 const T = sandbox.__test;
 
 // ------------------------------------------------ the page before the hub
@@ -1010,6 +1017,162 @@ T.S.wikiPage = null;
 const none = anotado(910003, []);
 check("a turn that named no source adds nothing", none.anchors.length, 0);
 check("and no empty box", none.nodes.length, 0);
+
+// ------------------------------------------------------- the sequence
+//
+// NOTHING ELSE EXECUTES THIS CODE.  `tests_sequence.py` guards the span
+// builder and that the page calls the right route and reads the right
+// fields; the DRAWING -- a row per span, a bar placed in percents, the
+// indent that carries the nesting -- had no leg at all, which is how a
+// view that throws on its first real answer ships looking finished.
+//
+// FED A FIXTURE AND NOT THE PAGE'S OWN MOCK: a drawing asserted against
+// the constant it draws from proves only that the constant exists.
+const seqBody = new El("div");
+T.paintSequence(seqBody, {
+  wall: "2026-10-18T22:31:04.100", total: 10000, spans: [
+    { label: "turno 1", depth: 0, t0: 0, t1: 10000,
+      detail: "22 413 tok · 0,19 $", sub: false },
+    { label: "decide", depth: 1, t0: 2500, t1: 7500, detail: "images 32",
+      sub: false },
+    { label: "documentalista", depth: 1, t0: 8000, t1: 10000, detail: "",
+      sub: true },
+  ],
+});
+
+const seqRows = seqBody.children.filter((c) => c.className === "line");
+check("one row per span", seqRows.length, 3);
+const when = seqBody.children[0];
+check("the header carries the wall clock",
+      when.children[0].textContent, "2026-10-18T22:31:04.100");
+check("and the total, in the catalogue's own sentence",
+      when.children[1].textContent, "10,0 s en total");
+// THE INDENT IS THE NESTING, and it is the server's `depth` rather than
+// anything this page worked out for itself.
+check("depth becomes the indent",
+      seqRows.map((r) => r.children[0].style.paddingLeft),
+      ["0px", "14px", "14px"]);
+// THE BAR IS PLACED IN PERCENTS of the whole span, so the drawing
+// cannot disagree with the duration printed beside it.
+const seqBar = (r) => r.children[1].children[0];
+check("a bar starts where its span does and is as long as it lasted",
+      [seqBar(seqRows[1]).style.left, seqBar(seqRows[1]).style.width],
+      ["25%", "50%"]);
+check("and a subagent is drawn as one",
+      [seqBar(seqRows[0]).className, seqBar(seqRows[2]).className],
+      ["fill", "fill sub"]);
+check("each row prints what it lasted",
+      seqRows.map((r) => r.children[2].textContent),
+      ["10,0 s", "5,0 s", "2,0 s"]);
+// AND THE PAGE AGREES WITH THE TERMINAL on the unit, which is the whole
+// reason both carry the same three-line rule: a fast call is fast, not
+// zero.
+const fastBody = new El("div");
+T.paintSequence(fastBody, { wall: "x", total: 1000, spans: [
+  { label: "enter_tier → escribano", depth: 0, t0: 0, t1: 31, detail: "",
+    sub: false }] });
+check("a sub-second span is drawn in milliseconds",
+      fastBody.children.filter((c) => c.className === "line")[0]
+        .children[2].textContent, "31 ms");
+check("and what the server said about it",
+      seqRows[1].children[3].textContent, "images 32");
+// WHAT IS CUT IS STILL READABLE: the detail column ellipsises, so the
+// whole of it is on the element too.
+check("a truncated detail keeps its full text",
+      seqRows[1].children[3].title, "images 32");
+// AND THE SPEND SENTENCE IS ALWAYS THERE, because the number above it
+// needs one.
+check("the footnote about spend is drawn",
+      seqBody.children.filter((c) => c.className === "foot").length, 1);
+
+// THE DRAWING IS LIVE, so the signals it listens to have to be the ones
+// that arrive. `state` is published on session open, session reopen and
+// a locale change -- NEVER when a turn ends -- so hooking it alone left
+// the sheet showing whatever was true when it was opened, with a button
+// beside it to say so.
+const onEventSrc = PAGE_HTML.slice(PAGE_HTML.indexOf("function onEvent"));
+const branch = (kind) => {
+  const at = onEventSrc.indexOf(`kind === "${kind}"`);
+  return onEventSrc.slice(at, at + 400);
+};
+check("a transcript row redraws the sequence",
+      branch("entry").includes("drawSequence"), true);
+check("and so does a change of status",
+      branch("status").includes("drawSequence"), true);
+// AND A TICKER, because a turn that commissions a document spends ten
+// seconds or more inside `decide` calls with no frame crossing the wire.
+check("the sheet ticks while it is open",
+      /seqTimer = setInterval\(/.test(PAGE_HTML), true);
+check("and stops when it closes",
+      /closeSequence\(\) \{[^}]*clearInterval\(seqTimer\)/s.test(PAGE_HTML),
+      true);
+check("so nothing offers to refresh what is not stale",
+      PAGE_HTML.includes("seq.refresh"), false);
+
+// NO CLASS INSIDE THE PANEL MAY ALSO BE STYLED UNSCOPED, and this is
+// the general form of a defect that shipped: `.seq .bar` inherited the
+// transcript's playback pill, whose `padding:0 12px` and border set a
+// 26px floor under `*{box-sizing:border-box}` -- so EVERY span rendered
+// at the same width whatever its duration, and a waterfall whose bars
+// are not proportional is not a waterfall. `.row` was quieter: an
+// inherited `border-bottom` under every line. Neither raised anything.
+{
+  const css = PAGE_HTML.slice(PAGE_HTML.indexOf("<style>"),
+                              PAGE_HTML.indexOf("</style>"));
+  const bare = new Set([...css.matchAll(/(?:^|\n|,)\s*\.([a-z][a-z0-9-]*)\s*(?=[{,:])/g)]
+    .map((m) => m[1]));
+  const mine = new Set([...css.matchAll(/\.(?:seq|dock) \.([a-z][a-z0-9-]*)/g)]
+    .map((m) => m[1]));
+  const clash = [...mine].filter((c) => bare.has(c) && c !== "seq").sort();
+  check("no class in the sequence is also styled unscoped", clash, []);
+}
+
+// THE LEFT EDGE IS A HANDLE, and a handle only a mouse can reach is one
+// some people do not have. The drag itself needs a browser; what can be
+// asserted here is that the control is a real button carrying what a
+// screen reader needs, and that losing the panel by dragging a little
+// too far cannot happen.
+const grip = T.seqGrip(new El("article"));
+check("the handle is a real button", grip.tagName, "BUTTON");
+check("that says what it is",
+      [grip.attrs.role, grip.attrs["aria-orientation"]],
+      ["separator", "vertical"]);
+check("and what it does, from the catalogue",
+      grip.attrs["aria-label"], "Ancho del panel: arrastra, o usa las flechas");
+// THE PANEL IS A COLUMN OF THE PAGE, not a drawer over it: a scrim made
+// the one thing it is for -- watching a turn happen -- impossible to do
+// while taking that turn, because the tray was behind it.
+check("the sequence is docked, not modal",
+      /openSequence[\s\S]{0,900}\$\("main"\)\.append\(dock\)/.test(PAGE_HTML),
+      true);
+check("and it does not put a scrim over the conversation",
+      /openSequence[\s\S]{0,900}scrim/.test(PAGE_HTML), false);
+check("the button says whether the panel is showing",
+      /seq-btn"\)\.setAttribute\("aria-pressed", "true"\)/.test(PAGE_HTML),
+      true);
+// AND THE BODY SCROLLS, NOT THE DOCK: an absolutely-placed handle in a
+// scrolling box slides out of reach as you read down it.
+check("the dock does not scroll itself",
+      /\.dock\{[^}]*overflow:hidden/.test(PAGE_HTML), true);
+// THE HANDLE MOVES THE TRACK, not the element: the dock is a grid
+// column, so setting its own width would leave the column where it was
+// and the panel would simply overflow it.
+check("the handle moves the grid track",
+      /setProperty\("--seq-w"/.test(PAGE_HTML), true);
+// AND A WIDTH KEPT FROM A WIDE SCREEN MUST NOT EAT A NARROW ONE.
+check("the track is capped in CSS, not only in the handler",
+      /min\(var\(--seq-w,0px\),60vw\)/.test(PAGE_HTML), true);
+
+const seqEmpty = new El("div");
+T.paintSequence(seqEmpty, { wall: "x", total: 0, spans: [] });
+check("a conversation with no turns says so, and draws no rows",
+      [seqEmpty.children.filter((c) => c.className === "note").length,
+       seqEmpty.children.filter((c) => c.className === "line").length], [1, 0]);
+
+const seqFailed = new El("div");
+T.paintSequence(seqFailed, null);
+check("and an answer that never came says that instead",
+      seqFailed.children[0].textContent, "No se pudo leer la secuencia.");
 
 console.log(fail ? `${fail} failure(s)` : "web page renders OK");
 process.exit(fail ? 1 : 0);

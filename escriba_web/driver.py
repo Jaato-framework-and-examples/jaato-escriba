@@ -785,7 +785,18 @@ class Person:
         if self._unwatch is not None:
             self._unwatch()
         self._unwatch = self.journal.watch(self._scribe.client)
-        self.journal.note("session.open", session_id=self._scribe.session_id)
+        # WHICH TIER IT STARTS IN, read from the session's own FROZEN
+        # profile rather than from the template: that record is what the
+        # daemon resolved for this session, and it is the same source
+        # the engines panel reads, so the drawing and the panel cannot
+        # name different ladders. Without it a waterfall can say a turn
+        # spent two seconds somewhere before switching and not say
+        # where, which is the half of the sentence that matters.
+        frozen = _archive.frozen_profile(self.ws, self._scribe.session_id)
+        entry = next((r["tier"] for r in engine_rows(frozen) if r["initial"]),
+                     None) if frozen else None
+        self.journal.note("session.open", session_id=self._scribe.session_id,
+                          initial_tier=entry)
 
     def _connection(self, status) -> None:
         """The transport's state changed, reported from the SDK's thread.

@@ -116,8 +116,17 @@ header{background:var(--panel);display:flex;flex-wrap:wrap;align-items:stretch;b
 .alert button{background:var(--panel);border:1px solid var(--bad);color:var(--bad);padding:6px var(--space-3);
               border-radius:8px;font-weight:500;cursor:pointer}
 
-main{display:grid;grid-template-columns:clamp(120px,16vw,220px) minmax(0,1fr) clamp(240px,28vw,400px);
-     flex:1 1 auto;min-height:0}
+/* FOUR TRACKS, the last of them usually zero. The sequence is DOCKED
+   and not a drawer over the page: it is read WHILE the conversation
+   goes on, so the transcript, the tray and the push-to-talk button all
+   have to stay reachable beside it. A modal with a scrim made the one
+   thing it was for -- watching a turn happen -- impossible to do while
+   taking that turn.
+   `min(...)` caps it in CSS rather than in a resize handler: a width
+   kept from a wide screen must not eat a narrow one on the next load. */
+main{display:grid;flex:1 1 auto;min-height:0;
+     grid-template-columns:clamp(120px,16vw,220px) minmax(0,1fr) clamp(240px,28vw,400px)
+                           min(var(--seq-w,0px),60vw)}
 
 /* ------------------------------------------------------------------ days */
 nav{border-right:1px solid var(--line);overflow:auto;display:flex;flex-direction:column}
@@ -326,6 +335,74 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
 .md a{word-break:break-word}
 .md table{border-collapse:collapse;width:100%;font-size:15px}
 .md th,.md td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+/* ------------------------------------------------------------ sequence */
+/* In the page's own tokens, as a COLUMN of it: this is the page
+   explaining itself, not a second product with a look of its own.
+   The dock does not scroll -- its body does -- which is what lets the
+   handle stay put: a resize handle that slides out of reach as you read
+   down the panel is worse than none. */
+.dock{background:var(--bg);border-left:1px solid var(--line);position:relative;min-width:0;
+      overflow:hidden;display:flex;flex-direction:column}
+.dock .top{background:var(--bg);display:flex;align-items:center;gap:var(--space-4);
+           padding:var(--space-3) var(--space-4) var(--space-3) var(--space-6);
+           border-bottom:1px solid var(--line)}
+.dock .top .path{font-size:13px;font-weight:600;flex:1;min-width:0;overflow:hidden;
+                 text-overflow:ellipsis;white-space:nowrap}
+.dock .seq{flex:1 1 auto;min-height:0;overflow:auto}
+/* THE LEFT EDGE IS A HANDLE. The dock is the right-hand column, so
+   dragging its edge left widens it: a waterfall is read across, and how
+   much across depends on the run and on the screen. */
+.dock .grip{position:absolute;left:0;top:0;bottom:0;width:8px;cursor:col-resize;
+            background:transparent;border:0;padding:0;z-index:1;touch-action:none}
+.dock .grip:hover,.dock .grip:focus-visible{background:var(--accent-soft);outline:none}
+.dock .grip::after{content:"";position:absolute;left:3px;top:50%;width:2px;height:28px;
+                   margin-top:-14px;border-radius:1px;background:var(--line-strong)}
+.dock .live{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.dock .live .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+/* NARROW SCREENS GET THE CONVERSATION. Four columns on a phone is three
+   too many, and the panel is the one that is optional. */
+@media (max-width:900px){
+  main{grid-template-columns:clamp(120px,16vw,220px) minmax(0,1fr) clamp(240px,28vw,400px)}
+  .dock{display:none}
+}
+.seq{padding:var(--space-4) var(--space-4) var(--space-4) var(--space-6);
+     display:flex;flex-direction:column;gap:var(--space-1)}
+.seq .when{display:flex;align-items:baseline;gap:var(--space-3);flex-wrap:wrap;
+           padding-bottom:var(--space-3);margin-bottom:var(--space-2);border-bottom:1px solid var(--line)}
+.seq .when .wall{font-family:var(--mono);font-size:13px}
+.seq .when .total{font-size:13px;color:var(--muted)}
+.seq .note{font-size:14px;color:var(--muted);line-height:1.5}
+/* `line` AND `fill`, NOT `row` AND `bar`, and the names are the whole
+   point: this page already has an unscoped `.row` (a turn in the
+   transcript) and an unscoped `.bar` (the playback pill). With
+   `*{box-sizing:border-box}`, `.bar`'s `padding:0 12px` and its border
+   set a floor of 26px on any element carrying the class -- so every
+   span here rendered at the same width whatever its duration, and a
+   waterfall whose bars are not proportional is not a waterfall. The
+   `.row` collision was quieter: an inherited `border-bottom` under
+   every line. */
+.seq .line{display:grid;grid-template-columns:minmax(150px,1.3fr) minmax(0,1.5fr) 58px minmax(0,1fr);
+           gap:var(--space-3);align-items:center;padding:3px 0}
+.seq .lab{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.seq .track{position:relative;height:14px;background:var(--chip);border-radius:4px}
+/* PLACED IN PERCENTS of the whole run, which is why the server sends
+   `t0`/`t1` already relative to the first span: the page does no
+   arithmetic about what nests under what. `min-width` keeps a span too
+   short to fill a pixel visible, and 2px is as small as that can be
+   without disappearing -- the duration beside it carries the number. */
+.seq .fill{position:absolute;top:0;height:14px;border-radius:4px;background:var(--accent);min-width:2px}
+.seq .fill.sub{background:var(--line-strong)}
+.seq .dur{font-family:var(--mono);font-size:12px;text-align:right;font-variant-numeric:tabular-nums}
+.seq .det{font-family:var(--mono);font-size:11px;color:var(--muted);min-width:0;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seq .foot{margin-top:var(--space-4);padding-top:var(--space-3);border-top:1px solid var(--line);
+           font-size:12px;color:var(--muted);line-height:1.5}
+@media (max-width:620px){
+  .seq{padding:var(--space-4)}
+  .seq .line{grid-template-columns:minmax(0,1fr) 54px;row-gap:2px}
+  .seq .track,.seq .det{grid-column:1 / -1}
+}
+
 .upload{padding:var(--space-3);border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:var(--space-2)}
 .upload .note{font-size:12px;color:var(--muted)}
 .upload .bad{font-size:12px;color:var(--bad)}
@@ -361,6 +438,7 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
       <span class="k" id="audio-in"></span><span class="v" id="playback-where"></span>
       <span class="langs" id="langs"></span>
       <button class="hbtn" id="guest-btn" aria-pressed="false"></button>
+      <button class="hbtn" id="seq-btn"></button>
       <button class="hbtn" id="audit-btn" aria-pressed="false">ids</button>
       <button class="hbtn" id="theme-btn"></button>
     </div>
@@ -379,7 +457,7 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
 
   <div id="alert-slot"></div>
 
-  <main>
+  <main id="main">
     <nav>
       <div class="head" id="nav-head"></div>
       <div id="days"></div>
@@ -1931,7 +2009,205 @@ async function openReader(it) {
   else body.textContent = text;   // the module did not load; show the source
 }
 function closeReader() { $("reader-slot").textContent = ""; }
-window.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeReader(); });
+
+// ------------------------------------------------------------- sequence
+//
+// WHAT HAPPENED, AT EVERY LAYER, ON ONE AXIS. The transcript says what
+// was said and the pills say where the session stands; neither can
+// answer "where did those twenty seconds go", which is the question an
+// architecture decision actually turns on.
+//
+// IT DRAWS WHAT THE SERVER NESTED, and computes nothing about structure.
+// `sequence.outline` decides that a call belongs to a turn of its own
+// agent and a subagent to the turn that created it — rules that already
+// cost two defects to get right — so a second implementation here would
+// be a second set of answers, disagreeing exactly when a run was
+// interesting enough to open this.
+//
+// IN THE READER'S OWN SHEET, and so in its own slot: one drawer at a
+// time is right, `closeReader` already empties it and Escape already
+// calls that.
+//
+//: The open sheet's body, or null. Held so whatever arrives next can
+//: redraw it.
+let seqBody = null;
+//: And its ticker, because events alone are not enough. A turn that
+//: commissions a document spends ten seconds or more inside `decide`
+//: calls, and every one of them lands in the journal the moment it
+//: starts — with no `entry` and no `status` crossing the wire until the
+//: turn ends. Without this the sheet would sit still through exactly
+//: the part worth watching.
+//:
+//: POLLED ONLY WHILE SOMEBODY IS LOOKING, and stopped when the drawer
+//: closes: the cost is one small GET every couple of seconds for as
+//: long as the sheet is on screen, and nothing at all otherwise.
+let seqTimer = null;
+const SEQ_MS = 2000;
+//: True between a press on the resize handle and its release.
+let seqDragging = false;
+//: The docked panel, or null when it is not on screen.
+let seqDock = null;
+
+// MILLISECONDS UNDER A SECOND, for `sequence._secs`'s reason: one
+// decimal place printed "0,0 s" for both a 44 ms tier switch and a 4 ms
+// one, which reads as "no time at all" rather than as "fast".
+function secsLabel(ms) {
+  if (ms < 1000) return Math.round(ms) + " ms";
+  return (ms / 1000).toFixed(1).replace(".", ",") + " s";
+}
+
+// FETCHING AND DRAWING ARE TWO THINGS, split so the second can be run
+// without the first: the drawing is the part with the arithmetic in it
+// -- percents, indents, the duration beside each bar -- and a view whose
+// drawing has no test ships looking finished and throws on its first
+// real answer.
+function paintSequence(body, data) {
+  body.textContent = "";
+  if (!data) { body.append(el("div", "note", tx("seq.failed"))); return; }
+
+  const when = el("div", "when");
+  when.append(el("span", "wall", data.wall || ""),
+              el("span", "total", tx("seq.total",
+                                     { total: secsLabel(data.total) })));
+  body.append(when);
+
+  if (!data.spans.length) {
+    body.append(el("div", "note", tx("seq.empty")));
+    return;
+  }
+  for (const span of data.spans) {
+    const row = el("div", "line");
+    const lab = el("div", "lab", span.label);
+    lab.style.paddingLeft = (span.depth * 14) + "px";
+    lab.title = span.label;
+    const track = el("div", "track");
+    const bar = el("div", "fill" + (span.sub ? " sub" : ""));
+    // PERCENTS OF THE WHOLE SPAN, from numbers the server already made
+    // relative to the first one.
+    bar.style.left = (span.t0 / data.total * 100) + "%";
+    bar.style.width = ((span.t1 - span.t0) / data.total * 100) + "%";
+    track.append(bar);
+    const det = el("div", "det", span.detail || "");
+    det.title = span.detail || "";
+    row.append(lab, track, el("div", "dur", secsLabel(span.t1 - span.t0)),
+               det);
+    body.append(row);
+  }
+  // SAID WHERE THE NUMBER IS, because it needs a sentence: spend comes
+  // from the end of a turn and nowhere else, and a reader adding up
+  // what the context rows report would undercount it.
+  body.append(el("div", "foot", tx("seq.spend")));
+}
+
+async function drawSequence(body) {
+  const data = MOCK ? MOCK_SEQ
+    : await fetch(api("/secuencia"))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.status))))
+      .catch(() => null);
+  if (body !== seqBody) return;        // closed, or replaced, while in flight
+  paintSequence(body, data);
+}
+
+//: How wide the sequence drawer was left, per browser. A width is a
+//: per-viewer convenience like the theme, so it lives where the theme
+//: lives and travels nowhere.
+const SEQ_MIN = 420;
+//: What it opens at the first time. Wide enough for a label, a bar, a
+//: duration and a detail without any of them truncating.
+const SEQ_DEFAULT = 620;
+
+function seqWidth() {
+  const kept = parseInt(localStorage.getItem("escriba-seq-width") || "", 10);
+  return Number.isFinite(kept) ? kept : 0;      // 0 = never set
+}
+
+// A HANDLE, AND NOT ONLY A DRAG. A control reachable with a mouse and
+// not with a keyboard is one some people simply do not have, so this is
+// a real `button` with the arrow keys bound: `role="separator"` is what
+// a resizer is, and `aria-orientation` says which way it moves.
+function seqWide(px) {
+  const w = Math.min(Math.max(Math.round(px), SEQ_MIN),
+                     Math.max(SEQ_MIN, window.innerWidth - 360));
+  // THE TRACK AND NOT THE ELEMENT: the dock is a grid column, so its
+  // width is the column's. Setting the element's would leave the track
+  // where it was and the panel would simply overflow it.
+  document.documentElement.style.setProperty("--seq-w", w + "px");
+  try { localStorage.setItem("escriba-seq-width", String(w)); } catch (e) {}
+  return w;
+}
+
+function seqGrip(dock) {
+  const grip = el("button", "grip");
+  grip.type = "button";
+  grip.setAttribute("role", "separator");
+  grip.setAttribute("aria-orientation", "vertical");
+  grip.setAttribute("aria-label", tx("seq.resize"));
+  const setTo = seqWide;
+  let from = 0, was = 0;
+  grip.addEventListener("pointerdown", (ev) => {
+    from = ev.clientX;
+    was = dock.offsetWidth || SEQ_MIN;
+    seqDragging = true;
+    grip.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  });
+  grip.addEventListener("pointermove", (ev) => {
+    // DRAGGING LEFT WIDENS IT, because the sheet is anchored to the
+    // right edge: the handle moving away from that edge is the panel
+    // growing, which is what a hand expects.
+    if (seqDragging) setTo(was + (from - ev.clientX));
+  });
+  const done = (ev) => {
+    if (!seqDragging) return;
+    seqDragging = false;
+    try { grip.releasePointerCapture(ev.pointerId); } catch (e) {}
+  };
+  grip.addEventListener("pointerup", done);
+  grip.addEventListener("pointercancel", done);
+  grip.addEventListener("keydown", (ev) => {
+    const step = ev.shiftKey ? 120 : 24;
+    if (ev.key === "ArrowLeft") setTo((dock.offsetWidth || SEQ_MIN) + step);
+    else if (ev.key === "ArrowRight") setTo((dock.offsetWidth || SEQ_MIN) - step);
+    else return;
+    ev.preventDefault();
+  });
+  return grip;
+}
+
+function closeSequence() {
+  if (seqDock) seqDock.remove();
+  seqDock = null;
+  seqBody = null;
+  clearInterval(seqTimer);
+  seqTimer = null;
+  document.documentElement.style.setProperty("--seq-w", "0px");
+  $("seq-btn").setAttribute("aria-pressed", "false");
+}
+
+// A TOGGLE AND NOT A DRAWER. The panel is a column of the page, so the
+// transcript, the tray and the push-to-talk button stay where they are
+// and stay usable: the whole point of it is watching a turn happen, and
+// a modal made that impossible to do while taking one.
+async function openSequence() {
+  if (seqDock) { closeSequence(); return; }
+  const dock = el("aside", "dock");
+  const top = el("div", "top");
+  const close = el("button", "hbtn", tx("seq.close"));
+  close.onclick = closeSequence;
+  const live = el("span", "live");
+  live.append(el("span", "dot"), el("span", null, tx("seq.live")));
+  top.append(el("span", "path", tx("seq.title")), live, close);
+  const body = el("div", "seq");
+  dock.append(seqGrip(dock), top, body);
+  $("main").append(dock);
+  seqDock = dock;
+  seqBody = body;
+  seqWide(seqWidth() || SEQ_DEFAULT);
+  $("seq-btn").setAttribute("aria-pressed", "true");
+  clearInterval(seqTimer);
+  seqTimer = setInterval(() => { if (seqBody) drawSequence(seqBody); }, SEQ_MS);
+  await drawSequence(body);
+}
 
 // -------------------------------------------------------------- playback
 // ONE element for the page, so two recordings can never sound at once.
@@ -2726,8 +3002,15 @@ function onEvent(kind, data) {
     S.present = data.present || [];
     S.floor = data.floor !== undefined ? data.floor : null;
     renderAll();
+    if (seqBody) drawSequence(seqBody);
   } else if (kind === "entry") {
     updateEntry(data);
+    // A ROW LANDING MEANS A TURN PRODUCED SOMETHING, which is exactly
+    // when the journal grew most. `state` is NOT that signal — it is
+    // published on session open, session reopen and a locale change,
+    // and hooking it alone left the sheet showing whatever was true
+    // when it was opened.
+    if (seqBody) drawSequence(seqBody);
   } else if (kind === "counts") {
     S.counts = data; renderCounts();
   } else if (kind === "consumo") {
@@ -2751,6 +3034,7 @@ function onEvent(kind, data) {
     renderTabs(); renderPanel(); renderCounts();
   } else if (kind === "status") {
     S.status = data; renderPills(); pttFace();
+    if (seqBody) drawSequence(seqBody);
   } else if (kind === "alert") {
     raise(data.kind, data);
   } else if (kind === "days") {
@@ -2972,6 +3256,33 @@ function mockState() {
     })(),
   };
 }
+
+// The sequence behind `?mock=1`: the shape a real demonstration leaves,
+// with the numbers measured on session 20261018_111547 where they were
+// measured at all. Demo content, like `MOCK_DOC`.
+const MOCK_SEQ = {
+  wall: "2026-10-18T22:31:04.100", total: 52000, spans: [
+    { label: "demo 20261018_223104", depth: 0,
+      t0: 0, t1: 32000, detail: "16 capturas · 64 piezas de voz", sub: false },
+    { label: "turno 1", depth: 0, t0: 32000, t1: 45000,
+      detail: "22 413 tok · 0,19 $", sub: false },
+    { label: "en voz", depth: 1, t0: 32000, t1: 34000,
+      detail: "antes de cambiar de tier", sub: false },
+    { label: "enter_tier → escribano", depth: 1, t0: 34000, t1: 34100,
+      detail: "", sub: false },
+    { label: "readFile", depth: 1, t0: 34200, t1: 34700, detail: "", sub: false },
+    { label: "decide", depth: 1, t0: 34900, t1: 40100, detail: "images 32", sub: false },
+    { label: "decide", depth: 1, t0: 40300, t1: 44100, detail: "images 17", sub: false },
+    { label: "spawn_subagent", depth: 1, t0: 44300, t1: 44500, detail: "", sub: false },
+    { label: "documentalista", depth: 1, t0: 44500, t1: 52000,
+      detail: "9 004 tok", sub: true },
+    { label: "readFile", depth: 2, t0: 44800, t1: 48900, detail: "", sub: true },
+    { label: "writeNewFile", depth: 2, t0: 50800, t1: 52000, detail: "", sub: true },
+    { label: "signal_completion", depth: 1, t0: 44600, t1: 44700, detail: "", sub: false },
+    { label: "turno 2", depth: 0, t0: 45000, t1: 52000,
+      detail: "4 120 tok · 0,03 $", sub: false },
+  ],
+};
 let mockTimer = null;
 function mockPlay(e) {
   clearInterval(mockTimer);
@@ -3026,6 +3337,8 @@ function renderAll() {
   // chrome that are not redrawn by a renderer are set here.
   $("demo-btn").onclick = () => (S.demo.id ? stopDemo("") : startDemo());
   $("guest-btn").onclick = () => { S.inviting = !S.inviting; renderGuest(); };
+  $("seq-btn").textContent = tx("seq.open");
+  $("seq-btn").onclick = openSequence;
   $("audit-btn").title = tx("header.ids.title");
   $("audit-btn").textContent = tx("header.ids");
   $("nav-head").textContent = tx("nav.days");
