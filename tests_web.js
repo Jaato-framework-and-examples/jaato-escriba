@@ -193,7 +193,7 @@ vm.runInContext(blocks[blocks.length - 1] +
   "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, " +
   "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows, api, " +
   "renderGuest, renderScratch, renderTranscript, pttFace, paintSequence, " +
-  "seqGrip, sayBack, BACK};",
+  "seqGrip, sayBack, BACK, demoFace, demoUnavailable};",
   ctx);
 const T = sandbox.__test;
 
@@ -1213,6 +1213,58 @@ check("and an answer that never came says that instead",
   T.sayBack(null);
   check("a frame with no clip is dropped", plays.length, before);
   sandbox.Audio = RealAudio;
+}
+
+// ------------------------------------------------- the demo button's reason
+//
+// Screen capture is DESKTOP-ONLY on the web: neither Chrome on Android
+// nor Safari on iOS exposes `getDisplayMedia`, because the platform does
+// not hand a page the screen at all.  So on a phone the demonstration
+// cannot work however the page is written, and the button has to say so
+// before it is pressed -- which is `pttFace`'s rule for the microphone.
+{
+  const btn = sandbox.document.getElementById("demo-btn");
+  const note = sandbox.document.getElementById("demo-note");
+  const real = sandbox.navigator.mediaDevices;
+  // THE SANDBOX IS AN INSECURE ORIGIN, which is why `micReason` is set
+  // throughout this suite -- and the context is the FIRST thing
+  // `demoUnavailable` asks, so these legs have to say which one they
+  // are in rather than inherit it.
+  const secure = sandbox.isSecureContext;
+  sandbox.isSecureContext = true;
+
+  // A DESKTOP BROWSER: nothing is said and the button works.
+  sandbox.navigator.mediaDevices = { getUserMedia: () => {},
+                                     getDisplayMedia: () => {} };
+  check("where the screen can be shared there is no reason",
+        T.demoUnavailable(), null);
+
+  // A PHONE: `getDisplayMedia` is simply absent.
+  sandbox.navigator.mediaDevices = { getUserMedia: () => {} };
+  check("a browser with no getDisplayMedia has one",
+        T.demoUnavailable(), ES["demo.unsupported"]);
+  T.S.demo.reason = T.demoUnavailable();
+  T.demoFace();
+  check("and the button is disabled rather than left to fail",
+        btn && btn.disabled, true);
+  check("with the reason where the invitation used to be",
+        note && note.textContent, ES["demo.unsupported"]);
+  check("marked as a fault", note && note.className, "demo-note bad");
+
+  // THE CONTEXT IS ASKED FIRST, because a page on plain http has no
+  // media APIs at all and "this browser cannot" would blame the browser
+  // for the deployment.
+  sandbox.isSecureContext = false;
+  check("an insecure origin names itself, not the browser",
+        T.demoUnavailable(), ES["demo.insecure"]);
+  sandbox.isSecureContext = true;
+
+  sandbox.navigator.mediaDevices = real;
+  sandbox.isSecureContext = secure;
+  T.S.demo.reason = null;
+  T.demoFace();
+  check("and the invitation comes back when it can be honoured",
+        note && note.textContent, ES["demo.hint"]);
 }
 
 console.log(fail ? `${fail} failure(s)` : "web page renders OK");

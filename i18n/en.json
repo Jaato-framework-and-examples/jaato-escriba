@@ -67,6 +67,7 @@
   "demo.failed": "the demonstration could not be recorded",
   "demo.full": "the demonstration reached its limit and was saved",
   "demo.hint": "records your screen and what you explain, to document afterwards",
+  "demo.insecure": "this browser cannot share the screen without https",
   "demo.recording": "recording… {n} frames",
   "demo.saved": "demonstration saved: {n} frames",
   "demo.shape": "this screen has a shape that cannot be captured",

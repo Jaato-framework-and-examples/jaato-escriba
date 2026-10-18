@@ -541,7 +541,13 @@ const S = {
   // only thing that says one is running: the page cannot be the record
   // of that, because the share can be stopped from the browser's own
   // bar with this script never asked.
-  demo: { id: null, frames: 0, busy: false, msg: "", bad: false },
+  //: `reason` IS SET AT BOOT and never cleared: a browser that cannot
+  //: share a screen will not learn how. Phones are the case -- neither
+  //: Chrome on Android nor Safari on iOS exposes `getDisplayMedia`,
+  //: because the platform does not give pages the screen at all -- so
+  //: the button says so instead of waiting for a press to fail.
+  demo: { id: null, frames: 0, busy: false, msg: "", bad: false,
+          reason: null },
   //: The upload ceiling, in MB, as the server declares it. Unknown until
   //: the first snapshot: a number typed here would be a second copy of
   //: `staging.MAX_BYTES`, free to drift from the one that does the
@@ -1528,9 +1534,27 @@ function demoFace() {
   const on = !!S.demo.id;
   b.textContent = on ? tx("demo.recording", { n: S.demo.frames }) : tx("demo.start");
   b.className = on ? "demo on" : "demo";
-  b.disabled = S.demo.busy;
-  note.textContent = S.demo.msg || tx(on ? "demo.stop" : "demo.hint");
-  note.className = S.demo.msg && S.demo.bad ? "demo-note bad" : "demo-note";
+  // A BUTTON THAT CANNOT WORK IS DISABLED, which is `pttFace`'s rule for
+  // the microphone: the reason is shown instead of being discovered by
+  // pressing. The hint below it invites the person to record something,
+  // and on a phone that invitation cannot be honoured at all.
+  b.disabled = S.demo.busy || !!S.demo.reason;
+  note.textContent = S.demo.reason || S.demo.msg
+    || tx(on ? "demo.stop" : "demo.hint");
+  note.className = (S.demo.reason || (S.demo.msg && S.demo.bad))
+    ? "demo-note bad" : "demo-note";
+}
+
+function demoUnavailable() {
+  // THE SAME SHAPE AS `micUnavailable`, and the same two questions in the
+  // same order: the context first, because a page served over plain http
+  // has no media APIs at all and saying "this browser cannot" would blame
+  // the browser for the deployment.
+  if (!window.isSecureContext) return tx("demo.insecure");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    return tx("demo.unsupported");
+  }
+  return null;
 }
 
 async function demoFrame() {
@@ -1571,9 +1595,10 @@ async function demoFrame() {
 
 async function startDemo() {
   if (S.demo.id || S.demo.busy) return;
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-    S.demo.msg = tx("demo.unsupported"); S.demo.bad = true; demoFace(); return;
-  }
+  // ALREADY ANSWERED BY `demoFace`, which disables the button -- so this
+  // is only reachable by something calling `startDemo` directly, and it
+  // reads the same field rather than asking the browser a second time.
+  if (S.demo.reason) { demoFace(); return; }
   S.demo.busy = true; S.demo.msg = ""; S.demo.bad = false; demoFace();
   try {
     if (MOCK) { S.demo.id = "mock"; S.demo.frames = 0; return; }
@@ -3390,6 +3415,11 @@ function mockTurn(seconds) {
 // counts reading `—`, tabs at zero.  The alert then says what is wrong.
 function renderAll() {
   applyTheme();                 // its label is a string like any other
+  // ASKED HERE AND NOT AT BOOT, unlike the microphone's: the reason is a
+  // translated string, so it cannot be settled before the catalogue is
+  // in hand -- and the person's own locale arrives later still, with the
+  // snapshot, which re-renders.
+  S.demo.reason = demoUnavailable();
   renderLangs(); renderPills(); renderCounts(); renderTabs(); renderPanel();
   renderDays(); renderTranscript(); renderEngines(); pttFace(); demoFace();
   renderGuest(); renderScratch();

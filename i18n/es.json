@@ -67,6 +67,7 @@
   "demo.failed": "no se pudo grabar la demostración",
   "demo.full": "la demostración ha llegado a su límite y se ha guardado",
   "demo.hint": "graba tu pantalla y lo que explicas, para documentarlo después",
+  "demo.insecure": "este navegador no permite compartir la pantalla sin https",
   "demo.recording": "grabando… {n} capturas",
   "demo.saved": "demostración guardada: {n} capturas",
   "demo.shape": "esta pantalla tiene una forma que no se puede capturar",
