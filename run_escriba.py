@@ -66,6 +66,7 @@ import board as _board
 import keys as _keys
 import console
 import enrichment
+import i18n
 import staging
 import housekeeping as _housekeeping
 import memory
@@ -620,8 +621,21 @@ async def main(ws: Path, assume_yes: bool = False,
               # background task, and whatever is drawing — a spinner's line
               # or `rich.Live`'s region — is mangled by anything that writes
               # underneath it.  One writer, and the board is it.
-              watcher = enrichment.Observer(conn, ws,
-                                            board=view)
+              # `say` AND `journal` ARE GIVEN HERE rather than defaulted
+              # inside `enrichment`: every note it writes is read by
+              # somebody, and a module that quietly picked a locale of
+              # its own is how those lines came to be English in a
+              # Spanish transcript.  The terminal is single-locale, so
+              # the choice is explicit and lives at the call site.
+              #
+              # AND IT HAS NO SEQUENCE TO WRITE TO.  `journal` is the web
+              # backend's, where the unreadable-page detail now goes;
+              # here it is dropped on purpose rather than printed, which
+              # is what it was: one English line about a stranger's 404.
+              watcher = enrichment.Observer(
+                  conn, ws, board=view,
+                  say=lambda key, **kw: i18n.t(i18n.DEFAULT, key, **kw),
+                  journal=lambda *a, **kw: None)
               watcher.attach(scribe.client)
 
               # `complete` and not `ask`, now that the scribe is

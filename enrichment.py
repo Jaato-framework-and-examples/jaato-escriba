@@ -305,7 +305,8 @@ def _catalogue(workspace: Path, accepted: List[dict], tags: List[str]) -> List[s
 
 
 async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
-                 workspace: Path, board=None) -> List[str]:
+                 workspace: Path, board=None, say=None,
+                 journal=None) -> List[str]:
     """Memory stored -> search -> judgement -> catalogue. Returns names.
 
     EVERY path says what happened.  It used to report only the one
@@ -318,7 +319,7 @@ async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
     """
     tags = keys_from(args)
     if not tags:
-        board.note("· nothing to search: that memory carried no tags")
+        board.note(say("note.no_tags"))
         return []
     query = " ".join(tags)
     board.searching(query)
@@ -327,16 +328,17 @@ async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
         candidates = await asyncio.wait_for(
             asyncio.to_thread(_search, query), timeout=SEARCH_TIMEOUT)
     except Exception as exc:                              # noqa: BLE001
-        board.note(f"· search «{query}» failed: {type(exc).__name__}: {str(exc)[:120]}")
+        board.note(say("note.search_failed", query=query,
+                        error=f"{type(exc).__name__}: {str(exc)[:120]}"))
         return []
     if not candidates:
-        board.note(f"· «{query}»: the search returned nothing")
+        board.note(say("note.search_empty", query=query))
         return []
 
     seen = _already_seen(workspace)
     fresh = [c for c in candidates if c["url"] not in seen]
     if not fresh:
-        board.note(f"· «{query}»: all {len(candidates)} results were already judged")
+        board.note(say("note.search_seen", query=query, n=len(candidates)))
         return []
     candidates = fresh
 
@@ -345,14 +347,20 @@ async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
     asked = len(candidates)
     candidates, unread = await _pages(candidates)
     if unread:
-        board.note(f"· «{query}»: {len(unread)} of {asked} could not be "
-                   f"read — " + "; ".join(unread))
+        # THE JOURNAL AND NOT THE PERSON.  Which of eight strangers'
+        # pages 404'd is a fact nobody in this conversation can act on,
+        # and it reads as a failure of the escriba: observed
+        # 2026-10-18, a note about the person's own application
+        # reported "docs.trellix.com: HTTP Error 404" into their
+        # transcript.  What the person hears about is what was KEPT.
+        journal("references.unread", query=query, asked=asked,
+                unread=len(unread), hosts=[u.split(":", 1)[0] for u in unread])
     if not candidates:
         return []
     # NOT RECORDED AS DISCARDED.  A page that did not answer today may
     # answer tomorrow, and `_already_seen` is permanent: writing a
     # timeout into it would retire a good reference over a bad minute.
-    verdict = await _judge(query, candidates, conn, board)
+    verdict = await _judge(query, candidates, conn, board, say)
     if verdict is None:
         return []
 
@@ -363,7 +371,8 @@ async def enrich(args: Dict[str, Any], conn: Dict[str, Any],
     discarded = verdict.get("descartadas", [])
     _record_discards(workspace, [d["url"] for d in discarded])
     if not accepted:
-        board.note(f"· «{query}»: {len(discarded)} results judged, none worth keeping")
+        board.note(say("note.search_none_kept", query=query,
+                        n=len(discarded)))
     return _catalogue(workspace, accepted, tags)
 
 
@@ -406,7 +415,8 @@ def _prompt(query: str, candidates: List[Dict[str, str]]) -> str:
 
 
 async def _judge(query: str, candidates: List[Dict[str, str]],
-                 conn: Dict[str, Any], board=None) -> Optional[dict]:
+                 conn: Dict[str, Any], board=None,
+                 say=None) -> Optional[dict]:
     """One turn of the judge. `complete` because this session SHOULD end."""
     from jaato_sdk import IPCClient
 
@@ -431,7 +441,8 @@ async def _judge(query: str, candidates: List[Dict[str, str]],
         # indistinguishable from "nothing relevant was found", and that is
         # the worst possible failure: the system looks fine and searches
         # for nothing.
-        board.note(f"· the judge failed: {type(exc).__name__}: {str(exc)[:160]}")
+        board.note(say("note.judge_failed",
+                        error=f"{type(exc).__name__}: {str(exc)[:160]}"))
         return None
 
 
@@ -453,8 +464,19 @@ class Observer:
     that will at best matter on the next turn.
     """
 
-    def __init__(self, conn: Dict[str, Any], workspace: Path, board=None):
+    def __init__(self, conn: Dict[str, Any], workspace: Path, board=None,
+                 say=None, journal=None):
         self._conn, self._workspace = conn, workspace
+        #: THIS PERSON'S LANGUAGE, and the reason it is passed in rather
+        #: than read here: every line below is read by somebody, and this
+        #: module used to write them in English into a Spanish
+        #: transcript -- with `note.searching` already sitting translated
+        #: in the catalogue, unused, because the code printed its own
+        #: string instead.
+        self._say = say
+        #: Where the plumbing goes.  A page that 404'd is not news for
+        #: the person; it is news for whoever is reading the sequence.
+        self._journal = journal
         #: Every line this used to print now goes to the board, which
         #: decides whether it becomes a printed line or a panel row.
         #: With a live display running a stray `print` lands inside
@@ -518,11 +540,12 @@ class Observer:
     async def _work(self, args: Dict[str, Any]) -> None:
         query = " ".join(keys_from(args))
         if query and query in self._searched:
-            self._board.note(f"· «{query}»: already searched this session")
+            self._board.note(self._say("note.searching", query=query))
             return
         if query:
             self._searched.add(query)
-        names = await enrich(args, self._conn, self._workspace, self._board)
+        names = await enrich(args, self._conn, self._workspace, self._board,
+                             self._say, self._journal)
         if not names:
             return
         self.found.extend(names)
@@ -551,7 +574,8 @@ class Observer:
         try:
             await self._client.execute_command("references", ["reload"])
         except Exception as exc:                          # noqa: BLE001
-            self._board.note(f"· could not reload the catalogue: {type(exc).__name__}")
+            self._board.note(self._say("note.catalogue_stale",
+                                       error=type(exc).__name__))
 
     async def drain(self) -> None:
         """Let anything in flight finish before closing."""

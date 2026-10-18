@@ -791,7 +791,9 @@ class Person:
         self._scribe = await self._stack.__aenter__()
         self.archive.identify(self._scribe.session_id,
                               getattr(self._scribe.client, "client_id", None))
-        self._watcher = enrichment.Observer(self.conn, self.ws, board=self.board)
+        self._watcher = enrichment.Observer(
+            self.conn, self.ws, board=self.board, say=self.say,
+            journal=self.journal.note)
         self._watcher.attach(self._scribe.client)
         self._consulted.attach(self._scribe.client)
         self._scribe.client.subscribe(EventType.CONTEXT_UPDATED, self._context)

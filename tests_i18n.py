@@ -64,5 +64,27 @@ stragglers = sorted({m for m in spanish.findall(body)
                      if not m.startswith('"//')})
 check("no Spanish string is left hardcoded in the page", stragglers, [])
 
+# ------------------------------- the notes the enrichment observer writes
+#
+# NOT ONLY THE PAGE.  `enrichment.py` writes to the person's transcript
+# too, and for months it wrote in ENGLISH into a Spanish conversation --
+# with `note.searching` sitting translated in the catalogue, unused,
+# because the code printed its own string instead.  The page had a guard
+# and this module had none, which is exactly why this one drifted.
+#
+# Observed 2026-10-18 on the deployed box: "· «aplicación_web bundles
+# documentación»: 1 of 8 could not be read — docs.trellix.com: HTTP
+# Error 404: Not Found".
+notes = (HERE / "enrichment.py").read_text(encoding="utf-8")
+literal = re.findall(r'note\(\s*f?"[^"]*·', notes)
+check("no note in enrichment is a hardcoded string", literal, [])
+# AND EVERY KEY IT NAMES EXISTS.  A `say` of a key nobody wrote is a
+# KeyError in a background task, which is the quietest failure here:
+# the search simply stops happening.
+used = set(re.findall(r'say\(\s*"([\w.]+)"', notes))
+check("every key enrichment names is in the catalogue",
+      sorted(k for k in used if k not in base), [])
+check("and it names some", len(used) > 4, True)
+
 print("i18n OK" if not FAILED else f"{len(FAILED)} failure(s)")
 raise SystemExit(1 if FAILED else 0)
