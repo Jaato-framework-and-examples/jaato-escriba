@@ -539,6 +539,12 @@ class Person:
         #: Draft transcriptions in flight, held so they are
         #: not garbage-collected mid-await.
         self._drafts: set = set()
+        #: The person's own words WHILE they are still
+        #: speaking: a ring of their press, and the task
+        #: reading windows off it.  Only where a draft
+        #: model was named, and only for the owner.
+        self._dictation: Optional[_live.Narration] = None
+        self._dictating: Optional[asyncio.Task] = None
         #: How full the window is, from ContextUpdatedEvent, and what the
         #: session has spent, from the daemon's own consumption report.
         #: Two questions with two sources, never merged into one number:
@@ -2129,11 +2135,96 @@ class Person:
             "stream": stream, "rate": rate, "channels": channels,
             "pcm": base64.b64encode(pcm).decode("ascii"),
             "by": by, "by_id": by_id})
+        # THE OWNER'S OWN PRESS ONLY.  `by` names somebody the host
+        # invited in, and a guest's words are not transcribed into the
+        # host's page: `escriba_web/CLAUDE.md`'s rule is that what
+        # travels outward is built key by key, and this line would be a
+        # second channel nobody declared.
+        if not by:
+            self._dictate(pcm, rate, channels)
+
+    #: How much of the press is read each time, and how often.  `tiny`
+    #: reads twenty seconds in about two (measured 2026-10-18 at ten
+    #: times real time), so a five-second step never queues behind
+    #: itself.  A TRAILING window and not the whole press: transcribing
+    #: everything each time costs more as the press grows -- 11,9 s at
+    #: 119 s -- and stitching window transcripts together cuts words,
+    #: which is why the ARCHIVE still comes from one pass at release.
+    DICTATION_WINDOW = 20.0
+    DICTATION_STEP = 5.0
+
+    def _dictate(self, pcm: bytes, rate: int, channels: int) -> None:
+        """Keep the owner's press, and start reading it if nothing is.
+
+        THE SAME FRAMES THE ROOM ALREADY GETS.  The page has tapped the
+        microphone for the room fan-out since guests existed, so the
+        audio of a press is already arriving here -- this adds no tap, no
+        route and no second encoder, which is `demo_voice`'s own
+        argument for being a second consumer rather than a new path.
+        """
+        if self.draft is None:
+            return
+        if self._dictation is None:
+            self._dictation = _live.Narration(window=self.DICTATION_WINDOW)
+            self._dictating = asyncio.create_task(self._dictation_loop())
+        self._dictation.add(pcm, rate, channels)
+
+    async def _dictation_loop(self) -> None:
+        """Read the trailing window every few seconds, until the press ends."""
+        while not self._stop.is_set():
+            await asyncio.sleep(self.DICTATION_STEP)
+            held = self._dictation
+            if held is None:
+                return
+            window = held.wav(self.DICTATION_WINDOW)
+            if not window:
+                continue
+            try:
+                text = await asyncio.to_thread(self._read_window, window)
+            except Exception as exc:                          # noqa: BLE001
+                # The press is unaffected: the recording the model and
+                # the archive get is the browser's, not this.
+                self.journal.note("dictation.failed",
+                                  error=type(exc).__name__)
+                return
+            if self._dictation is None:        # released while reading
+                return
+            self.hub.publish("dictado", {"text": text})
+
+    def _read_window(self, window: bytes) -> str:
+        """One window, through the draft model. Off-thread."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
+            tmp.write(window)
+            tmp.flush()
+            return self.draft.transcribe(Path(tmp.name), self.locale)
+
+    def _dictation_end(self) -> None:
+        """The press is over: the row takes over from the line.
+
+        NOTHING IS PUBLISHED IF NOTHING WAS DICTATED.  A deployment that
+        named no draft model does not run this at all, and a frame
+        announcing the end of something that never started is a shape
+        every reader of the stream has to learn for no reason --
+        `tests_guests` counts the frames a press produces, and caught
+        exactly that.
+        """
+        if self._dictation is None and self._dictating is None:
+            return
+        self._dictation = None
+        if self._dictating is not None:
+            self._dictating.cancel()
+            self._dictating = None
+        # CLEARED EXPLICITLY, because the line is not the transcript: the
+        # entry's own words arrive seconds later and the two must not be
+        # on screen at once saying different things.
+        self.hub.publish("dictado", {"text": ""})
 
     def voice_end(self, stream: str, by_id: str) -> None:
         """That microphone stopped.  Ends the stream the pieces built."""
         self.hub.publish("speech", {"stream": stream, "final": True,
                                     "by_id": by_id})
+        self._dictation_end()
 
     def day(self, date: str) -> List[dict]:
         """A past day's conversation, read back out of the manifest.

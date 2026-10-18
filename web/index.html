@@ -227,6 +227,8 @@ nav .note code{font-family:var(--mono)}
 .demo[disabled]{opacity:.55;cursor:default}
 /* Recording: inverted, so the tray says which of the two is live. */
 .demo.on{background:var(--panel);color:var(--wait)}
+.dictado{margin:6px 0 0;font-size:13px;line-height:1.45;color:var(--dim);
+  font-style:italic}
 .demo-note{margin-top:6px;font-size:13px;color:var(--muted);text-align:center}
 .demo-note.bad{color:var(--bad)}
 .ptt .time{font-weight:600;font-size:clamp(24px,3vw,40px);font-variant-numeric:tabular-nums}
@@ -484,6 +486,12 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
         <button class="demo" id="demo-btn"></button>
         </div>
         <div class="demo-note" id="demo-note"></div>
+        <!-- What the person is saying, while they are still saying it.
+             Not the transcript: the row's own words arrive seconds later
+             from a single pass over the whole recording, and this line is
+             cleared the moment the press ends so the two are never on
+             screen at once disagreeing. -->
+        <p class="dictado" id="dictado" hidden></p>
       </div>
     </section>
 
@@ -3013,6 +3021,8 @@ function onEvent(kind, data) {
     if (seqBody) drawSequence(seqBody);
   } else if (kind === "backchannel") {
     sayBack(data);
+  } else if (kind === "dictado") {
+    dictating(data);
   } else if (kind === "counts") {
     S.counts = data; renderCounts();
   } else if (kind === "consumo") {
@@ -3122,6 +3132,22 @@ let source = null;
 // leaks one element every twenty seconds for the length of a demo.
 const BACK = { el: null, last: 0 };
 
+//: The person's own words while the press is still going, read off the
+//: microphone the room fan-out already taps.  DISPLAY ONLY: the row's
+//: text comes from one pass over the whole recording when the press
+//: ends, because window transcripts cut words at their edges and the
+//: archive gets exactly one answer to "what did they say".
+function dictating(data) {
+  const line = $("dictado");
+  if (!line) return;
+  const text = (data && data.text || "").trim();
+  // EMPTY MEANS THE PRESS ENDED, which the server says explicitly rather
+  // than leaving the last window on screen beside the row that replaces
+  // it.
+  line.textContent = text;
+  line.hidden = !text;
+}
+
 function sayBack(data) {
   if (!data || !data.clip) return;
   // A GUEST HEARS IT TOO, deliberately: they already hear the escriba,
@@ -3154,7 +3180,7 @@ function connect() {
   const es = source = new EventSource(api("/events"));
   for (const kind of ["state", "entry", "counts", "items", "status", "alert",
                       "days", "wiki", "consumo", "closing", "speech", "closed",
-                      "room", "invitacion", "backchannel"]) {
+                      "room", "invitacion", "backchannel", "dictado"]) {
     es.addEventListener(kind, (m) => onEvent(kind, JSON.parse(m.data)));
   }
   es.onopen = () => {

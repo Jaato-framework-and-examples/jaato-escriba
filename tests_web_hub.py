@@ -1022,6 +1022,56 @@ async def main():
           (len(skipped), skipped[-1]["seconds"] if skipped else None),
           (1, 108.0))
 
+    # ------------------------------------------------- live dictation
+    #
+    # The person's own words WHILE they are still speaking, read off the
+    # microphone the room fan-out has tapped since guests existed -- no
+    # new tap, no new route, no second encoder.
+    #
+    # DISPLAY ONLY.  Window transcripts cut words at their edges, so the
+    # archive still comes from one pass over the whole recording at
+    # release; this is a line that is cleared the moment the press ends.
+    dictator = _Person("dict-sub-01",
+                       root=Path(tempfile.mkdtemp(prefix="escriba-dict-")))
+    heard_frames = []
+    dictator.hub.publish = lambda kind, payload: heard_frames.append(
+        (kind, payload))
+    frame = b"\x00\x01" * 480
+
+    # WITHOUT A DRAFT MODEL THERE IS NO DICTATION, which is
+    # `--transcribe`'s own rule: a deployment that named no fast model
+    # gets the room fan-out exactly as it was.
+    dictator.draft = None
+    dictator.voice("s1", frame, 48000, 1, "", "me")
+    check("with no draft model nothing is kept", dictator._dictation, None)
+    check("and the room still hears it",
+          [k for k, _p in heard_frames], ["speech"])
+
+    # A GUEST'S WORDS ARE NOT TRANSCRIBED INTO THE HOST'S PAGE.
+    # `escriba_web/CLAUDE.md`'s rule is that what travels outward is
+    # built key by key; this line would be a second channel nobody
+    # declared, carrying one person's words into another's browser.
+    dictator.draft = object()           # merely present
+    heard_frames.clear()
+    dictator.voice("s2", frame, 48000, 1, "ana", "guest-1")
+    check("a guest's press is not dictated", dictator._dictation, None)
+
+    # THE OWNER'S OWN PRESS IS.
+    dictator.voice("s3", frame, 48000, 1, "", "me")
+    check("the owner's press is kept", dictator._dictation is not None, True)
+    check("and the ring holds it", round(dictator._dictation.held, 3), 0.01)
+
+    # AND THE PRESS ENDING CLEARS THE LINE EXPLICITLY, rather than
+    # leaving the last window on screen beside the row that replaces it.
+    heard_frames.clear()
+    dictator.voice_end("s3", "me")
+    check("the press ending drops the ring", dictator._dictation, None)
+    check("and says so, so the line can be cleared",
+          [(k, p.get("text")) for k, p in heard_frames if k == "dictado"],
+          [("dictado", "")])
+    if dictator._dictating is not None:
+        dictator._dictating.cancel()
+
     return 1 if fail else 0
 
 
