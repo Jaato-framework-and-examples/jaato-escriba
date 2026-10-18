@@ -39,6 +39,7 @@ import archive as _archive                                         # noqa: E402
 import housekeeping as _housekeeping                               # noqa: E402
 import transcribe as _transcribe                                   # noqa: E402
 import demo as _demo                                              # noqa: E402
+import demo_live as _live                                         # noqa: E402
 import staging as _staging                                        # noqa: E402
 import workspace as _workspace                                     # noqa: E402
 
@@ -64,6 +65,32 @@ PAGE = HERE.parent / "web" / "index.html"
 #: only safe treatment of a path fragment from a browser is to refuse
 #: anything that is not exactly the shape it should be.
 ATT = re.compile(r"^att_[0-9a-f]{16}$")
+
+
+async def _pcm(request: Request) -> Tuple[bytes, int, int]:
+    """One piece of live microphone from the page: the body and its shape.
+
+    SHARED BY THE TWO TAPS, which send the same thing to different ends
+    -- the room hears one and the escriba hears the other -- and the
+    shape a browser may send is a property of the browser, not of who
+    is listening.  One check, so the two cannot drift into disagreeing
+    about what a sample is.
+    """
+    try:
+        rate = int(request.query_params.get("rate", ""))
+        channels = int(request.query_params.get("channels", ""))
+    except ValueError as exc:
+        raise HTTPException(400, "rate and channels are integers") from exc
+    if not (8000 <= rate <= 192000) or channels not in (1, 2):
+        raise HTTPException(400, "not an audio shape this reads")
+    pcm = await request.body()
+    # WHOLE SAMPLES ONLY.  The page reads the payload back as one
+    # `Int16Array` when it plays it, so a trailing half sample would
+    # shift every value after it by a byte; and framed into a WAV for
+    # the model it would do the same to the encoder.
+    if len(pcm) % (channels * _live.WIDTH):
+        raise HTTPException(400, "a partial sample")
+    return pcm, rate, channels
 
 # No Swagger, no ReDoc, no schema.  This serves one page to one person;
 # an API explorer is surface with no reader, and `/docs` sitting beside a
@@ -399,6 +426,37 @@ async def demo_frame(request: Request, ident: str, frame: UploadFile,
         raise HTTPException(413, f"{exc}") from exc
     except _demo.NoSuchDemo as exc:
         raise HTTPException(404, "no hay ninguna demostración abierta con ese id") from exc
+
+
+@app.post("/demo/{ident}/voz")
+async def demo_voice(request: Request, ident: str) -> Response:
+    """The narration of a demonstration, live, while it is still going on.
+
+    ITS OWN ROUTE AND NOT `/voz`, which is the decision this carries.
+    `/voz` ends at `Person.voice`, which fans the frames out to whoever
+    else is in the room -- right for a press, and for a demonstration it
+    would broadcast the host's narration to a guest as a side effect of
+    the escriba listening.  Who hears a demonstration is a question for
+    the guest boundary, so it is asked by having a separate end rather
+    than answered by reusing one.
+
+    SEPARATE FROM `/cerrar` TOO, for the reason `_voice` gives against
+    `/talk`: the blob that becomes the archive's narration must not grow
+    a new failure mode, so this is a second consumer of the same
+    microphone and a piece of it going missing costs the escriba a
+    fragment of what it heard rather than the demonstration its record.
+    """
+    person = await person_of(request)
+    pcm, rate, channels = await _pcm(request)
+    if pcm:
+        try:
+            person.demo_voice(ident, pcm, rate, channels)
+        except _demo.NoSuchDemo as exc:
+            raise HTTPException(
+                404, "no hay ninguna demostración abierta con ese id") from exc
+        except _live.ShapeChanged as exc:
+            raise HTTPException(400, f"{exc}") from exc
+    return Response(status_code=204)
 
 
 @app.post("/demo/{ident}/cerrar")
@@ -1012,20 +1070,7 @@ async def _voice(request: Request, person: Person, name: str,
     if request.query_params.get("final") == "1":
         person.voice_end(stream, token(principal))
         return Response(status_code=204)
-    try:
-        rate = int(request.query_params.get("rate", ""))
-        channels = int(request.query_params.get("channels", ""))
-    except ValueError as exc:
-        raise HTTPException(400, "rate and channels are integers") from exc
-    if not (8000 <= rate <= 192000) or channels not in (1, 2):
-        raise HTTPException(400, "not an audio shape this plays")
-    pcm = await request.body()
-    frame_bytes = channels * 2
-    # WHOLE SAMPLES ONLY. The page reads the payload as one `Int16Array`,
-    # so a trailing half sample would shift every value after it by a
-    # byte and play as noise.
-    if len(pcm) % frame_bytes:
-        raise HTTPException(400, "a partial sample")
+    pcm, rate, channels = await _pcm(request)
     if pcm:
         person.voice(stream, pcm, rate, channels, name, token(principal))
     return Response(status_code=204)

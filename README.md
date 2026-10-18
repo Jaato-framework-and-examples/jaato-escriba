@@ -777,6 +777,7 @@ in every person's directory.
 | `keys.py` | One reader for the terminal's keys, because there can only be one. |
 | `memory.py` | What was left uncurated last time. |
 | `archive.py` | Keeps both halves of the audio, and the manifest that ties them to the turn. |
+| `demo_live.py` | The narration of a demonstration while it is still being recorded: the page's PCM tap, held as a bounded window, framed as WAV on request. The blob the person keeps is untouched. |
 | `enrichment.py` | Search, judge and catalogue what is outside. |
 | `staging.py` | A document the person hands over: it lands under `staged/` and is declared as a `local` reference, so the escriba reads it with `readFile` when asked. The other writer of the same catalogue. |
 | `ptt_capture.py`, `pulse_playback.py` | Taken from `jaato-cascade-audio-interchange` and since diverged — a state sink, a playback outcome, and `read_keys`. They still know nothing about jaato. |

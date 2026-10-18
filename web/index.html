@@ -1419,6 +1419,11 @@ let demoChunks = [];
 let demoTimer = null;
 let demoVideo = null;
 let demoStartedAt = 0;
+//: The live narration on its way to the escriba while the demo records.
+//: SEPARATE FROM `demoRec`, which keeps doing exactly what it did: that
+//: blob is the narration the person keeps, and it is the last thing that
+//: should grow a new failure mode.
+let demoTap = null;
 
 // The longest edge down to `FRAME_MAX_SIDE`, and nothing enlarged.
 //
@@ -1507,7 +1512,12 @@ async function startDemo() {
     const mine = await mic();
     const res = await fetch(api("/demo/abrir"), { method: "POST" });
     if (!res.ok) throw new Error(res.status);
-    S.demo.id = (await res.json()).id;
+    // CAPTURED, and the tap below closes over this rather than over
+    // `S.demo.id`: that field is cleared when the demo ends, and a
+    // frame still in flight at that moment would address its POST to
+    // the word "null".
+    const ident = (await res.json()).id;
+    S.demo.id = ident;
     S.demo.frames = 0;
 
     demoVideo = document.createElement("video");
@@ -1519,6 +1529,24 @@ async function startDemo() {
     demoRec = new MediaRecorder(mine);
     demoRec.ondataavailable = (ev) => { if (ev.data && ev.data.size) demoChunks.push(ev.data); };
     demoRec.start();
+    // STARTED BESIDE THE RECORDER AND NEVER AWAITED BY IT, as the room's
+    // tap is beside the utterance recorder: the demonstration must not
+    // wait on the live tap coming up, and a tap that fails to start
+    // costs the escriba its hearing of this one demo and nothing else —
+    // the whole narration still arrives as a blob at the close.
+    tapOn({
+      frame: (rate) => api("/demo/" + ident + "/voz?rate=" + rate +
+                           "&channels=1"),
+      final: null,
+    }).then((t) => {
+      if (!t) return;
+      // A DEMONSTRATION CAN END WHILE THE TAP IS STILL OPENING — the
+      // share refused from the browser's own bar a second after it was
+      // granted. Handing it to `demoTap` then would leave a tap nobody
+      // stops, posting into a recording the server has closed, for as
+      // long as the page is open.
+      if (S.demo.id === ident) demoTap = t; else t.stop();
+    }).catch(() => {});
 
     // STOPPED FROM THE BROWSER'S OWN BAR is the ordinary way a person
     // ends a share, and this script is not asked first. Closing on it
@@ -1553,6 +1581,7 @@ async function startDemo() {
 // the demo never opened, and by both endings below.
 async function teardownDemo() {
   clearInterval(demoTimer); demoTimer = null;
+  if (demoTap) { demoTap.stop(); demoTap = null; }
   if (demoRec && demoRec.state !== "inactive") { try { demoRec.stop(); } catch (e) {} }
   if (demoShare) { for (const t of demoShare.getTracks()) t.stop(); }
   demoShare = null; demoVideo = null;
@@ -1565,6 +1594,11 @@ async function stopDemo(msg) {
   demoClosing = true;
   S.demo.busy = true; demoFace();
   clearInterval(demoTimer); demoTimer = null;
+  // BEFORE THE RECORDER IS STOPPED, so the last piece of live narration
+  // is on its way up while the blob is still being sealed rather than
+  // arriving after the demo it belongs to is closed — which the route
+  // would answer with a 404, the demo no longer being open.
+  if (demoTap) { demoTap.stop(); demoTap = null; }
   const audio = await new Promise((done) => {
     if (!demoRec || demoRec.state === "inactive") return done(null);
     demoRec.onstop = () => done(new Blob(demoChunks, { type: demoRec.mimeType || "audio/webm" }));
@@ -2394,7 +2428,10 @@ async function mic() {
 // what `onSpeech` already schedules for the escriba's own voice, so both
 // voices arrive through one decoder and a second playback path never has
 // to exist.
-const TAP = { ctx: null, node: null, src: null, stream: null, busy: null };
+// ONE CONTEXT AND ONE REGISTERED WORKLET, shared by every tap: a module
+// is registered per `AudioContext`, and a second context reading the
+// same microphone would cost a second resampler for nothing.
+const AUDIO = { ctx: null, ready: null };
 
 // 128 frames at a time is what the platform hands a worklet; this
 // gathers them into the same half second the escriba's relay coalesces
@@ -2428,58 +2465,87 @@ function tapId() {
   return Math.random().toString(36).slice(2, 12).replace(/[^a-z0-9]/g, "x");
 }
 
+// A TAP OWNS ITS OWN STATE, and that is the whole of this change from
+// the single holder it used to be: the room's tap and a demonstration's
+// tap post to different ends and live for different lengths of time, so
+// one holder would let whichever started second take the first one's
+// frames and send them to the wrong place.
+//
+// `dest.frame(rate)` is where a piece goes; `dest.final` is the marker
+// that closes a stream, or null for an end that has none — a
+// demonstration's close is its own event and needs no second word for
+// it.
+//
 // ONE UPLOAD IN FLIGHT, AND THE NEXT ONE AFTER IT. Separate POSTs can
 // arrive out of order, and half a second of voice in the wrong place is
 // audible as garble. Chaining them keeps the order by construction,
 // which is cheaper and more honest than a sequence number and a reorder
 // buffer on the far side.
-function tapSend(pcm) {
-  if (!TAP.stream) return;
-  const q = TAP.busy || Promise.resolve();
-  TAP.busy = q.then(() => {
-    if (!TAP.stream) return;
-    return fetch(api("/voz?stream=" + TAP.stream + "&rate=" + TAP.rate +
-                     "&channels=1"),
-                 { method: "POST", body: pcm,
-                   headers: { "Content-Type": "application/octet-stream" } })
-      .catch(() => {});
-  });
-}
-
-async function tapStart() {
-  if (!navigator.mediaDevices || !window.AudioWorkletNode) return;
+async function tapOn(dest) {
+  if (!navigator.mediaDevices || !window.AudioWorkletNode) return null;
   const s = await mic();
-  if (!TAP.ctx) {
-    TAP.ctx = new AudioContext();
+  if (!AUDIO.ctx) {
+    AUDIO.ctx = new AudioContext();
     const url = URL.createObjectURL(new Blob([TAP_WORKLET],
                                              { type: "application/javascript" }));
-    await TAP.ctx.audioWorklet.addModule(url);
-    URL.revokeObjectURL(url);
+    // HELD AS A PROMISE rather than awaited here, so a second tap
+    // opening while the first is still registering waits for the same
+    // registration instead of racing a second one.
+    AUDIO.ready = AUDIO.ctx.audioWorklet.addModule(url)
+      .finally(() => URL.revokeObjectURL(url));
   }
-  if (TAP.ctx.state === "suspended") await TAP.ctx.resume();
-  TAP.rate = TAP.ctx.sampleRate;
-  TAP.stream = tapId();
-  TAP.src = TAP.ctx.createMediaStreamSource(s);
-  TAP.node = new AudioWorkletNode(TAP.ctx, "tap");
-  TAP.node.port.onmessage = (ev) => tapSend(ev.data);
+  await AUDIO.ready;
+  if (AUDIO.ctx.state === "suspended") await AUDIO.ctx.resume();
+  const rate = AUDIO.ctx.sampleRate;
+  const tap = { on: true, busy: null };
+  const src = AUDIO.ctx.createMediaStreamSource(s);
+  const node = new AudioWorkletNode(AUDIO.ctx, "tap");
+  node.port.onmessage = (ev) => {
+    if (!tap.on) return;
+    const q = tap.busy || Promise.resolve();
+    tap.busy = q.then(() => {
+      if (!tap.on) return;
+      return fetch(dest.frame(rate),
+                   { method: "POST", body: ev.data,
+                     headers: { "Content-Type": "application/octet-stream" } })
+        .catch(() => {});
+    });
+  };
   // NOT CONNECTED TO THE SPEAKERS. The node's output goes nowhere: this
   // reads the microphone, and routing it to `destination` would play the
   // person's own voice back at them with the hardware's latency on it.
-  TAP.src.connect(TAP.node);
+  src.connect(node);
+  return {
+    stop() {
+      if (!tap.on) return;
+      tap.on = false;
+      try { src.disconnect(); } catch (e) {}
+      try { node.disconnect(); } catch (e) {}
+      const end = dest.final ? dest.final() : null;
+      // AFTER whatever is still going up, so the end marker cannot
+      // overtake the last piece of the utterance it ends.
+      if (end) {
+        (tap.busy || Promise.resolve()).then(
+          () => fetch(end, { method: "POST" }).catch(() => {}));
+      }
+    },
+  };
+}
+
+//: The room's tap, for as long as a press lasts.
+let pttTap = null;
+
+async function tapStart() {
+  const stream = tapId();
+  pttTap = await tapOn({
+    frame: (rate) => api("/voz?stream=" + stream + "&rate=" + rate +
+                         "&channels=1"),
+    final: () => api("/voz?stream=" + stream + "&final=1"),
+  });
 }
 
 function tapStop() {
-  const stream = TAP.stream;
-  TAP.stream = null;
-  if (TAP.src) { try { TAP.src.disconnect(); } catch (e) {} TAP.src = null; }
-  if (TAP.node) { try { TAP.node.disconnect(); } catch (e) {} TAP.node = null; }
-  // AFTER whatever is still going up, so the end marker cannot overtake
-  // the last piece of the utterance it ends.
-  if (stream) {
-    (TAP.busy || Promise.resolve()).then(
-      () => fetch(api("/voz?stream=" + stream + "&final=1"), { method: "POST" })
-              .catch(() => {}));
-  }
+  if (pttTap) { pttTap.stop(); pttTap = null; }
 }
 
 async function startRec() {

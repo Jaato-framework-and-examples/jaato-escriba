@@ -31,7 +31,7 @@ import sys
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -49,6 +49,8 @@ import staging                                                   # noqa: E402
 import voice                                                     # noqa: E402
 import yaml                                                      # noqa: E402
 import transcribe as _transcribe                                 # noqa: E402
+import demo as _demo                                             # noqa: E402
+import demo_live as _live                                        # noqa: E402
 import workspace as _workspace                                   # noqa: E402
 from run_escriba import (BUDGET_ENDED, DRAIN, SessionGone,      # noqa: E402
                          _reconcile, _turn)
@@ -502,6 +504,14 @@ class Person:
         self._stop = asyncio.Event()
         self._turn_lock = asyncio.Lock()
         self._opening = asyncio.Lock()
+        #: The live narration of the demonstration being recorded right
+        #: now, keyed by its id, or None between demonstrations.  Held
+        #: per person and in memory rather than in the demo's directory:
+        #: it is transport and not an artifact -- the narration the
+        #: person keeps arrives as one blob at close -- and `demo`'s byte
+        #: ceiling bounds what the demonstration COSTS THEM on disk,
+        #: which a transport buffer has no business spending.
+        self._demo_voice: Optional[Tuple[str, _live.Narration]] = None
         #: How full the window is, from ContextUpdatedEvent, and what the
         #: session has spent, from the daemon's own consumption report.
         #: Two questions with two sources, never merged into one number:
@@ -1515,6 +1525,37 @@ class Person:
                     self._ended(over)
                     raise
 
+    def demo_voice(self, ident: str, pcm: bytes, rate: int,
+                   channels: int) -> None:
+        """One piece of the narration of the demonstration being recorded.
+
+        THE RING IS MADE ON THE FIRST PIECE, not when the demonstration
+        opens, and the question "is this demo running" is asked of the
+        DIRECTORY rather than of what this process remembers -- which is
+        `demo.open_id`'s own rule, for its own reason: a server restarted
+        mid-recording still has the frames on disk and the page still
+        has its id, so an in-memory answer would refuse the rest of a
+        demonstration that is plainly going on.
+        """
+        if self._demo_voice is None or self._demo_voice[0] != ident:
+            if _demo.open_id(self.ws) != ident:
+                raise _demo.NoSuchDemo(ident)
+            self._demo_voice = (ident, _live.Narration())
+        self._demo_voice[1].add(pcm, rate, channels)
+
+    def demo_heard(self, seconds: float) -> bytes:
+        """The last `seconds` of the live narration, as a WAV file.
+
+        EMPTY WHEN NOTHING IS RECORDING, which is an answer and not a
+        failure: a demonstration with the microphone refused reaches
+        close having sent nothing, and so does the gap between two of
+        them.  `voice._to_mp3` is what compresses this when a caller
+        wants to spend the encode; framing is all that happens here.
+        """
+        if self._demo_voice is None:
+            return b""
+        return self._demo_voice[1].wav(seconds)
+
     def demo_opened(self, ident: str) -> None:
         """Tell the escriba a demonstration has started recording.
 
@@ -1582,6 +1623,12 @@ class Person:
         escriba merely failed to say so -- `note.turn_timeout` for that,
         the same line every other unanswered turn uses.
         """
+        # THE LIVE BUFFER IS DONE THE MOMENT THE BLOB EXISTS.  What it
+        # held was the recent past of a recording in progress; the whole
+        # narration has just landed in the demo's own directory, encoded
+        # and complete, so keeping a lossy window of it in memory until
+        # the next demonstration would be holding the worse copy.
+        self._demo_voice = None
         self.board.note(self.say("note.demo_saved", frames=manifest["frames"]))
         if self._scribe is None:
             # NOT SILENT: the demonstration is on disk and nothing is

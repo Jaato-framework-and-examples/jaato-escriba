@@ -327,6 +327,7 @@ finally:
 # `readFile` calls on the same session, then the `tool_calls` ceiling.
 import escriba_web.driver as _driver                     # noqa: E402
 from escriba_web.driver import Person                     # noqa: E402
+import demo_live as _live                                 # noqa: E402
 
 MANIFEST = {"id": "20261017_223855_438804", "frames": 49,
             "root": "demo/20261017_223855_438804",
@@ -410,6 +411,15 @@ async def _commission() -> None:
         finally:
             _driver._turn = real
         check("a commission that times out is not announced", len(tried), 1)
+
+        # AND THE LIVE BUFFER IS RELEASED, on the ordinary ending.  What
+        # it held was the recent past of a recording in progress, and
+        # the whole narration has just landed in the demo's own
+        # directory -- so keeping a lossy window of it in memory until
+        # the next demonstration would be holding the worse copy.
+        person._demo_voice = ("20261017_223855_438804", _live.Narration())
+        await _said(person, MANIFEST)
+        check("closing releases the live narration", person._demo_voice, None)
     finally:
         shutil.rmtree(root)
 
@@ -498,6 +508,106 @@ check("says what an imageless call costs",
 check("and caps what reaches the documentalista",
       "12 mejores" in _e_persona, True)
 
+# ------------------------------------------- the narration, while it runs
+#
+# THE LIVE PATH, which exists because `MediaRecorder` cannot be cut into
+# pieces anything can decode: only the first chunk of a webm carries the
+# header.  So the narration the escriba can hear DURING a demonstration
+# comes off a second consumer of the same microphone, as raw samples,
+# and the blob the person keeps is untouched.
+#
+# WHAT IS ASSERTED HERE IS THE BOUND AND THE SHAPE, not when anybody
+# listens: a window is a ceiling on memory and deciding when to look at
+# it is a separate question that does not live in this module either.
+n = _live.Narration(window=1.0)
+n.add(b"\x00\x00" * 8000, 16000, 1)
+check("what has arrived is what is held", (n.held, n.heard), (0.5, 0.5))
+n.add(b"\x01\x00" * 16000, 16000, 1)
+check("the window is a ceiling on what is held", n.held, 1.0)
+check("and not on what the demonstration has said", n.heard, 1.5)
+check("the oldest is what falls off",
+      n.tail(1.0)[:2], b"\x01\x00")
+
+wav = n.wav(1.0)
+check("the tail frames as a WAV", wav[:4] + wav[8:12], b"RIFFWAVE")
+check("of exactly the samples held", len(wav) - 44, 16000 * 2)
+check("nothing heard frames as nothing", _live.Narration().wav(1.0), b"")
+
+# A RATE THAT MOVES MID-DEMONSTRATION IS A WIRING MISTAKE, not audio to
+# resample: one page holds one `AudioContext` for the length of a
+# recording, so its `sampleRate` cannot change under us.
+try:
+    n.add(b"\x00\x00", 44100, 1)
+    check("a rate that changes mid-demo raises", "accepted", "refused")
+except _live.ShapeChanged:
+    check("a rate that changes mid-demo raises", "refused", "refused")
+
+
+async def _live_route(ws: Path) -> None:
+    """The route, and the lazy ring behind it."""
+    person = Person.__new__(Person)
+    person.ws = ws
+    person._demo_voice = None
+
+    class Req:
+        def __init__(self, body=b"", **query):
+            self.query_params = {k: str(v) for k, v in query.items()}
+            self._body = body
+
+        async def body(self):
+            return self._body
+
+    async def ready(_request):
+        return person
+    _app.person_of = ready
+
+    ident = demo.open_demo(ws)
+
+    async def refused(label, call, want):
+        try:
+            await call
+            check(label, "accepted", want)
+        except HTTPException as exc:
+            check(label, exc.status_code, want)
+
+    await refused("a rate nothing reads is refused",
+                  _app.demo_voice(Req(rate=7, channels=1), ident), 400)
+    await refused("half a sample is refused",
+                  _app.demo_voice(Req(b"\x01", rate=48000, channels=1), ident),
+                  400)
+    # A DEMONSTRATION THAT IS NOT OPEN IS A 404, the same answer a frame
+    # for one gets: the page has an id and the server does not agree it
+    # is recording, which is a state and not a malformed request.
+    await refused("narration for a demo nobody is recording is 404",
+                  _app.demo_voice(Req(b"\x01\x02", rate=48000, channels=1),
+                                  "20200101_000000_000000"), 404)
+
+    await _app.demo_voice(Req(b"\x01\x02" * 480, rate=48000, channels=1), ident)
+    check("a piece of live narration is held",
+          len(person.demo_heard(1.0)) - 44, 960)
+    # THE RING IS MADE ON THE FIRST PIECE, asked of the DIRECTORY rather
+    # than of what the process remembers -- so a server restarted
+    # mid-recording does not refuse the rest of a demonstration that is
+    # plainly going on.  Nothing told this `Person` the demo opened.
+    check("without anybody having announced the demo",
+          person._demo_voice[0], ident)
+
+    # AND A CLOSED DEMONSTRATION STOPS BEING ONE, so narration arriving
+    # after the manifest is sealed is refused rather than appended to a
+    # recording nobody is making any more.
+    demo.close_demo(ws, ident, b"", "webm")
+    person._demo_voice = None
+    await refused("narration after the close is 404",
+                  _app.demo_voice(Req(b"\x01\x02", rate=48000, channels=1),
+                                  ident), 404)
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    ws = Path(tmp) / "ws"
+    ws.mkdir()
+    asyncio.run(_live_route(ws))
+
+
 # ------------------------------------------------- page against server
 #
 # TWO FILES THAT FAIL SILENTLY WHEN THEY DISAGREE, in the shape
@@ -519,8 +629,27 @@ for handler, skip in ((_app.demo_frame, {"request", "ident"}),
 # The URLs, which no signature covers: a route renamed on one side is a
 # 404 the page reports as "the demonstration could not be recorded".
 for path in ("/demo/abrir", '"/demo/" + S.demo.id + "/fotograma"',
-             '"/demo/" + id + "/cerrar"'):
+             '"/demo/" + id + "/cerrar"',
+             '"/demo/" + ident + "/voz?rate="'):
     check(f"the page calls {path}", path in page, True)
+
+# THE LIVE NARRATION IS BRACKETED BY THE DEMONSTRATION, which is the one
+# thing that cannot be read from either side alone: a tap left running
+# posts into a demo the server has closed, and a tap never started
+# leaves the escriba deaf with nothing reporting it.
+check("the demo's tap is started with the recorder",
+      _re.search(r"demoRec\.start\(\);\s*\n(\s*//[^\n]*\n)*\s*tapOn\(",
+                 page) is not None, True)
+check("and stopped on the ordinary ending as well as the teardown",
+      len(_re.findall(r"demoTap\.stop\(\); demoTap = null;", page)), 2)
+
+# AND THE TWO TAPS HAVE TWO DESTINATIONS.  They were one holder with the
+# room's URL written into it; the demonstration's narration must not be
+# fanned out to a guest as a side effect of the escriba listening, so a
+# single destination is the defect this shape exists to prevent.
+check("a tap is told where it posts", "async function tapOn(dest)" in page, True)
+check("and the room's tap is no longer the only one",
+      "let pttTap = null;" in page, True)
 
 # THE BOUNDS THE PAGE SCALES TO ARE THE ONES THE SERVER ENFORCES, and
 # neither is ours: they are TypeSafe's, read from the SDK, and the vendor
