@@ -193,7 +193,7 @@ vm.runInContext(blocks[blocks.length - 1] +
   "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, " +
   "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows, api, " +
   "renderGuest, renderScratch, renderTranscript, pttFace, paintSequence, " +
-  "seqGrip, sayBack, BACK, dictating};",
+  "seqGrip, sayBack, BACK};",
   ctx);
 const T = sandbox.__test;
 
@@ -1213,33 +1213,6 @@ check("and an answer that never came says that instead",
   T.sayBack(null);
   check("a frame with no clip is dropped", plays.length, before);
   sandbox.Audio = RealAudio;
-}
-
-// ----------------------------------------------------- the dictation line
-//
-// The person's own words while the press is still going.  DISPLAY ONLY:
-// the row's text arrives from one pass over the whole recording when the
-// press ends, so the two must never be on screen at once disagreeing --
-// which is what the empty frame is for.
-{
-  const line = sandbox.document.getElementById("dictado");
-  check("the page has a line for it", !!line, true);
-  T.dictating({ text: "pues aquí tenemos la" });
-  check("the line shows what is being said",
-        line && line.textContent, "pues aquí tenemos la");
-  check("and is visible while there are words", line && line.hidden, false);
-  T.dictating({ text: "pues aquí tenemos la aplicación" });
-  check("and follows the window as it grows",
-        line && line.textContent, "pues aquí tenemos la aplicación");
-  // THE EMPTY FRAME IS THE PRESS ENDING, said explicitly by the server
-  // rather than left on screen beside the row that replaces it.
-  T.dictating({ text: "" });
-  check("an empty frame hides the line", line && line.hidden, true);
-  // AND A FRAME THIS PAGE DOES NOT UNDERSTAND DOES NOTHING, which is an
-  // older server publishing a shape this does not know.
-  T.dictating(null);
-  T.dictating({});
-  check("a frame with no text leaves it hidden", line && line.hidden, true);
 }
 
 console.log(fail ? `${fail} failure(s)` : "web page renders OK");

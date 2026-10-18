@@ -446,16 +446,10 @@ class Person:
     def __init__(self, principal: str, root: Path, limit: Optional[int] = None,
                  identity: Optional[dict] = None,
                  scribe: Optional["_transcribe.Transcriber"] = None,
-                 draft: Optional["_transcribe.Transcriber"] = None,
                  wiki: Optional[dict] = None) -> None:
         #: Shared across everyone on this process: one loaded model, not
         #: one per person.  It is hundreds of megabytes.
         self.scribe = scribe
-        #: A faster model whose reading fills the row while `scribe`'s is
-        #: still being read.  Display only: what the archive keeps is
-        #: `scribe`'s, because two models are two answers to "what did
-        #: this person say" and only one of them can be the record.
-        self.draft = draft
         self.principal = principal
         # The hub is handed `self.snapshot`, not a snapshot: it calls it
         # whenever a browser connects, so a reconnecting page is answered
@@ -545,15 +539,6 @@ class Person:
         #: "transcribiendo…" while the reply arrived and sounded
         #: normally.
         self._running: set = set()
-        #: The person's own words WHILE they are still
-        #: speaking: a ring of their press, and the task
-        #: reading windows off it.  Only where a draft
-        #: model was named, and only for the owner.
-        self._dictation: Optional[_live.Narration] = None
-        self._dictating: Optional[asyncio.Task] = None
-        #: Which press is being read.  Frames from any other
-        #: stream are dropped rather than queued behind it.
-        self._dictation_stream: Optional[str] = None
         #: How full the window is, from ContextUpdatedEvent, and what the
         #: session has spent, from the daemon's own consumption report.
         #: Two questions with two sources, never merged into one number:
@@ -1912,60 +1897,6 @@ class Person:
                         if by else self.say("note.staged", name=row["text"]))
         return row
 
-    #: Longest recording worth drafting, in seconds.  A draft earns its
-    #: place by arriving SOON; measured 2026-10-18, `tiny` reads at about
-    #: ten times real time, so twenty seconds of speech drafts in two --
-    #: which is the figure the flag was justified by.  Above this the
-    #: draft cannot be quick, and the only thing that matters is the
-    #: transcript itself.
-    DRAFT_CEILING_SECONDS = 20.0
-
-    def _worth_drafting(self, recording: Path) -> bool:
-        """Is this recording short enough for a draft to arrive soon?
-
-        FROM THE FILE'S SIZE, which is exact here rather than estimated:
-        the attachment is MP3 at 32 kbit/s mono by construction
-        (`voice._to_mp3`), the same arithmetic `talk` uses to report an
-        utterance's length.  Decoding it to find out would cost more
-        than the decision is worth.
-        """
-        try:
-            seconds = recording.stat().st_size / 4000.0
-        except OSError:
-            return False
-        if seconds > self.DRAFT_CEILING_SECONDS:
-            self.journal.note("draft.skipped", seconds=round(seconds, 1),
-                              ceiling=self.DRAFT_CEILING_SECONDS)
-            return False
-        return True
-
-    async def _draft(self, entry, att: str, recording: Path) -> None:
-        """A faster reading of the same recording, if it gets there first.
-
-        `transcribe` AND NOT `write`: this never touches
-        `in_<att>.txt`, so the archive is not holding a draft while the
-        real pass is still running -- and `write` would keep it forever,
-        since it declines to re-transcribe bytes it has already answered
-        for.
-        """
-        try:
-            early = await asyncio.to_thread(self.draft.transcribe, recording,
-                                            self.locale)
-        except Exception as exc:                              # noqa: BLE001
-            # A draft that fails costs nothing: the row is still waiting
-            # for the transcript that is on its way.
-            self.journal.note("draft.failed", att=att,
-                              error=type(exc).__name__)
-            return
-        if early and not entry.text:
-            # NOT OVER AN ANSWER ALREADY GIVEN.  The real pass may have
-            # landed while this was running, and `write` can also return
-            # a transcript an earlier run wrote -- either way a draft
-            # arriving afterwards would replace the record's words with
-            # a guess.
-            entry.text = early
-            self.board._refreshed()
-
     def _transcribing(self, entry, att: str) -> None:
         """Put the person's own words on their row, when they are ready.
 
@@ -1984,24 +1915,6 @@ class Person:
         self.board._refreshed()
 
         async def run() -> None:
-            if self.draft is not None and self._worth_drafting(recording):
-                # FIRST AND THROWN AWAY.  `transcribe` and not `write`:
-                # this never touches `in_<att>.txt`, so the archive is
-                # not holding a draft when the real pass is still
-                # running -- and `write` would keep the draft forever,
-                # since it declines to re-transcribe bytes it has
-                # already answered for.
-                # BESIDE THE REAL PASS AND NOT BEFORE IT.  Awaited
-                # first, as this was on 2026-10-18, the draft DELAYS the
-                # transcript it was meant to cover for: measured on a
-                # 119-second utterance, `tiny` takes 11,9 s and `base`
-                # 19,0 s, and `small` about three times the latter -- so
-                # a long utterance waited for the draft and then for the
-                # record, which is worse than it was before the flag
-                # existed.  Observed as a row stuck on "transcribiendo…"
-                # after a 1:48 press.
-                self._hold(asyncio.create_task(
-                    self._draft(entry, att, recording)))
             try:
                 # This person's language, not the host's: the model is
                 # shared, the language is not.
@@ -2167,123 +2080,11 @@ class Person:
             "stream": stream, "rate": rate, "channels": channels,
             "pcm": base64.b64encode(pcm).decode("ascii"),
             "by": by, "by_id": by_id})
-        # THE OWNER'S OWN PRESS ONLY.  `by` names somebody the host
-        # invited in, and a guest's words are not transcribed into the
-        # host's page: `escriba_web/CLAUDE.md`'s rule is that what
-        # travels outward is built key by key, and this line would be a
-        # second channel nobody declared.
-        if not by:
-            self._dictate(stream, pcm, rate, channels)
-
-    #: How much of the press is read each time, and how often.  `tiny`
-    #: reads twenty seconds in about two (measured 2026-10-18 at ten
-    #: times real time), so a five-second step never queues behind
-    #: itself.  A TRAILING window and not the whole press: transcribing
-    #: everything each time costs more as the press grows -- 11,9 s at
-    #: 119 s -- and stitching window transcripts together cuts words,
-    #: which is why the ARCHIVE still comes from one pass at release.
-    DICTATION_WINDOW = 20.0
-    DICTATION_STEP = 5.0
-
-    def _dictate(self, stream: str, pcm: bytes, rate: int,
-                 channels: int) -> None:
-        """Keep the owner's press, and start reading it if nothing is.
-
-        THE SAME FRAMES THE ROOM ALREADY GETS.  The page has tapped the
-        microphone for the room fan-out since guests existed, so the
-        audio of a press is already arriving here -- this adds no tap, no
-        route and no second encoder, which is `demo_voice`'s own
-        argument for being a second consumer rather than a new path.
-        """
-        if self.draft is None:
-            return
-        # THE NEWEST PRESS AND NO OTHER.  A tap the page failed to stop
-        # keeps POSTing for as long as that page is open -- observed on
-        # the deployed box as about thirteen parallel `/voz` streams --
-        # and each one reaching this would hold a ring and a
-        # transcription loop open forever.  The page's own leak is fixed,
-        # but a second consumer of somebody else's microphone should not
-        # depend on that: a frame from any stream but the current one is
-        # dropped here, so a stale tap costs the room its fan-out and
-        # this nothing at all.
-        if stream != self._dictation_stream:
-            self._dictation_stream = stream
-            self._dictation_end()
-            self._dictation = _live.Narration(window=self.DICTATION_WINDOW)
-            self._dictating = asyncio.create_task(self._dictation_loop())
-        if self._dictation is None:
-            return
-        self._dictation.add(pcm, rate, channels)
-
-    async def _dictation_loop(self) -> None:
-        """Read the trailing window every few seconds, until the press ends."""
-        while not self._stop.is_set():
-            await asyncio.sleep(self.DICTATION_STEP)
-            held = self._dictation
-            if held is None:
-                return
-            window = held.wav(self.DICTATION_WINDOW)
-            if not window:
-                continue
-            try:
-                text = await asyncio.to_thread(self._read_window, window)
-            except Exception as exc:                          # noqa: BLE001
-                # The press is unaffected: the recording the model and
-                # the archive get is the browser's, not this.
-                self.journal.note("dictation.failed",
-                                  error=type(exc).__name__)
-                return
-            if self._dictation is None:        # released while reading
-                return
-            self.hub.publish("dictado", {"text": text})
-
-    def _read_window(self, window: bytes) -> str:
-        """One window, through the draft model. Off-thread."""
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
-            tmp.write(window)
-            tmp.flush()
-            return self.draft.transcribe(Path(tmp.name), self.locale)
-
-    def _dictation_end(self) -> None:
-        """The press is over: the row takes over from the line.
-
-        NOTHING IS PUBLISHED IF NOTHING WAS DICTATED.  A deployment that
-        named no draft model does not run this at all, and a frame
-        announcing the end of something that never started is a shape
-        every reader of the stream has to learn for no reason --
-        `tests_guests` counts the frames a press produces, and caught
-        exactly that.
-        """
-        if self._dictation is None and self._dictating is None:
-            return
-        self._dictation = None
-        if self._dictating is not None:
-            self._dictating.cancel()
-            self._dictating = None
-        # CLEARED EXPLICITLY, because the line is not the transcript: the
-        # entry's own words arrive seconds later and the two must not be
-        # on screen at once saying different things.
-        self.hub.publish("dictado", {"text": ""})
-
-    def _dictation_over(self, stream: str) -> None:
-        """This press ended; ignore the end of any other.
-
-        A STALE TAP'S `final` MUST NOT CLEAR A LIVE PRESS.  The page
-        sends one when it stops a tap, and a page recovering from a leak
-        stops several -- each with its own stream id, each arriving
-        whenever it arrives.
-        """
-        if stream != self._dictation_stream:
-            return
-        self._dictation_stream = None
-        self._dictation_end()
 
     def voice_end(self, stream: str, by_id: str) -> None:
         """That microphone stopped.  Ends the stream the pieces built."""
         self.hub.publish("speech", {"stream": stream, "final": True,
                                     "by_id": by_id})
-        self._dictation_over(stream)
 
     def day(self, date: str) -> List[dict]:
         """A past day's conversation, read back out of the manifest.
