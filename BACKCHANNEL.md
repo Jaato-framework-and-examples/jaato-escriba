@@ -284,6 +284,31 @@ narration alone — the single-decode simplification costs cue recall.
 Under the composition that is the right trade, because the floor is what
 must never fail, but it is a loss and not a free win.
 
+## The deployed model is not the measured one
+
+Everything above was measured with `faster-whisper` **`base`**, which is
+what runs locally. The VPS unit has run **`small`** with
+`HF_HUB_OFFLINE=1` since 2026-10-09, and only `small` is cached there —
+so proposing a switch is proposing a failure, not a download.
+
+Measured on 2026-10-18 over five of the nine, windowed as a live
+listener sees them:
+
+| recording | `base` | `small` |
+|---|---|---|
+| 49 s narration | 2 · every 25 s | 2 · every 25 s |
+| 152 s narration | 7 · every 22 s | 8 · every 19 s |
+| 119 s narration | 5 · every 24 s | 6 · every 20 s |
+| speaker B, WhatsApp Opus | 7 · every 17 s | 6 · every 20 s |
+| speaker C, AAC | 3 · every 19 s | 3 · every 19 s |
+
+Equivalent, and slightly better where it differs: the range tightens to
+19–25 s, and `small` finds a **cue in the 152 s narration that `base`
+misses** — which is part of the recall the single-decode simplification
+gave up. Nothing here needs the models kept in step, but a reader
+comparing a live demonstration against the numbers above should know
+they came from the smaller one.
+
 ## The composition, which is the design in one sentence
 
 > Not everybody uses cues when talking, but everybody pauses at ideas
