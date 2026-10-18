@@ -34,7 +34,9 @@ This file is that file plus one line.
 """
 from __future__ import annotations
 
+import contextlib
 import os
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -80,19 +82,37 @@ def write_env(path: Path, text: str) -> None:
 
     ATOMIC because a session can be reloading it while this writes: a
     half-written token is a 401 that looks like a revoked grant.  The
-    mode is set on the temporary file BEFORE the content goes in, so
-    there is no instant at which a complete token sits in a
-    world-readable file.
+    mode is 0600 from the moment the file exists, so there is no instant
+    at which a complete token sits in a world-readable file.
+
+    AND THE TEMPORARY NAME IS UNIQUE PER CALL.  It used to be
+    `<name>.new`, one name for every caller, which is not atomic between
+    CALLERS even though each one's rename is: observed on the deployed
+    box 2026-10-18, two concurrent requests through `person_of` both
+    wrote `<id>.env.new` and the second's `os.replace` raised
+    FileNotFoundError because the first had already renamed it away --
+    a 500 on opening a session, for a file that was in fact written
+    correctly.  `mkstemp` gives each call its own name, in the same
+    directory so the rename stays on one filesystem, and 0600 by
+    construction.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
-    tmp = path.with_name(path.name + ".new")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent),
+                               prefix=path.name + ".", suffix=".new")
     try:
-        os.write(fd, text.encode("utf-8"))
-    finally:
-        os.close(fd)
-    os.replace(tmp, path)
+        try:
+            os.write(fd, text.encode("utf-8"))
+        finally:
+            os.close(fd)
+        os.replace(tmp, path)
+    except BaseException:
+        # THE LOSER CLEANS UP AFTER ITSELF.  A temporary file left in a
+        # 0700 directory beside a credential is litter nobody will ever
+        # look for.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def server_entry(url: str) -> dict:

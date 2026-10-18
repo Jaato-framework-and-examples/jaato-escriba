@@ -1072,6 +1072,30 @@ async def main():
     if dictator._dictating is not None:
         dictator._dictating.cancel()
 
+    # ------------------------------------- the credential, written twice at once
+    #
+    # ATOMIC PER CALLER AND NOT ONLY PER RENAME.  The temporary name used
+    # to be `<name>.new` for every caller: observed on the deployed box
+    # 2026-10-18, two concurrent requests through `person_of` both wrote
+    # it and the second's `os.replace` raised FileNotFoundError, because
+    # the first had already renamed it away.  A 500 on opening a session,
+    # for a file that was written correctly.
+    from escriba_web import kbwiki as _kb
+
+    env_dir = Path(tempfile.mkdtemp(prefix="escriba-env-")) / "run"
+    target = env_dir / "abc.env"
+    await asyncio.gather(*(asyncio.to_thread(_kb.write_env, target,
+                                             f"TOKEN=value-{n}\n")
+                           for n in range(12)))
+    check("twelve concurrent writes all succeed", target.is_file(), True)
+    check("and the file is one of them, whole",
+          target.read_text(encoding="utf-8").startswith("TOKEN=value-"), True)
+    check("with no temporary files left behind",
+          sorted(f.name for f in env_dir.iterdir()), ["abc.env"])
+    # NEVER READABLE BY ANYBODY ELSE: it holds somebody's access token.
+    check("and 0600", oct(target.stat().st_mode & 0o777), "0o600")
+    check("in a 0700 directory", oct(env_dir.stat().st_mode & 0o777), "0o700")
+
     return 1 if fail else 0
 
 

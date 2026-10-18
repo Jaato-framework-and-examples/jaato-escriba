@@ -2821,11 +2821,24 @@ let pttTap = null;
 
 async function tapStart() {
   const stream = tapId();
-  pttTap = await tapOn({
+  // WHATEVER WAS IN THE SLOT IS STOPPED FIRST.  `tapOn` is async and
+  // `pttTap` is one slot, so a press that began while a previous
+  // `tapOn` was still opening used to OVERWRITE the reference and
+  // orphan a live tap -- which keeps POSTing to `/voz` for as long as
+  // the page is open, because only `stop()` can end it.  Observed on
+  // the deployed box, 2026-10-18: about thirteen parallel `/voz`
+  // streams still sending while the page sat idle.
+  tapStop();
+  const mine = await tapOn({
     frame: (rate) => api("/voz?stream=" + stream + "&rate=" + rate +
                          "&channels=1"),
     final: () => api("/voz?stream=" + stream + "&final=1"),
   });
+  // AND THE SLOT IS CHECKED AGAIN on the way out: another press may have
+  // run `tapStop` while this one was opening, and storing it now would
+  // put a tap nobody is going to stop back into the slot.
+  if (!S.recording) { if (mine) mine.stop(); return; }
+  pttTap = mine;
 }
 
 function tapStop() {
@@ -2843,6 +2856,11 @@ async function startRec() {
   if (!player.paused) player.pause();         // talking over the reply stops it
   hush();   // and so does talking over one that is still arriving
   if (MOCK) { S.recording = true; S.rec = 0; tick(); return; }
+  // CLAIMED BEFORE THE AWAITS, not after them.  `S.recording` was set at
+  // the end, so a second press during `await mic()` passed the guard at
+  // the top and started a second recorder and a second tap.  Cleared on
+  // every failing path below.
+  S.recording = true;
   try {
     const s = await mic();
     recorder = new MediaRecorder(s);
@@ -2856,12 +2874,12 @@ async function startRec() {
     // utterance and nothing else.
     tapStart().catch(() => {});
   } catch (err) {
+    S.recording = false;
     S.micReason = err && err.name === "NotAllowedError" ? "permiso denegado" : "no se pudo abrir";
     raise("mic");
     pttFace();
     return;
   }
-  S.recording = true;
   S.rec = 0;
   startedAt = performance.now();
   tick();

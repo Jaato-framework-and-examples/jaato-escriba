@@ -545,6 +545,9 @@ class Person:
         #: model was named, and only for the owner.
         self._dictation: Optional[_live.Narration] = None
         self._dictating: Optional[asyncio.Task] = None
+        #: Which press is being read.  Frames from any other
+        #: stream are dropped rather than queued behind it.
+        self._dictation_stream: Optional[str] = None
         #: How full the window is, from ContextUpdatedEvent, and what the
         #: session has spent, from the daemon's own consumption report.
         #: Two questions with two sources, never merged into one number:
@@ -2141,7 +2144,7 @@ class Person:
         # travels outward is built key by key, and this line would be a
         # second channel nobody declared.
         if not by:
-            self._dictate(pcm, rate, channels)
+            self._dictate(stream, pcm, rate, channels)
 
     #: How much of the press is read each time, and how often.  `tiny`
     #: reads twenty seconds in about two (measured 2026-10-18 at ten
@@ -2153,7 +2156,8 @@ class Person:
     DICTATION_WINDOW = 20.0
     DICTATION_STEP = 5.0
 
-    def _dictate(self, pcm: bytes, rate: int, channels: int) -> None:
+    def _dictate(self, stream: str, pcm: bytes, rate: int,
+                 channels: int) -> None:
         """Keep the owner's press, and start reading it if nothing is.
 
         THE SAME FRAMES THE ROOM ALREADY GETS.  The page has tapped the
@@ -2164,9 +2168,22 @@ class Person:
         """
         if self.draft is None:
             return
-        if self._dictation is None:
+        # THE NEWEST PRESS AND NO OTHER.  A tap the page failed to stop
+        # keeps POSTing for as long as that page is open -- observed on
+        # the deployed box as about thirteen parallel `/voz` streams --
+        # and each one reaching this would hold a ring and a
+        # transcription loop open forever.  The page's own leak is fixed,
+        # but a second consumer of somebody else's microphone should not
+        # depend on that: a frame from any stream but the current one is
+        # dropped here, so a stale tap costs the room its fan-out and
+        # this nothing at all.
+        if stream != self._dictation_stream:
+            self._dictation_stream = stream
+            self._dictation_end()
             self._dictation = _live.Narration(window=self.DICTATION_WINDOW)
             self._dictating = asyncio.create_task(self._dictation_loop())
+        if self._dictation is None:
+            return
         self._dictation.add(pcm, rate, channels)
 
     async def _dictation_loop(self) -> None:
@@ -2220,11 +2237,24 @@ class Person:
         # on screen at once saying different things.
         self.hub.publish("dictado", {"text": ""})
 
+    def _dictation_over(self, stream: str) -> None:
+        """This press ended; ignore the end of any other.
+
+        A STALE TAP'S `final` MUST NOT CLEAR A LIVE PRESS.  The page
+        sends one when it stops a tap, and a page recovering from a leak
+        stops several -- each with its own stream id, each arriving
+        whenever it arrives.
+        """
+        if stream != self._dictation_stream:
+            return
+        self._dictation_stream = None
+        self._dictation_end()
+
     def voice_end(self, stream: str, by_id: str) -> None:
         """That microphone stopped.  Ends the stream the pieces built."""
         self.hub.publish("speech", {"stream": stream, "final": True,
                                     "by_id": by_id})
-        self._dictation_end()
+        self._dictation_over(stream)
 
     def day(self, date: str) -> List[dict]:
         """A past day's conversation, read back out of the manifest.
