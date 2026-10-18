@@ -298,6 +298,63 @@ it is not *covered* either: the cues in the 152 s narration sit at 56.4 s
 and 61.9 s, while the idea-ends around them are at 44.6 s and 68.9 s, so
 dropping them leaves a genuine 24 s hole.
 
+## Getting the escriba to say them itself, which is where this should go
+
+Recorded clips are a stopgap and are named as one.  The expectation they
+fall short of is that a model choosing in the moment would be **more
+realistic and more random** than six files played in rotation, and over
+a ten-minute demonstration with a boundary every twenty seconds that
+rotation will be heard for what it is.
+
+**The two things that stopped it, both measured (§9 and the latency
+table), are different problems and only one of them is hard.**
+
+*Irreproducibility is not actually in the way,* because the question was
+wrong.  The model was asked "is this the moment, and what do you say?" —
+and it answered the first half by staying silent, 5 of 9 either way,
+flipping on 4 of 9 between runs.  But the moment is not its job: the
+detector picks the moment deterministically, for everybody, every 17 to
+25 s.  Asked only "if you were to acknowledge what you just heard, what
+would you say?", there is no decision for it to make unreliably.
+
+*Latency is the real obstacle, and it dissolves by asking EARLY instead
+of asking faster.* The reason a live word costs 3,5 to 5,3 s is that it
+is requested when the boundary is found.  Nothing requires that.  Keep
+one word ready: ask on a rolling basis while the person talks, hold the
+latest answer, and play it the instant a boundary arrives.  The round
+trip then happens entirely inside the twenty seconds between boundaries,
+and the delay at the boundary is the detector's 2,1 s and nothing more —
+the figure a listener called natural.
+
+```
+narration ──► detector ──────────────────► boundary ──► play cached word
+          └─► model, every ~15 s ──► cache ─┘            (no round trip here)
+```
+
+**What that costs and what it gives up.** One call per cache refresh —
+about 30 in a ten-minute demonstration at a 20 s cadence, the same order
+as the acknowledgements themselves, so it needs the per-demo ceiling
+that is owed anyway.  And the word is chosen from audio up to a refresh
+interval old, so it answers the idea that was being finished rather than
+the instant it ended.  For an acknowledgement that is probably right —
+it is *about* the idea that just closed — but it is unmeasured, and the
+listening test that would settle it is the same shape as the ones in
+this file.
+
+**A cheaper step that buys most of the randomness today:** render
+several takes of each phrase instead of one, and pick among them.  Six
+words become eighteen clips, 130 KB instead of 43, the rotation stops
+being audible, and nothing about the live path changes.  It does not
+make the escriba responsive, only less mechanical — which is the smaller
+half of the complaint but the half that is free.
+
+**What would make the whole question go away** is duplex audio: a
+session the narration streams into continuously, that can emit when it
+decides to.  No provider installed here offers it — `audio_input` is a
+WAV attached to a turn — so this is not a routing problem to solve but a
+capability to wait for.  `jaato-scaffold explain providers` is where to
+check whether that has changed.
+
 ## What this still does not answer
 
 Four speakers is four, all Spanish, and only the owner's five recordings

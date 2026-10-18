@@ -35,6 +35,8 @@
   "back.ack2": "right",
   "back.ack3": "mm-hm",
   "back.ack4": "got it",
+  "back.ack5": "okay",
+  "back.ack6": "sure",
   "consumo.available": "available",
   "consumo.cache_read": "read from cache",
   "consumo.cache_write": "written to cache",
