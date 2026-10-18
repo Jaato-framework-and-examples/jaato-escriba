@@ -1096,6 +1096,62 @@ async def main():
     check("and 0600", oct(target.stat().st_mode & 0o777), "0o600")
     check("in a 0700 directory", oct(env_dir.stat().st_mode & 0o777), "0o700")
 
+    # ------------------------------------- a reply that will never sound
+    #
+    # `_settle` is what turns a reply row from "audio llegando…" into
+    # "sin audio".  The escriba has a silent tier by design -- it
+    # annotates and commissions documents from `escribano`, where nothing
+    # is heard -- and a turn answered from there sounds nothing, ever.
+    #
+    # IT RAN ONLY WHERE THE TURN SUCCEEDED, so the two endings that most
+    # certainly produce no speech were the two that left the row
+    # promising audio for ever.
+    # THE BOARD'S OWN `Entry`, not a stand-in: `_settle` calls
+    # `_refreshed`, which reads fields a hand-written double does not
+    # have, and a double that drifts from the real row is the kind of
+    # test that passes while the thing it stands for breaks.
+    from board import Entry as _Entry
+    from datetime import datetime as _dt
+
+    def Entry(kind, audio=None):
+        return _Entry(_dt.now(), kind, "", audio=audio)
+
+    settler = _Person("settle-sub-01",
+                      root=Path(tempfile.mkdtemp(prefix="escriba-settle-")))
+    settler.board.state.entries.clear()
+    settler.board.state.entries.append(Entry("said", "att_in"))
+    settler.board.state.entries.append(Entry("spoke", None))
+    settler._settle()
+    check("a reply with no audio is marked silent",
+          settler.board.state.entries[-1].silent, True)
+
+    # A REPLY THAT DID SOUND IS LEFT ALONE: it has a file, and the row
+    # shows a play control rather than either label.
+    settler.board.state.entries.clear()
+    settler.board.state.entries.append(Entry("spoke", "att_out"))
+    settler._settle()
+    check("a reply that sounded is untouched",
+          settler.board.state.entries[-1].silent, False)
+
+    # AND THE PERSON'S OWN ROW IS NEVER MARKED, whatever it carries: only
+    # the escriba's replies have speech to wait for.
+    settler.board.state.entries.clear()
+    settler.board.state.entries.append(Entry("said", None))
+    settler._settle()
+    check("the person's own row is not marked silent",
+          settler.board.state.entries[-1].silent, False)
+
+    # THE CALL IS IN A `finally`, which is the fix rather than an extra
+    # call site.  Asserted on the source, because the paths that need it
+    # are a timeout and a session that went away -- neither reachable
+    # here without a daemon.
+    talk_src = (Path(__file__).resolve().parent / "escriba_web"
+                / "driver.py").read_text(encoding="utf-8")
+    body = talk_src[talk_src.index("async def talk("):]
+    body = body[:body.index("\n    def ")]
+    check("the turn settles on every path, not only on success",
+          "finally:" in body and body.count("self._settle()"), 1)
+
     return 1 if fail else 0
 
 

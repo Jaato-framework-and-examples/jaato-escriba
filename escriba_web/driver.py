@@ -1563,7 +1563,6 @@ class Person:
                               said, self._relay(),
                               log=self.archive.turn, tui=self.board),
                         timeout=TURN_TIMEOUT)
-                    self._settle()
                     asyncio.create_task(self._measure())
                 except asyncio.TimeoutError:
                     # Nothing came back and nothing failed.  The recording is
@@ -1577,6 +1576,17 @@ class Person:
                 except SessionGone as over:
                     self._ended(over)
                     raise
+                finally:
+                    # ON EVERY PATH, which is the whole point of the
+                    # state it sets.  `_settle` is what turns a reply
+                    # row from "audio llegando…" into "sin audio", and
+                    # it used to run only where the turn SUCCEEDED -- so
+                    # the two endings that most certainly produce no
+                    # speech, a timeout and a session that went away,
+                    # were the two that left the row promising audio for
+                    # ever.  The timeout branch's own comment says the
+                    # page must not wait on it forever; it did.
+                    self._settle()
 
     def demo_voice(self, ident: str, pcm: bytes, rate: int,
                    channels: int) -> None:
