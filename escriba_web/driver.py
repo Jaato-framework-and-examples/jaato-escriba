@@ -536,9 +536,15 @@ class Person:
         #: is recording, and only where a transcriber was configured.
         self._ears: Optional[_backchannel.Listener] = None
         self._listening: Optional[asyncio.Task] = None
-        #: Draft transcriptions in flight, held so they are
-        #: not garbage-collected mid-await.
-        self._drafts: set = set()
+        #: EVERY background task this object starts, held.  asyncio
+        #: keeps no strong reference of its own, and a task nobody
+        #: holds can be collected mid-await: the transcription of a
+        #: 1:47 press is minutes of mostly-awaiting, which is the
+        #: longest window there is for that to happen.  Observed on
+        #: the deployed box 2026-10-18 as a row that stayed on
+        #: "transcribiendo…" while the reply arrived and sounded
+        #: normally.
+        self._running: set = set()
         #: The person's own words WHILE they are still
         #: speaking: a ring of their press, and the task
         #: reading windows off it.  Only where a draft
@@ -735,7 +741,7 @@ class Person:
         await _turn(self._scribe, self.say("agent.greeting"), None, self._relay(),
                     log=self.archive.turn, tui=self.board)
         self._settle()
-        asyncio.create_task(self._measure())
+        self._hold(asyncio.create_task(self._measure()))
 
     async def _open_session(self) -> None:
         """One session on a connection that can come back.
@@ -911,7 +917,7 @@ class Person:
         # a `SessionGone` fails fast instead, and without this the next
         # press would fail the same way forever.
         self._scribe = None
-        asyncio.create_task(self._resume())
+        self._hold(asyncio.create_task(self._resume()))
 
     async def restart(self) -> bool:
         """A new session, because the person ASKED for one.
@@ -1120,6 +1126,21 @@ class Person:
     def consumption(self) -> dict:
         """The two readouts, kept apart because they answer differently."""
         return {"window": self._window, "spend": self._spend}
+
+    def _hold(self, task: asyncio.Task) -> asyncio.Task:
+        """Keep a background task alive until it finishes.
+
+        `asyncio.create_task` does NOT keep a strong reference, and the
+        documentation is explicit that a task nobody holds may be
+        garbage-collected before it completes.  Everything this object
+        starts in the background is long and mostly spent awaiting --
+        a transcription, a budget read, a session being reopened -- so
+        this is not a theoretical hazard here.  One set, discarded on
+        completion, and every `create_task` goes through it.
+        """
+        self._running.add(task)
+        task.add_done_callback(self._running.discard)
+        return task
 
     def _settle(self) -> None:
         """Close the books on a turn that produced no speech.
@@ -1563,7 +1584,7 @@ class Person:
                               said, self._relay(),
                               log=self.archive.turn, tui=self.board),
                         timeout=TURN_TIMEOUT)
-                    asyncio.create_task(self._measure())
+                    self._hold(asyncio.create_task(self._measure()))
                 except asyncio.TimeoutError:
                     # Nothing came back and nothing failed.  The recording is
                     # archived either way; what must not happen is the page
@@ -1571,7 +1592,7 @@ class Person:
                     # reopened and the person is told to try again.
                     self.board.note(self.say("note.turn_timeout", secs=int(TURN_TIMEOUT)))
                     self._scribe = None
-                    asyncio.create_task(self._resume())
+                    self._hold(asyncio.create_task(self._resume()))
                     raise NotReady(self.say("note.no_answer"))
                 except SessionGone as over:
                     self._ended(over)
@@ -1979,10 +2000,8 @@ class Person:
                 # record, which is worse than it was before the flag
                 # existed.  Observed as a row stuck on "transcribiendo…"
                 # after a 1:48 press.
-                drafting = asyncio.create_task(self._draft(entry, att,
-                                                           recording))
-                self._drafts.add(drafting)
-                drafting.add_done_callback(self._drafts.discard)
+                self._hold(asyncio.create_task(
+                    self._draft(entry, att, recording)))
             try:
                 # This person's language, not the host's: the model is
                 # shared, the language is not.
@@ -2000,7 +2019,7 @@ class Person:
                 entry.text = text
             self.board._refreshed()
 
-        asyncio.create_task(run())
+        self._hold(asyncio.create_task(run()))
 
     # -- what a new browser is handed ------------------------------------
     def say(self, key: str, **params) -> str:

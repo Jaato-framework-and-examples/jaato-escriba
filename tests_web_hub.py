@@ -1096,6 +1096,26 @@ async def main():
     check("and 0600", oct(target.stat().st_mode & 0o777), "0o600")
     check("in a 0700 directory", oct(env_dir.stat().st_mode & 0o777), "0o700")
 
+    # --------------------------------- every background task is held
+    #
+    # `asyncio.create_task` keeps NO strong reference, and the
+    # documentation is explicit that an unheld task may be collected
+    # before it finishes.  Everything this object starts in the
+    # background is long and mostly spent awaiting -- a transcription of
+    # a 1:47 press is minutes of it -- so the window is as wide as it
+    # gets.  Observed on the deployed box 2026-10-18: a row that stayed
+    # on "transcribiendo…" while the reply arrived and sounded normally.
+    #
+    # ASSERTED ON THE SOURCE, because a collected task is exactly the
+    # failure a test cannot provoke on demand.
+    drv = (Path(__file__).resolve().parent / "escriba_web"
+           / "driver.py").read_text(encoding="utf-8")
+    loose = [ln.strip() for ln in drv.splitlines()
+             if "asyncio.create_task(" in ln
+             and "_hold(" not in ln
+             and "self._" not in ln.split("asyncio.create_task(")[0]]
+    check("no background task is started without being held", loose, [])
+
     # ------------------------------------- a reply that will never sound
     #
     # `_settle` is what turns a reply row from "audio llegando…" into
