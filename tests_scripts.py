@@ -476,5 +476,92 @@ try:
 finally:
     shutil.rmtree(_ws)
 
+# ------------------------------------------------ capturas_elegidas
+#
+# CHOOSING IS A LOOK TOO.  `capturas_reales` keeps the documenter from
+# describing a capture it never opened; this keeps the scribe from
+# HANDING OVER captures it never saw. Measured twice on 2026-10-17, by
+# two different agents: `decide` called with no images at all, the frames
+# named in prose instead, 8 questions on 907 input tokens (and 1,288 on
+# the next run) -- a text-only call. Jev scored screenshots it had never
+# been sent, from their file names, with full confidence. The same 8
+# questions with the images attached cost 14,500.
+ELEG = HERE / "template/.jaato/scripts/processors/capturas_elegidas.py"
+_espec = importlib.util.spec_from_file_location("capturas_elegidas", ELEG)
+elegidas = importlib.util.module_from_spec(_espec)
+_espec.loader.exec_module(elegidas)
+
+DEMO = "demo/20261017_232959_458299"
+
+
+class Turn:
+    def __init__(self, *calls):
+        self.tool_calls = list(calls)
+
+
+def chose(*calls):
+    return elegidas.validate({}, Turn(*calls))["errors"]
+
+
+def _task(*frames):
+    names = ", ".join(f"{DEMO}/{n:04d}.png" for n in frames)
+    return call("spawn_subagent",
+                {"profile": "documentalista",
+                 "task": f"Abre estas capturas en orden: {names}"},
+                {"session_id": "subagent_1"})
+
+
+def _decide(*frames, images=True):
+    sent = [{"name": f"F{n:04d}", "path": f"{DEMO}/{n:04d}.png"}
+            for n in frames] if images else []
+    return call("decide",
+                {"model": "vista", "state": "...", "images": sent},
+                {"answers": [{"id": f"F{n:04d}", "level": 7} for n in frames]})
+
+
+# An ordinary turn must not notice this gate at all.
+check("a turn that hands over nothing is none of its business", chose(), [])
+check("nor is one that spawns a subagent about a topic",
+      chose(call("spawn_subagent", {"profile": "documentalista",
+                                    "task": "documenta el cierre contable"},
+                 {"session_id": "x"})), [])
+
+# THE MEASURED FAILURE: frames handed over, decide called with images=[].
+blind = chose(_decide(1, 2, 3, images=False), _task(1, 2, 3))
+check("handing over captures it never sent is refused", len(blind), 1)
+check("and the refusal says naming is not showing",
+      "NO es enseñárselas" in blind[0], True)
+check("and points at the array that does it", "`images`" in blind[0], True)
+
+# The same turn with the images attached is exactly what we want.
+check("captures sent in `images` may be handed over",
+      chose(_decide(1, 2, 3), _task(1, 2, 3)), [])
+
+# A partial look: it scored three and handed over four.
+partial = chose(_decide(1, 2, 3), _task(1, 2, 3, 4))
+check("a capture handed over but never scored is refused", len(partial), 1)
+check("and only that one is named",
+      "0004.png" in partial[0] and "0001.png" not in partial[0], True)
+
+# Two batches, as a long demonstration needs, cover between them.
+check("scores from several batches add up",
+      chose(_decide(1, 2), _decide(3, 4), _task(1, 2, 3, 4)), [])
+
+# A decide that FAILED showed nothing, however it is reported.
+check("a refused decide is not a look",
+      len(chose(call("decide", {"images": [{"name": "F0001",
+                                            "path": f"{DEMO}/0001.png"}]},
+                     {"error": "nope"}, success=False), _task(1))), 1)
+check("nor is one the tool flagged isError",
+      len(chose(call("decide", {"images": [{"name": "F0001",
+                                            "path": f"{DEMO}/0001.png"}]},
+                     {"isError": True}), _task(1))), 1)
+
+# The two sides spell the path differently and mean the same frame.
+check("an absolute path and a relative one are one capture",
+      chose(call("decide", {"images": [
+          {"name": "F0001", "path": f"/home/x/workspace/{DEMO}/0001.png"}]},
+          {"answers": []}), _task(1)), [])
+
 print("scripts OK" if not fail else f"{fail} failure(s)")
 sys.exit(1 if fail else 0)

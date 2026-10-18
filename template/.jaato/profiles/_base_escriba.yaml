@@ -60,6 +60,22 @@ completion_processors:
   # going there.  The refusal asks for the source to be REMOVED rather
   # than corrected, because a model told to fix a link it never had
   # invents a better-looking one.
+  # Refuses a demonstration handed over on captures it never looked at.
+  # A selection made blind is twelve arbitrary frames, and everything
+  # after it then works perfectly on the wrong twelve -- nothing fails
+  # and the person reads a procedure assembled from whichever screens
+  # happened to be picked.
+  - script: scripts/processors/capturas_elegidas.py
+    name: capturas_elegidas
+    on_error: fail_completion
+    max_refusals: 2
+    # `allow`, for the reason above it: this runs on a SPOKEN turn, and
+    # a person waiting in silence while a second brain argues with its
+    # own bookkeeping is worse than a weak selection. What survives
+    # exhaustion is still honest -- `capturas_reales` keeps the
+    # documenter from describing a capture it did not open, so the
+    # document says less rather than saying something untrue.
+    on_exhausted: allow
   - script: scripts/processors/fuentes_reales.py
     name: fuentes_reales
     on_error: fail_completion
