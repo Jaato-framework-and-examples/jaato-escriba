@@ -961,6 +961,12 @@ async def main():
 
     drafter = _Person("draft-sub-01",
                       root=Path(tempfile.mkdtemp(prefix="escriba-draft-")))
+    # A RECORDING ON DISK, because the ceiling reads its size: the
+    # attachment is 32 kbit/s mono by construction, so 4000 bytes is a
+    # second.  Eight seconds here -- comfortably draftable.
+    (drafter.archive.dir / "in_att_1.mp3").write_bytes(b"\0" * 32000)
+    (drafter.archive.dir / "in_att_2.mp3").write_bytes(b"\0" * 32000)
+    (drafter.archive.dir / "in_att_3.mp3").write_bytes(b"\0" * 32000)
     drafter.scribe = Model("lo que de verdad dije")
     drafter.draft = Model("lo que parece que dije")
     entry = Said()
@@ -993,6 +999,28 @@ async def main():
     await settled(plain)
     check("with no draft, the transcript is still written", plain.text,
           "lo que de verdad dije")
+
+    # A LONG RECORDING IS NOT DRAFTED, which is the defect this ceiling
+    # exists for.  Awaited before the real pass, a draft DELAYS the
+    # transcript it was meant to cover for: measured 2026-10-18, a
+    # 119-second utterance costs `tiny` 11,9 s and `base` 19,0 s, with
+    # `small` about three times the latter.  Observed on the deployed box
+    # as a row stuck on "transcribiendo…" after a 1:48 press.
+    (drafter.archive.dir / "in_att_long.mp3").write_bytes(b"\0" * 4000 * 108)
+    drafter.draft = Model("una lectura que no llega a tiempo")
+    drafter.scribe = Model("lo que de verdad dije, al final")
+    long_one = Said()
+    drafter._transcribing(long_one, "att_long")
+    await settled(long_one)
+    check("a recording past the ceiling is not drafted",
+          drafter.draft.called, [])
+    check("and its transcript still arrives", long_one.text,
+          "lo que de verdad dije, al final")
+    skipped = [r for r in drafter.journal.rows()
+               if r["kind"] == "draft.skipped"]
+    check("and the skip is recorded with the length that caused it",
+          (len(skipped), skipped[-1]["seconds"] if skipped else None),
+          (1, 108.0))
 
     return 1 if fail else 0
 

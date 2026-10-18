@@ -536,6 +536,9 @@ class Person:
         #: is recording, and only where a transcriber was configured.
         self._ears: Optional[_backchannel.Listener] = None
         self._listening: Optional[asyncio.Task] = None
+        #: Draft transcriptions in flight, held so they are
+        #: not garbage-collected mid-await.
+        self._drafts: set = set()
         #: How full the window is, from ContextUpdatedEvent, and what the
         #: session has spent, from the daemon's own consumption report.
         #: Two questions with two sources, never merged into one number:
@@ -1869,6 +1872,60 @@ class Person:
                         if by else self.say("note.staged", name=row["text"]))
         return row
 
+    #: Longest recording worth drafting, in seconds.  A draft earns its
+    #: place by arriving SOON; measured 2026-10-18, `tiny` reads at about
+    #: ten times real time, so twenty seconds of speech drafts in two --
+    #: which is the figure the flag was justified by.  Above this the
+    #: draft cannot be quick, and the only thing that matters is the
+    #: transcript itself.
+    DRAFT_CEILING_SECONDS = 20.0
+
+    def _worth_drafting(self, recording: Path) -> bool:
+        """Is this recording short enough for a draft to arrive soon?
+
+        FROM THE FILE'S SIZE, which is exact here rather than estimated:
+        the attachment is MP3 at 32 kbit/s mono by construction
+        (`voice._to_mp3`), the same arithmetic `talk` uses to report an
+        utterance's length.  Decoding it to find out would cost more
+        than the decision is worth.
+        """
+        try:
+            seconds = recording.stat().st_size / 4000.0
+        except OSError:
+            return False
+        if seconds > self.DRAFT_CEILING_SECONDS:
+            self.journal.note("draft.skipped", seconds=round(seconds, 1),
+                              ceiling=self.DRAFT_CEILING_SECONDS)
+            return False
+        return True
+
+    async def _draft(self, entry, att: str, recording: Path) -> None:
+        """A faster reading of the same recording, if it gets there first.
+
+        `transcribe` AND NOT `write`: this never touches
+        `in_<att>.txt`, so the archive is not holding a draft while the
+        real pass is still running -- and `write` would keep it forever,
+        since it declines to re-transcribe bytes it has already answered
+        for.
+        """
+        try:
+            early = await asyncio.to_thread(self.draft.transcribe, recording,
+                                            self.locale)
+        except Exception as exc:                              # noqa: BLE001
+            # A draft that fails costs nothing: the row is still waiting
+            # for the transcript that is on its way.
+            self.journal.note("draft.failed", att=att,
+                              error=type(exc).__name__)
+            return
+        if early and not entry.text:
+            # NOT OVER AN ANSWER ALREADY GIVEN.  The real pass may have
+            # landed while this was running, and `write` can also return
+            # a transcript an earlier run wrote -- either way a draft
+            # arriving afterwards would replace the record's words with
+            # a guess.
+            entry.text = early
+            self.board._refreshed()
+
     def _transcribing(self, entry, att: str) -> None:
         """Put the person's own words on their row, when they are ready.
 
@@ -1887,29 +1944,26 @@ class Person:
         self.board._refreshed()
 
         async def run() -> None:
-            if self.draft is not None:
+            if self.draft is not None and self._worth_drafting(recording):
                 # FIRST AND THROWN AWAY.  `transcribe` and not `write`:
                 # this never touches `in_<att>.txt`, so the archive is
                 # not holding a draft when the real pass is still
                 # running -- and `write` would keep the draft forever,
                 # since it declines to re-transcribe bytes it has
                 # already answered for.
-                try:
-                    early = await asyncio.to_thread(
-                        self.draft.transcribe, recording, self.locale)
-                except Exception as exc:                      # noqa: BLE001
-                    # A draft that fails costs nothing: the row keeps
-                    # waiting for the transcript that is still coming.
-                    self.journal.note("draft.failed", att=att,
-                                      error=type(exc).__name__)
-                    early = None
-                if early and not entry.text:
-                    # NOT OVER AN ANSWER ALREADY GIVEN: `write` can
-                    # return a transcript this conversation wrote
-                    # earlier, and a draft landing after it would
-                    # replace the record's words with a guess.
-                    entry.text = early
-                    self.board._refreshed()
+                # BESIDE THE REAL PASS AND NOT BEFORE IT.  Awaited
+                # first, as this was on 2026-10-18, the draft DELAYS the
+                # transcript it was meant to cover for: measured on a
+                # 119-second utterance, `tiny` takes 11,9 s and `base`
+                # 19,0 s, and `small` about three times the latter -- so
+                # a long utterance waited for the draft and then for the
+                # record, which is worse than it was before the flag
+                # existed.  Observed as a row stuck on "transcribiendo…"
+                # after a 1:48 press.
+                drafting = asyncio.create_task(self._draft(entry, att,
+                                                           recording))
+                self._drafts.add(drafting)
+                drafting.add_done_callback(self._drafts.discard)
             try:
                 # This person's language, not the host's: the model is
                 # shared, the language is not.
