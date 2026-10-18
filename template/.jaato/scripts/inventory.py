@@ -66,7 +66,15 @@ def _demos(context) -> str:
              "botón para grabar una demostración —su pantalla y lo que vaya "
              "explicando mientras maneja la aplicación—, y cuando la termina "
              "se documenta sola. Si lo que quiere es mostrarte cómo se hace "
-             "algo, ofrécelo: «si quieres, grábamelo y lo documento».")
+             "algo, ofrécelo: «si quieres, grábamelo y lo documento».\n\n"
+             "ANTES DE QUE LE DÉ AL BOTÓN, pídele dos frases sobre qué te va "
+             "a enseñar: «cuéntame por encima qué me vas a mostrar, y luego "
+             "grábalo». No insistas si no quiere. Es lo único que vas a "
+             "tener sobre el PARA QUÉ: de una demostración te llegan "
+             "capturas de pantalla, y una pantalla enseña dónde se pulsa y "
+             "nunca por qué. Medido el 18-10-2026: sin eso, el documento "
+             "que salió describía botones. Lo que te cuente, anótalo — va "
+             "en el encargo al `documentalista`.")
     root = getattr(context, "workspace_path", None)
     if not root:
         return offer
