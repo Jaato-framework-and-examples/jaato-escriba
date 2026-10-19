@@ -193,7 +193,8 @@ vm.runInContext(blocks[blocks.length - 1] +
   "\n;globalThis.__test = {S, onEvent, mockState, renderAll, renderPanel, " +
   "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows, api, " +
   "renderGuest, renderScratch, renderTranscript, pttFace, paintSequence, " +
-  "seqGrip, sayBack, BACK, demoFace, demoUnavailable};",
+  "seqGrip, sayBack, BACK, demoFace, demoUnavailable, renderDays, " +
+  "dayIsHere};",
   ctx);
 const T = sandbox.__test;
 
@@ -271,6 +272,37 @@ const today = new Date();
 const localToday = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, "0"),
                     String(today.getDate()).padStart(2, "0")].join("-");
 check("today's entries are under today's local date", dayKeys[dayKeys.length - 1], localToday);
+
+// A DAY ALREADY ON SCREEN IS NOT FETCHED AGAIN.
+//
+// `d.in_view` comes from the `state` snapshot and is a photograph: it is
+// published on session open, reopen and a locale change, and an `entry`
+// landing never updates it.  MEASURED 2026-10-19 15:42 — the page loaded
+// before the session opened, so today was marked `archivo`; the greeting
+// arrived as an entry; clicking "hoy" took the ARCHIVE route for a day
+// that was live and merged the same greeting a second time.  Archived
+// ids are negative by construction so they cannot collide with live
+// ones, which is exactly why `byId` could not recognise it.
+//
+// So the question is asked of the rows the page actually holds.  The
+// stale flag is simulated here by saying today is NOT in view while
+// today's rows are on screen — which is the state the live page was in.
+{
+  T.S.days = [{ date: localToday, count: 0, in_view: false }];
+  T.S.loadedDays = new Set();
+  T.renderDays();
+  const btn = byId.get("days").children[0];
+  check("a day whose rows are on screen is not drawn as archive",
+        btn.className.includes("archived"), false);
+  // The press itself, not only the label: a row can land between the
+  // render and the click, and the fetch is what duplicates.
+  let fetched = false;
+  const realFetch = sandbox.fetch;
+  sandbox.fetch = () => { fetched = true; return Promise.reject(new Error("no")); };
+  btn.onclick();
+  sandbox.fetch = realFetch;
+  check("and clicking it fetches nothing", fetched, false);
+}
 
 // -------------------------------------------------------------- engines
 // Every tier, not just the live one: `voz` is the only tier the person

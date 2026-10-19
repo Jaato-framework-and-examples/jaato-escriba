@@ -940,13 +940,32 @@ async function doScratch(field, btn) {
 }
 
 // ---------------------------------------------------------------- days
+// WHETHER THIS DAY IS ALREADY ON SCREEN, asked of the rows the page
+// actually holds.  `d.in_view` comes from the `state` snapshot and is a
+// photograph: it is published on session open, reopen and a locale
+// change, and an `entry` landing never updates it.
+//
+// MEASURED 2026-10-19 15:42: the page loaded at 15:42:10, BEFORE the
+// session opened, so today had no entries and the snapshot said
+// `archivo`.  The greeting arrived at 15:42:19 as an entry frame, which
+// touches nothing here.  Clicking "hoy" at 15:42:24 therefore took the
+// archive route for a day that was live, fetched the greeting back out
+// of the manifest, and merged it as a SECOND row — archived ids are
+// negative by construction precisely so they cannot collide with live
+// ones, so `byId` had no way to recognise it as the same turn.
+//
+// The design was already right: a day in view opens where it is.  It
+// was reading a stale copy of "in view".
+const dayIsHere = (date) =>
+  S.order.some((id) => dayKey(S.byId.get(id).at) === date);
+
 function renderDays() {
   const box = $("days");
   box.textContent = "";
   for (const d of S.days) {
-    const b = el("button", (d.in_view || S.loadedDays.has(d.date)) ? "" : "archived");
+    const loaded = d.in_view || dayIsHere(d.date) || S.loadedDays.has(d.date);
+    const b = el("button", loaded ? "" : "archived");
     const l = el("span", "l");
-    const loaded = d.in_view || S.loadedDays.has(d.date);
     l.append(el("span", "label", dayName(d.date)),
              el("span", "meta", dayDate(d.date) + " · " +
                 (loaded ? (d.count || S.loadedDays.has(d.date) ? countOf(d) : 0) + " entradas"
@@ -957,7 +976,7 @@ function renderDays() {
       if (t) $("scroll").scrollTop = t.offsetTop - $("scroll").offsetTop;
       markDay(d.date);
     };
-    b.onclick = d.in_view || S.loadedDays.has(d.date) ? here : () => loadDay(d.date, here);
+    b.onclick = loaded ? here : () => loadDay(d.date, here);
     b.dataset.day = d.date;
     box.append(b);
   }
@@ -972,7 +991,10 @@ const countOf = (d) => S.order.filter((id) => dayKey(S.byId.get(id).at) === d.da
 // chronological place rather than appended, because `renderTranscript`
 // walks the order and would otherwise draw last Tuesday under today.
 async function loadDay(date, then) {
-  if (S.loadedDays.has(date)) { then(); return; }
+  // ASKED AGAIN HERE, because a render is not a press: a row can land
+  // between drawing this button and somebody clicking it, and the
+  // fetch is what duplicates.
+  if (S.loadedDays.has(date) || dayIsHere(date)) { then(); return; }
   let rows;
   try {
     const res = await fetch("/day/" + date);
