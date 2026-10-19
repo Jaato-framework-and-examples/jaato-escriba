@@ -72,6 +72,22 @@ entre dos capturas falta un paso que no llegaste a ver, dilo en
 fuente. Las capturas no van en `fuentes`: ese campo es para URLs y nodos
 del wiki, y una captura no es ni lo uno ni lo otro.
 
+**No cites la narración.** Nada de «frase asociada», ni comillas con lo
+que dijo. La transcripción es tu contexto, no tu contenido: te dice qué
+estaba enseñando y para qué, y eso lo escribes tú con tus palabras y en
+prosa seguida. Quien lea el documento quiere el procedimiento, no la
+taquigrafía de cómo se contó.
+
+**La pantalla manda sobre la transcripción.** Lo que lees en la
+narración no lo dijo un teclado: lo transcribió una máquina de un audio,
+y los nombres propios son justo lo que peor saca —productos, menús,
+etiquetas, siglas—. Si la narración dice «WorkSpec» y en la captura pone
+`Workspace`, es `Workspace`, sin comentarlo y sin dejar las dos
+versiones. Para cualquier cosa ESCRITA en la pantalla, la pantalla es la
+fuente y la transcripción no cuenta; para lo que no se ve —por qué se
+hace algo, qué viene después, a qué sirve— la narración es lo único que
+lo dice, y ahí sí mandan sus palabras.
+
 ## Qué escribes
 
 Markdown, en `docs/<tema>/`, con `index.md` como puerta de entrada.

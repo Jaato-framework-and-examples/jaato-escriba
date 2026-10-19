@@ -603,15 +603,23 @@ async def _eyes() -> None:
 
         _sdk.IPCClient.session = staticmethod(lambda **kw: Ok())
         base = {"id": ident, "frames": 3, "root": f"demo/{ident}"}
+        where = []
         try:
-            await person._commission(dict(base, audio="n.webm"), "b", kept,
-                                     "demo/x/n.txt")
+            where.append(await person._commission(
+                dict(base, audio="n.webm"), "b", kept, "demo/x/n.txt"))
             await person._commission(dict(base, audio="n.webm"), "b", kept, "")
             await person._commission(dict(base, audio=""), "b", kept, "")
         finally:
             _sdk.IPCClient.session = real_session
+        # THE PATH COMES BACK, so the escriba can hand the document over.
+        # MEASURED 2026-10-19 16:52: asked for it, the escriba answered
+        # "no tengo la ruta exacta del documento" — true, and only
+        # because the driver knew where it was and never said.
+        check("the commission returns where it was written", where,
+              ["docs/x/index.md"])
         check("a transcript is named as a file it can read",
               "demo/x/n.txt" in seen[0], True)
+
         # AND NEITHER SIDE IS ALIGNED FOR IT.  Which words explain a
         # screen is a judgement -- a sentence often lands seconds after
         # the frame it explains -- so both carry a clock and the model

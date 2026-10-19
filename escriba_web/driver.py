@@ -1667,7 +1667,8 @@ class Person:
         and the telling.
         """
         try:
-            await self._writer(self.say("agent.document_topic", tema=tema), {})
+            written = await self._writer(
+                self.say("agent.document_topic", tema=tema), {})
         except Exception as exc:                          # noqa: BLE001
             self.journal.note("documento.fallido",
                               error=f"{type(exc).__name__}: {exc}"[:200])
@@ -1675,7 +1676,9 @@ class Person:
                       exc_info=exc)
             await self._tell(self.say("agent.doc_unwritten"))
             return
-        await self._tell(self.say("agent.doc_ready"))
+        raiz = str(written.get("raiz", ""))
+        self.journal.note("documento.escrito", tema=tema[:120], raiz=raiz[:200])
+        await self._tell(self.say("agent.doc_ready", ruta=raiz))
 
     def _offer(self, args: dict) -> dict:
         """Put a file of this person's own in front of them to take.
@@ -2423,7 +2426,7 @@ class Person:
                       exc_info=exc)
             said = ""
         try:
-            await self._commission(manifest, brief, chosen, said)
+            raiz = await self._commission(manifest, brief, chosen, said)
         except Exception as exc:                          # noqa: BLE001
             self.journal.note("demo.unwritten", ident=ident,
                               error=f"{type(exc).__name__}: {exc}"[:200])
@@ -2431,7 +2434,8 @@ class Person:
                       exc_info=exc)
             await self._tell(self.say("agent.demo_unwritten"))
             return
-        await self._tell(self.say("agent.demo_ready", n=len(chosen)))
+        await self._tell(self.say("agent.demo_ready", n=len(chosen),
+                                  ruta=raiz))
 
     async def _choose(self, ident: str) -> List[Dict[str, Any]]:
         """Score every capture of this demonstration and keep the best.
@@ -2524,7 +2528,7 @@ class Person:
 
     async def _commission(self, manifest: Dict[str, Any], brief: str,
                           chosen: List[Dict[str, Any]],
-                          said: str = "") -> None:
+                          said: str = "") -> str:
         """The documenter, as a session of this driver's own.
 
         A SIBLING AND NOT A SUBAGENT, which is what `enrichment` already
@@ -2569,8 +2573,15 @@ class Person:
             # the only place the reason survives, and nothing in this
             # repository read it.
             #
+        raiz = str(written.get("raiz", ""))
         self.journal.note("demo.written", ident=manifest["id"],
-                          raiz=str(written.get("raiz", ""))[:200])
+                          raiz=raiz[:200])
+        # RETURNED, so the escriba can be TOLD WHERE IT IS.  Measured
+        # 2026-10-19 16:52: asked to hand the document over, it answered
+        # "no tengo la ruta exacta del documento" -- true, and only
+        # because the driver knew and never said.  `ofrecer_descarga`
+        # needs a path, and the one thing that has it is this payload.
+        return raiz
 
     async def _writer(self, task: str, params: Dict[str, str]) -> dict:
         """The documenter, as a session of this driver's own.
