@@ -1625,9 +1625,15 @@ class Person:
             raise ValueError(
                 f"«{ruta}» no existe. El camino es el que has leido, no "
                 "uno parecido: copialo tal cual o no ofrezcas nada.")
+        size = target.stat().st_size
         self.journal.note("descarga", ruta=ruta, titulo=titulo[:120],
-                          size=target.stat().st_size)
-        self.board.offered(titulo, ruta, target.stat().st_size)
+                          size=size)
+        # Kept for the same reason as a diagram: what was offered is
+        # part of the conversation, and a button that disappears when
+        # the day is reopened is a file the person cannot find again.
+        self.archive.turn(descarga={"titulo": titulo, "ruta": ruta,
+                                    "size": size})
+        self.board.offered(titulo, ruta, size)
         return {"ofrecido": True}
 
     def _draw(self, args: dict) -> dict:
@@ -1669,6 +1675,16 @@ class Person:
                 "Quedate con lo que hace falta para entender la relacion.")
         self.journal.note("diagrama", titulo=titulo[:120],
                           chars=len(source))
+        # THE MANIFEST AND NOT ONLY THE JOURNAL.  The transcript keeps
+        # 400 entries and a restart keeps none; a day is read back from
+        # `audio/<session>/manifest.jsonl`, so anything absent from it
+        # is gone the moment the person looks at the day again.
+        # MEASURED 2026-10-19: the first diagram the escriba drew
+        # vanished when its day was reopened.  A diagram is what the
+        # escriba SAID, in the only form it had -- not commentary like
+        # a search note -- so it belongs in the record of the
+        # conversation beside the words.
+        self.archive.turn(diagrama={"titulo": titulo, "mermaid": source})
         self.board.drew(titulo, source)
         return {"dibujado": True}
 
@@ -2821,6 +2837,26 @@ class Person:
         if row.get("anotado"):
             out.append({"at": at, "kind": "anotado", "text": row["anotado"],
                         "seconds": None, "audio": None, "repeats": 1, "silent": False})
+        # WHAT THE ESCRIBA PRODUCED, read back as itself.  A diagram is
+        # its Mermaid and a download is its path: both are text, so a
+        # reopened day gets the real thing rather than a mention of one
+        # -- the picture is drawn again from the source, and the button
+        # points at the same route it did live.
+        drew = row.get("diagrama") or {}
+        if drew:
+            out.append({"at": at, "kind": "diagrama",
+                        "text": drew.get("titulo") or "",
+                        "mermaid": drew.get("mermaid") or "",
+                        "seconds": None, "audio": None, "repeats": 1,
+                        "silent": False})
+        gave = row.get("descarga") or {}
+        if gave:
+            out.append({"at": at, "kind": "descarga",
+                        "text": gave.get("titulo") or "",
+                        "path": gave.get("ruta") or "",
+                        "size": gave.get("size") or 0,
+                        "seconds": None, "audio": None, "repeats": 1,
+                        "silent": False})
         return out
 
     def days(self) -> List[dict]:

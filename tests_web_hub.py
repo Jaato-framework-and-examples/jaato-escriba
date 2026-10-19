@@ -591,6 +591,50 @@ async def main():
         inside = docs in target.parents and target.is_file()
         check(f"doc {path!r}", inside, allowed)
 
+    # ---- a day, read back out of the manifest ------------------------
+    #
+    # THE TRANSCRIPT IS A 400-ENTRY WINDOW AND A RESTART KEEPS NONE, so
+    # `audio/<session>/manifest.jsonl` is the durable record and a day
+    # reopened is rebuilt from it.  Anything the manifest does not hold
+    # is GONE at that moment, however plainly it is on screen now.
+    # MEASURED 2026-10-19: the first diagram the escriba drew vanished
+    # when its day was reopened, because nothing wrote it down.  This
+    # read-back had no legs of its own at all, which is why.
+    rebuilt = Person._turn_entries(
+        {"at": "2026-10-19T15:17:00", "transcript": "aquí tienes el diagrama",
+         "spoke": {"sha": "att_1111111111111111", "seconds": 12.0},
+         "anotado": "Se ha generado un diagrama."}, ws)
+    check("a turn comes back as its reply and its note",
+          [e["kind"] for e in rebuilt], ["spoke", "anotado"])
+
+    drew = Person._turn_entries(
+        {"at": "2026-10-19T15:17:00",
+         "diagrama": {"titulo": "las dimensiones",
+                      "mermaid": "flowchart TD\n A-->B"}}, ws)
+    check("a diagram comes back as a diagram", [e["kind"] for e in drew],
+          ["diagrama"])
+    # ITS SOURCE AND NOT A MENTION OF IT: the picture is drawn again
+    # from the Mermaid, so a reopened day shows the real thing.
+    check("carrying the source it is drawn from", drew[0]["mermaid"],
+          "flowchart TD\n A-->B")
+    check("and what it is of", drew[0]["text"], "las dimensiones")
+
+    gave = Person._turn_entries(
+        {"at": "2026-10-19T15:20:00",
+         "descarga": {"titulo": "la transcripción", "ruta": "demo/d1/n.txt",
+                      "size": 1234}}, ws)
+    check("an offer comes back as an offer", [e["kind"] for e in gave],
+          ["descarga"])
+    check("pointing at the same file", gave[0]["path"], "demo/d1/n.txt")
+    check("and still saying how big it is", gave[0]["size"], 1234)
+
+    # A `stage` ROW IS NOT TALK: policy, budget, a guest arriving, a
+    # playback claim.  They belong in the record and not in a
+    # conversation read back.
+    check("but a staged row is not a line of conversation",
+          Person._turn_entries({"at": "x", "stage": "guest-joined",
+                                "anotado": "no"}, ws), [])
+
     # `/descarga` and `/captura` run the SAME containment, against
     # `driver.DOWNLOADABLE` -- the one list the tool and the route both
     # read, so the thing the escriba may offer and the thing the server
