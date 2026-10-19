@@ -115,9 +115,18 @@ def scores(batch: Sequence[Dict[str, Any]],
            answers: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Each capture with what it scored.
 
-    `value` is the probability-weighted score and LANDS BETWEEN LEVELS
-    on purpose -- it is not the chosen level, it is the expectation over
-    them, which is what makes a ranking of near-equals meaningful.
+    `value` IS AN INDEX INTO `levels`, NOT A LEVEL.  Measured against a
+    live call on 2026-10-19: ten levels labelled "1".."10", a
+    distribution peaked on the first of them, and `value` 0.56 -- the
+    probability-weighted mean of the INDICES 0..9, which the answer's
+    own `legend` maps back to the labels.  So it runs 0 to
+    `len(LEVELS) - 1` and a reader expecting one to ten is reading it
+    wrong.
+
+    That costs nothing here because nothing compares it to a threshold:
+    it is used to RANK, and the expectation over the levels is exactly
+    what makes a ranking of near-equals meaningful where the winning
+    level alone would tie them.
 
     A capture with no answer is a question that was asked and not
     returned.  It is not scored zero and it is not dropped silently: the

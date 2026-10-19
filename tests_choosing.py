@@ -91,10 +91,21 @@ answers = {"F0001": {"type": "score", "value": 2.0, "confidence": 0.9},
 scored = choosing.scores(batch, answers)
 check("every capture comes back with its score",
       [f["score"] for f in scored], [2.0, 9.4, 7.1, 9.9])
-# BETWEEN LEVELS ON PURPOSE: `value` is the probability-weighted score,
-# not the level that won, which is what makes near-equals rankable.
-check("and the score is kept as given, not rounded to a level",
+# AN INDEX INTO `levels`, NOT A LEVEL, and never compared to anything
+# but another one of itself.  Measured on a live call: ten levels
+# labelled "1".."10" and a `value` of 0.56.  So these legs rank, and
+# nothing anywhere asks whether a score is "high".
+check("the score is kept as given, not rounded to a level",
       scored[1]["score"], 9.4)
+check("and a run of them is ordered, never thresholded",
+      choosing.best(choosing.scores(batch, {
+          k: {"type": "score", "value": v}
+          for k, v in zip(["F0001", "F0002", "F0003", "F0004"],
+                          [0.11, 0.52, 0.33, 0.49])}), keep=2),
+      [f for f in choosing.scores(batch, {
+          k: {"type": "score", "value": v}
+          for k, v in zip(["F0001", "F0002", "F0003", "F0004"],
+                          [0.11, 0.52, 0.33, 0.49])}) if f["n"] in (2, 4)])
 
 # A QUESTION ASKED AND NOT ANSWERED IS NOT A ZERO.  Scoring it zero
 # would quietly drop a capture that may have been the best one, and the
