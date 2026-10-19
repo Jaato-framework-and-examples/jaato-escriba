@@ -602,7 +602,20 @@ async def main():
     (ws / "demo" / "d1" / "narration.txt").write_text("[00:00] hola")
     (ws / ".jaato").mkdir()
     (ws / ".jaato" / "stored.json").write_text("not yours either")
-    for path, allowed in (("docs/ok.md", True),
+    # THE PANEL SENDS AN ABSOLUTE PATH, on purpose: the listing is the
+    # only thing that knows which root it read from, so the path travels
+    # with the row rather than being rebuilt at the far end
+    # (`run_escriba.py:446`).  `ws / "/a/b"` IS `/a/b`, so it resolves
+    # to the file it names and meets the same containment as anything
+    # else — and stripping the leading slash makes it `<ws>/a/b`, which
+    # exists for nobody.  Every document in the reader answered "No se
+    # pudo leer el documento" for exactly as long as that strip was
+    # there.  The leg was missing because every path tested was either
+    # relative or absolute-and-OUTSIDE, and both of those pass either
+    # way.
+    for path, allowed in ((str(ws / "docs" / "ok.md"), True),
+                          (str(ws / "elsewhere-not-made" / "x.md"), False),
+                          ("docs/ok.md", True),
                           ("demo/d1/narration.txt", True),
                           ("secret.md", False),
                           (".jaato/stored.json", False),

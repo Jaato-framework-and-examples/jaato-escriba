@@ -155,13 +155,24 @@ def within(ws: Path, path: str, names: Sequence[str]) -> Optional[Path]:
     would have no cause to think about this function.  Raised by the VPS
     session reviewing the download route before it shipped.
 
+    AN ABSOLUTE PATH IS ALLOWED THROUGH, which looks wrong and is not.
+    The documents panel sends one on purpose -- `run_escriba.py:446`,
+    "the absolute path travels WITH the row rather than being rebuilt
+    from `text` at the far end" -- and `ws / "/a/b"` is `/a/b`, so it
+    resolves to the file it names and then faces the same containment
+    as everything else.  Stripping the leading slash instead turns it
+    into `<ws>/a/b`, which exists for nobody: MEASURED 2026-10-19,
+    every document in the reader answered "No se pudo leer el
+    documento" the moment this function gained a `lstrip`.  What makes
+    this safe is the containment below, never the shape of the string.
+
     EXISTENCE IS THE CALLER'S QUESTION, not this one's: a route answers
     404 for both, and `_offer` must tell the escriba apart "that is not
     yours to send" from "you invented that path", because they are
     different things to do differently.
     """
     root = ws.resolve()
-    target = (ws / str(path).lstrip("/")).resolve()
+    target = (ws / str(path)).resolve()
     for name in names:
         here = ws / name
         if here.is_symlink():
