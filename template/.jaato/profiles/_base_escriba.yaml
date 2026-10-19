@@ -125,7 +125,15 @@ plugins:
   # conversation.  Two tools: spawn it, and check whether it is still
   # going.  Not `close_subagent` or `cancel_subagent`: it finishes on its
   # own, and a voice model with a cancel button is a way to lose work.
-  - "subagent(mode:preload, tools:[spawn_subagent, list_active_subagents])"
+  # NO `subagent`, AND THE ABSENCE IS THE POINT.  The escriba used to
+  # spawn the documentalista itself.  Every document failure on
+  # 2026-10-19 was on that path -- two subagents dead on an empty key
+  # (jaato#1731), two documents out of one commission, and twice the
+  # ABSTRACT base profile named, which carries no key at all
+  # (jaato#1751) -- while the driver's own sibling session worked every
+  # time it ran.  So the driver commissions, through the
+  # `encargar_documento` host tool, and the model names no profile
+  # because there is none for it to get wrong.
   # To CHOOSE the frames of a demonstration before handing it over.
   #
   # Here and not on the documentalista, which had it first. Measured
@@ -445,8 +453,11 @@ plugin_configs:
           # it.
           - enter_tier
           - web_fetch
-          - spawn_subagent
-          - list_active_subagents
+          # The client-provided tool that replaced `spawn_subagent`.
+          # Left off this list it is offered to the model and then
+          # silently refused, which here means an escriba that says it
+          # has commissioned a document and has not.
+          - encargar_documento
           # NOT auto-approved by its plugin, deliberately: "a call spends
           # money and sends workspace content to a decision model".
           - decide

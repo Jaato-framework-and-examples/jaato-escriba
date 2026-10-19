@@ -740,6 +740,25 @@ _allowed = (((_escriba.get("plugin_configs") or {}).get("permission") or {})
             .get("policy") or {}).get("whitelist", {}).get("tools") or []
 check("and the scribe's whitelist lets it through", "decide" in _allowed, True)
 
+# ---- and it no longer spawns anything
+#
+# EVERY DOCUMENT FAILURE ON 2026-10-19 WAS ON THE SPAWN PATH: two
+# subagents dead on an empty key (jaato#1731), two documents out of one
+# commission, and twice the ABSTRACT base profile named, which carries
+# no key at all (jaato#1751).  The driver's own sibling session worked
+# every time it ran.  So the model asks and names no profile -- there is
+# none for it to get wrong -- and `spawn_subagent` is not offered at
+# all, because a tool in the schema is a tool that gets called.
+check("the scribe loads no subagent plugin",
+      any("subagent" in p for p in _escriba["plugins"]), False)
+check("and spawning is not whitelisted either",
+      "spawn_subagent" in _allowed, False)
+check("what it has instead is the host tool",
+      "encargar_documento" in _allowed, True)
+check("and its instructions name that and no profile",
+      "encargar_documento(" in _e_persona
+      and "spawn_subagent" not in _e_persona, True)
+
 # ---- and no longer chooses
 #
 # THE PROCEDURE LEFT THE PROSE.  It used to be five numbered steps here,

@@ -114,6 +114,35 @@ JUSTIFY_SCHEMA = {
 }
 
 
+#: Asking for a document, as a thing the escriba REQUESTS and the
+#: driver performs.  It used to call `spawn_subagent` itself, and every
+#: document failure on 2026-10-19 was on that path: two subagents dead
+#: on an empty key in the morning, two documents from one commission at
+#: 13:55, and twice -- 15:13 and 16:12 -- the ABSTRACT base profile
+#: named, which carries no key at all (jaato#1751).  The driver's own
+#: sibling session worked every time it ran.  So the model asks, in its
+#: own words, and names no profile: there is no profile for it to get
+#: wrong.
+ORDER_TOOL = "encargar_documento"
+
+ORDER_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["tema"],
+    "properties": {
+        "tema": {
+            "type": "string",
+            "minLength": 1,
+            "description": "El encargo de verdad, con las palabras de la "
+                           "persona y lo que hayas entendido del alcance: "
+                           "que tema, que le interesa de el, si quiere "
+                           "algo breve o a fondo. Un encargo de dos "
+                           "palabras produce un documento de dos "
+                           "palabras.",
+        },
+    },
+}
+
 #: Handing a file over, as a thing the escriba may offer.
 DOWNLOAD_TOOL = "ofrecer_descarga"
 
@@ -1025,7 +1054,18 @@ class Person:
                                "cuando acabe de aparecer algo que es "
                                "suyo y no tiene otra forma de sacar.",
                            "parameters": DOWNLOAD_SCHEMA,
-                           "handler": self._offer}],
+                           "handler": self._offer},
+                          {"name": ORDER_TOOL,
+                           "description":
+                               "Encarga un documento sobre lo que la "
+                               "persona te ha pedido. Lo escribe otro, en "
+                               "segundo plano, y tarda un rato: tu solo "
+                               "lo pides y se lo cuentas a ella. Solo "
+                               "cuando lo pida -- es trabajo que ocupa "
+                               "minutos y ficheros en su disco, y no es "
+                               "tuyo decidir empezarlo.",
+                           "parameters": ORDER_SCHEMA,
+                           "handler": self._order}],
             on_status_change=self._connection, **self.conn)
         self._scribe = await self._stack.__aenter__()
         self.archive.identify(self._scribe.session_id,
@@ -1593,6 +1633,49 @@ class Person:
     def invitations(self) -> List[dict]:
         """Everybody this host has named, in whatever state."""
         return [i.json() for i in ROOM.of_host(self.principal)]
+
+    def _order(self, args: dict) -> dict:
+        """The escriba asking for a document; the driver writes it.
+
+        RETURNS AT ONCE AND WRITES IN THE BACKGROUND.  A document is
+        minutes of another agent's work and the model is waiting on this
+        call: the answer is that the job was accepted, not that it is
+        done.  `_write` tells her when it lands, the same way
+        `_document` does for a demonstration.
+
+        NO PROFILE CROSSES THIS BOUNDARY.  That is the whole point of
+        the tool: the model says what it wants written and the driver
+        decides who writes it, so there is nothing here for a model to
+        misname.
+        """
+        tema = str(args.get("tema") or "").strip()
+        if not tema:
+            raise ValueError(
+                "un documento necesita un encargo: que hay que escribir, "
+                "con las palabras de la persona.")
+        self.journal.note("documento.encargado", tema=tema[:200])
+        self.board.note(self.say("note.doc_started"))
+        self._hold(asyncio.create_task(self._write(tema),
+                                       name=f"document:{tema[:40]}"))
+        return {"encargado": True}
+
+    async def _write(self, tema: str) -> None:
+        """Write the document that was just asked for, and say so.
+
+        `_document`'s shape without the demonstration: no captures to
+        choose and no narration to transcribe, so it is the commission
+        and the telling.
+        """
+        try:
+            await self._writer(self.say("agent.document_topic", tema=tema), {})
+        except Exception as exc:                          # noqa: BLE001
+            self.journal.note("documento.fallido",
+                              error=f"{type(exc).__name__}: {exc}"[:200])
+            log.error("writing the document of %r failed", tema[:60],
+                      exc_info=exc)
+            await self._tell(self.say("agent.doc_unwritten"))
+            return
+        await self._tell(self.say("agent.doc_ready"))
 
     def _offer(self, args: dict) -> dict:
         """Put a file of this person's own in front of them to take.
@@ -2461,8 +2544,6 @@ class Person:
         is a path and not a list: `enrichment` carries the scar of
         passing a list that arrived as its `repr()`.
         """
-        from jaato_sdk import IPCClient
-
         named = (_demo.ROOT / manifest["id"] / _choosing.CHOSEN).as_posix()
         # THREE STATES AND THEY ARE NOT THE SAME.  No narration at all
         # is a demonstration recorded in silence.  Narration with a
@@ -2477,13 +2558,10 @@ class Person:
             else self.say("agent.demo_no_narration"))
         self.journal.note("demo.commission", ident=manifest["id"],
                           captures=len(chosen), brief=brief[:120])
-        async with IPCClient.session(
-                profile="documentalista", agent="documentalista",
-                agent_params={"capturas": named}, **self.conn) as writer:
-            written = await writer.complete(
-                self.say("agent.document_demo", brief=brief,
-                         frames=manifest["frames"], narration=narration),
-                timeout=DOCUMENT_TIMEOUT)
+        written = await self._writer(
+            self.say("agent.document_demo", brief=brief,
+                     frames=manifest["frames"], narration=narration),
+            {"capturas": named})
             # `complete` RETURNS None FOR THREE DIFFERENT ENDINGS and
             # raises for none of them, which is the whole trap: a budget
             # ceiling, a refused completion and a session somebody
@@ -2491,22 +2569,42 @@ class Person:
             # the only place the reason survives, and nothing in this
             # repository read it.
             #
-            # MEASURED 2026-10-19, session 20261019_135350: the
-            # documenter wrote a document, had its payload REFUSED by
-            # `docs_are_real` for citing four memory ids that do not
-            # exist, spent the rest of its budget on 63 calls of
-            # `selectReferences` against a memory id, and ended
-            # `budget_exhausted`.  This returned None, nothing looked,
-            # and at 13:56 the escriba told her "el documento ya está
-            # listo, con las 12 capturas clave".  That sentence is the
-            # defect: an outcome asserted by somebody who never checked.
+        self.journal.note("demo.written", ident=manifest["id"],
+                          raiz=str(written.get("raiz", ""))[:200])
+
+    async def _writer(self, task: str, params: Dict[str, str]) -> dict:
+        """The documenter, as a session of this driver's own.
+
+        A SIBLING AND NOT A SUBAGENT, which is what `enrichment` already
+        does for the judge: `IPCClient.session` under this person's own
+        workspace and env, finished with `complete` because it SHOULD
+        end.  One writer, asked two different things -- a topic, or a
+        demonstration with its captures named in `params`.
+
+        `complete` RETURNS None FOR THREE DIFFERENT ENDINGS and raises
+        for none of them: a budget ceiling, a refused completion, a
+        session somebody stopped.  `Session.terminus` is the only place
+        the reason survives.  MEASURED 2026-10-19, session
+        20261019_135350: the documenter wrote a document, had its
+        payload REFUSED by `docs_are_real` for citing four memory ids
+        that do not exist, spent the rest of its budget on 63 calls of
+        `selectReferences` against a memory id, and ended
+        `budget_exhausted`.  Nothing looked, and at 13:56 the escriba
+        told her "el documento ya está listo".  That sentence was the
+        defect: an outcome asserted by somebody who never checked.
+        """
+        from jaato_sdk import IPCClient
+
+        async with IPCClient.session(
+                profile="documentalista", agent="documentalista",
+                agent_params=dict(params), **self.conn) as writer:
+            written = await writer.complete(task, timeout=DOCUMENT_TIMEOUT)
             if written is None:
                 ended = getattr(writer, "terminus", None)
                 raise Unwritten(
                     f"no accepted completion: "
                     f"{getattr(ended, 'reason', 'unknown')}")
-            self.journal.note("demo.written", ident=manifest["id"],
-                              raiz=str(written.get("raiz", ""))[:200])
+            return written
 
     async def _tell(self, prompt: str) -> None:
         """One turn whose only job is to say something to her.

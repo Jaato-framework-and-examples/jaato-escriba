@@ -40,7 +40,7 @@ from typing import Any, Dict, List
 from jaato_sdk.cascade_authoring import ProcessorResult
 
 TOOL = "store_memory"
-SPAWN = "spawn_subagent"
+ORDER = "encargar_documento"
 
 
 def _document_claim(payload: Dict[str, Any], calls: list) -> List[str]:
@@ -54,8 +54,19 @@ def _document_claim(payload: Dict[str, Any], calls: list) -> List[str]:
 
     Same shape as the memory check: the claim is in the payload, the truth
     is in the ledger, and the ledger is the one the model cannot rewrite.
+
+    HONESTY FIRST, AND THE ORDER IS MEASURED.  This used to offer "go
+    and commission it" as the first remedy.  2026-10-19 16:12: the
+    scribe claimed a document for a demonstration NOBODY HAD RECORDED --
+    the person had only described what they were about to show -- and
+    this refusal sent it off to commission one, which it did, naming an
+    abstract profile that cannot start.  A claim that is false at its
+    root is fixed by withdrawing it, not by making it true.  So the
+    refusal leads with the payload, which is the only thing a completion
+    gate can actually ask for: the turn's work is over by the time this
+    runs.
     """
-    spawned = any(c.get("name") == SPAWN and c.get("success") for c in calls)
+    asked = any(c.get("name") == ORDER and c.get("success") for c in calls)
 
     if not payload.get("documento_encargado"):
         # It said it commissioned nothing. Then it must not be TELLING the
@@ -72,27 +83,26 @@ def _document_claim(payload: Dict[str, Any], calls: list) -> List[str]:
         said = str(payload.get("anotado") or "").lower()
         claims = any(k in said for k in (
             "documento", "documentación", "lo he escrito", "lo he guardado en"))
-        if claims and not spawned:
+        if claims and not asked:
             return [
-                "Tu `anotado` habla de un documento, pero `documento_encargado` "
-                "es false y no has llamado a `spawn_subagent`: no hay ningún "
-                "documento. Una de dos. Si la persona lo pidió, entra en "
-                "`escribano` y encárgaselo al `documentalista` — TÚ NO LO "
-                "ESCRIBES, y guardar una memoria sobre el tema no es "
-                "escribirlo. Si no lo pidió, quita del `anotado` lo que suene "
-                "a que existe un fichero."
+                "Tu `anotado` habla de un documento, pero "
+                "`documento_encargado` es false y no has llamado a "
+                "`encargar_documento`: no hay ningún documento. Lo primero "
+                "es decir la verdad: quita del `anotado` lo que suene a que "
+                "existe un fichero. Y SOLO si la persona lo pidió de verdad "
+                "en este turno, pídelo con `encargar_documento` — guardar "
+                "una memoria sobre el tema no es escribirlo."
             ]
         return []
-    if spawned:
+    if asked:
         return []
     return [
         "Dices `documento_encargado: true` pero no has llamado a "
-        "`spawn_subagent` en este turno. Un documento no se escribe solo ni "
-        "lo escribes tú: entra en `escribano` y encárgaselo al "
-        "`documentalista`, con el encargo de verdad en `task`. Si no piensas "
-        "encargarlo, pon la bandera en false y no le digas a la persona que "
-        "hay un documento — se quedaría esperando un fichero que nadie está "
-        "escribiendo."
+        "`encargar_documento` en este turno. Lo primero es que el `anotado` "
+        "y la bandera digan la verdad: ponla en false y no le digas a la "
+        "persona que hay un documento, porque se quedaría esperando un "
+        "fichero que nadie está escribiendo. Pídelo con "
+        "`encargar_documento` SOLO si ella lo pidió de verdad."
     ]
 
 

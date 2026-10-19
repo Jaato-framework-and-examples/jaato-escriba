@@ -1051,6 +1051,42 @@ async def main() -> int:
           _driver.entry_json(host.board.state.entries[-1])["mermaid"],
           "flowchart LR\n  X-->Y")
 
+    # ------------------------------------- asking for a document
+    #
+    # THE MODEL ASKS, THE DRIVER WRITES.  It used to call
+    # `spawn_subagent` itself and name a profile, and every document
+    # failure on 2026-10-19 was on that path: two subagents dead on an
+    # empty key, two documents from one commission, and twice the
+    # ABSTRACT base profile named, which carries no key at all.  No
+    # profile crosses this boundary any more, so there is none to
+    # misname.
+    started: list = []
+    async def _taken():
+        return None
+
+    host._write = lambda tema: started.append(tema) or _taken()
+
+    def no_order(label_, args):
+        global fail
+        try:
+            host._order(args)
+        except ValueError:
+            print(f"  ok   {label_}")
+            return
+        print(f"  FAIL {label_:<54} was allowed")
+        fail += 1
+
+    no_order("a document with no commission is refused", {"tema": "   "})
+    out = host._order({"tema": "lo que sabemos del riego por goteo"})
+    check("the escriba is told the job was taken", out["encargado"], True)
+    # ACCEPTED, NOT DONE.  A document is minutes of another agent's
+    # work and the model is waiting on this call, so the answer is that
+    # the job was accepted.  `_write` tells her when it lands.
+    check("and the writing is started, not awaited", started,
+          ["lo que sabemos del riego por goteo"])
+    check("with a line on the board while it runs",
+          host.board.state.entries[-1].kind, "note")
+
     # ------------------------------------- handing a file over
     #
     # AN ALLOWLIST AND NOT A DENYLIST.  The caller is a model naming a
