@@ -284,6 +284,18 @@ class FloorTaken(RuntimeError):
     """
 
 
+class Unwritten(RuntimeError):
+    """The documenter's session ended without an accepted completion.
+
+    NOT THE SAME AS "no file was written".  A documenter can write a
+    file and then fail its own completion gate -- `docs_are_real`
+    refuses a payload citing sources that do not exist -- and what is
+    left on disk is then a document nothing vouches for.  The accepted
+    payload is the only thing that says the citations were checked, so
+    its absence is what this reports, whatever is on disk.
+    """
+
+
 class NothingHeard(RuntimeError):
     """The recording that arrived holds no audio.
 
@@ -2121,10 +2133,33 @@ class Person:
         async with IPCClient.session(
                 profile="documentalista", agent="documentalista",
                 agent_params={"capturas": named}, **self.conn) as writer:
-            await writer.complete(
+            written = await writer.complete(
                 self.say("agent.document_demo", brief=brief,
                          frames=manifest["frames"], narration=narration),
                 timeout=DOCUMENT_TIMEOUT)
+            # `complete` RETURNS None FOR THREE DIFFERENT ENDINGS and
+            # raises for none of them, which is the whole trap: a budget
+            # ceiling, a refused completion and a session somebody
+            # stopped all look identical here.  `Session.terminus` is
+            # the only place the reason survives, and nothing in this
+            # repository read it.
+            #
+            # MEASURED 2026-10-19, session 20261019_135350: the
+            # documenter wrote a document, had its payload REFUSED by
+            # `docs_are_real` for citing four memory ids that do not
+            # exist, spent the rest of its budget on 63 calls of
+            # `selectReferences` against a memory id, and ended
+            # `budget_exhausted`.  This returned None, nothing looked,
+            # and at 13:56 the escriba told her "el documento ya está
+            # listo, con las 12 capturas clave".  That sentence is the
+            # defect: an outcome asserted by somebody who never checked.
+            if written is None:
+                ended = getattr(writer, "terminus", None)
+                raise Unwritten(
+                    f"no accepted completion: "
+                    f"{getattr(ended, 'reason', 'unknown')}")
+            self.journal.note("demo.written", ident=manifest["id"],
+                              raiz=str(written.get("raiz", ""))[:200])
 
     async def _tell(self, prompt: str) -> None:
         """One turn whose only job is to say something to her.

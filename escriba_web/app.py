@@ -560,6 +560,36 @@ async def doc(request: Request, path: str) -> PlainTextResponse:
     return PlainTextResponse(target.read_text(encoding="utf-8"))
 
 
+@app.get("/captura")
+async def captura(request: Request, path: str) -> FileResponse:
+    """One capture of a demonstration, for the document that names it.
+
+    A DOCUMENT NAMES ITS CAPTURES and nothing could fetch them.  The
+    documenter writes `![0011.png](demo/<id>/0011.png)` — workspace
+    relative, which is the only thing it can write, because the path it
+    was handed is workspace relative and the file is exactly there.  The
+    reader renders that markdown INSIDE the page, so a relative `src`
+    resolved against the app root and every image in every document
+    404ed.  MEASURED 2026-10-19 on the deployed box: twelve broken
+    images in the first document this system ever produced.
+
+    CONFINED THE WAY `/doc` IS, and for its reason: the path arrives over
+    the wire from a panel this server filled, and `../` is the oldest
+    trick there is.  Resolved first, then checked to be inside the
+    person's own `demo/` — not merely prefixed, which `..` defeats.
+
+    NO GUEST ROUTE, deliberately.  A guest receives no documents at all
+    (`guest_snapshot` is built key by key), so nothing they can see
+    names a capture.
+    """
+    person = await person_of(request)
+    demos = (person.ws / _demo.ROOT).resolve()
+    target = (person.ws / path).resolve()
+    if demos not in target.parents or not target.is_file():
+        raise HTTPException(404, "no such capture")
+    return FileResponse(target)
+
+
 @app.get("/secuencia")
 async def secuencia(request: Request) -> dict:
     """This conversation's sequence, as the page draws it.

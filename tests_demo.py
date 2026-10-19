@@ -538,6 +538,43 @@ async def _eyes() -> None:
               choosing.KEEP + 2)
         check("and how many survived", row[0]["kept"], choosing.KEEP)
 
+        # ---- A DOCUMENT NOBODY ACCEPTED IS NOT A DOCUMENT -------------
+        #
+        # `complete` returns None for a budget ceiling, a refused
+        # completion and a stopped session alike, and raises for none of
+        # them.  MEASURED 2026-10-19 (documentalista 20261019_135350):
+        # the documenter wrote a file, had its payload refused by
+        # `docs_are_real` for citing four memory ids that do not exist,
+        # burned the rest of its budget on 63 `selectReferences` calls
+        # against a memory id, ended `budget_exhausted` -- and the
+        # escriba announced "el documento ya está listo, con las 12
+        # capturas clave".
+        class Ended:
+            reason = "budget_exhausted"
+
+        class Writer:
+            terminus = Ended()
+
+            async def complete(self, *a, **kw):
+                return None
+
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+
+        import jaato_sdk as _sdk
+        real_session = _sdk.IPCClient.session
+        _sdk.IPCClient.session = staticmethod(lambda **kw: Writer())
+        try:
+            await person._commission({"id": ident, "frames": 3, "audio": "",
+                                      "root": f"demo/{ident}"}, "de qué iba",
+                                     kept)
+            check("a document nobody accepted is not written", True, False)
+        except _driver.Unwritten as exc:
+            check("an unaccepted completion is reported, with its reason",
+                  "budget_exhausted" in str(exc), True)
+        finally:
+            _sdk.IPCClient.session = real_session
+
         # A CALL THAT DID NOT RUN AND A CALL THAT WAS REFUSED ARE NOT THE
         # SAME FAILURE, and neither may pass for a selection.
         class Refused(Answer):
