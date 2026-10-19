@@ -32,7 +32,7 @@ import sys
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -440,6 +440,28 @@ def who(record: Dict[str, Any], principal: str) -> str:
 log = logging.getLogger("escriba.driver")
 
 
+class Mic(NamedTuple):
+    """One live microphone the escriba is following, and its recent past.
+
+    THE SAME TAP, POINTED AT TWO THINGS.  `POST /voz` and
+    `POST /demo/<id>/voz` send the identical shape -- `s16le`, the rate
+    and channel count in the query -- because they were always one tap
+    on one microphone with two consumers.  So what follows a live voice
+    for somewhere to say "ya veo" does not need to know which of the two
+    is feeding it; it needs to know what it is listening to, so the
+    record can say so afterwards.
+    """
+
+    #: "demo" while a demonstration is recording, "turn" while somebody
+    #: holds the button down.  It is in the journal row rather than
+    #: implied by the id, because a reader of the record cannot tell a
+    #: demonstration's id from a stream's by looking at it.
+    source: str
+    #: The demonstration's id, or the press's stream id.
+    ident: str
+    ring: _live.Narration
+
+
 class Person:
     """One authenticated person: a workspace, a session, a hub."""
 
@@ -517,17 +539,18 @@ class Person:
         self._stop = asyncio.Event()
         self._turn_lock = asyncio.Lock()
         self._opening = asyncio.Lock()
-        #: The live narration of the demonstration being recorded right
-        #: now, keyed by its id, or None between demonstrations.  Held
-        #: per person and in memory rather than in the demo's directory:
-        #: it is transport and not an artifact -- the narration the
-        #: person keeps arrives as one blob at close -- and `demo`'s byte
-        #: ceiling bounds what the demonstration COSTS THEM on disk,
-        #: which a transport buffer has no business spending.
-        self._demo_voice: Optional[Tuple[str, _live.Narration]] = None
-        #: Reads the live narration for somewhere to say "ya veo", and the
-        #: task that keeps asking.  Both exist only while a demonstration
-        #: is recording, and only where a transcriber was configured.
+        #: The live microphone being followed right now -- a
+        #: demonstration being recorded, or one press of the button --
+        #: or None when nobody is talking.  Held per person and in
+        #: memory rather than on disk: it is transport and not an
+        #: artifact (the narration the person keeps arrives as one blob
+        #: at close, and a press arrives as one blob at release) and
+        #: `demo`'s byte ceiling bounds what a demonstration COSTS THEM
+        #: on disk, which a transport buffer has no business spending.
+        self._following: Optional[Mic] = None
+        #: Reads that live voice for somewhere to say "ya veo", and the
+        #: task that keeps asking.  Both exist only while somebody is
+        #: talking, and only where a transcriber was configured.
         self._ears: Optional[_backchannel.Listener] = None
         self._listening: Optional[asyncio.Task] = None
         #: EVERY background task this object starts, held.  asyncio
@@ -1634,20 +1657,24 @@ class Person:
         has its id, so an in-memory answer would refuse the rest of a
         demonstration that is plainly going on.
         """
-        if self._demo_voice is None or self._demo_voice[0] != ident:
+        if self._following is None or self._following.ident != ident:
             if _demo.open_id(self.ws) != ident:
                 raise _demo.NoSuchDemo(ident)
-            self._demo_voice = (ident, _live.Narration())
-            self._listen(ident)
-        self._demo_voice[1].add(pcm, rate, channels)
-        held = self._demo_voice[1]
+            # A DEMONSTRATION TAKES THE MICROPHONE from whatever had it.
+            # The page will not start a turn while one is recording, so
+            # the only thing this can displace is a press whose page went
+            # away without saying so -- and a demonstration is the longer
+            # and the more consequential of the two.
+            self._follow("demo", ident)
+        self._following.ring.add(pcm, rate, channels)
+        held = self._following.ring
         self.journal.note("demo.voice", ident=ident,
                           ms=round(len(pcm) / (rate * channels * _live.WIDTH)
                                    * 1000),
                           held=round(held.held, 3), heard=round(held.heard, 3))
 
-    def _listen(self, ident: str) -> None:
-        """Start following this demonstration for somewhere to speak.
+    def _follow(self, source: str, ident: str) -> None:
+        """Start following one live microphone for somewhere to speak.
 
         SILENT WITHOUT A TRANSCRIBER, and it says so in the journal
         rather than defaulting to one.  `--transcribe` names the model or
@@ -1656,9 +1683,16 @@ class Person:
         so a deployment that configured none gets a demonstration that
         records, documents itself, and is not interrupted.  What must not
         happen is somebody wondering why the escriba never speaks.
+
+        THE RING IS MADE EVEN WHEN NOTHING WILL READ IT: `demo.voice`
+        reports how much has been held and heard on every piece, and a
+        deployment with no transcriber still records demonstrations.
         """
+        self._drop()
+        self._following = Mic(source, ident, _live.Narration())
         if self.scribe is None:
-            self.journal.note("demo.deaf", ident=ident, why="no transcriber")
+            self.journal.note("backchannel.deaf", source=source, ident=ident,
+                              why="no transcriber")
             return
         self._ears = _backchannel.Listener(self.scribe)
         # HELD LIKE EVERY OTHER TASK.  The attribute keeps it from being
@@ -1667,6 +1701,35 @@ class Person:
         # task dying into something somebody can read.
         self._listening = self._hold(asyncio.create_task(
             self._backchannels(ident), name=f"backchannel:{ident}"))
+
+    def _unfollow(self, ident: str) -> None:
+        """Stop following that microphone -- and only that one.
+
+        BY IDENT, because the two ways a voice ends arrive from two
+        places that cannot see each other: `voice_end` when the press is
+        released, `demo_closed` when the recording is stopped.  A press
+        that ended after a demonstration had already taken the microphone
+        must not take the demonstration's listener down with it.
+        """
+        if self._following is not None and self._following.ident == ident:
+            self._drop()
+
+    def _drop(self) -> None:
+        """Let go of the microphone, and of anything still decoding.
+
+        CANCELLED RATHER THAN AWAITED, and the cancellation is the whole
+        point rather than a tidying-up: a decode takes seconds, a press
+        is released and the escriba's own reply begins at once, so a
+        boundary found by a decode that outlived the press would be an
+        acknowledgement spoken over the answer to the question it is
+        acknowledging.  `_died` knows a cancelled task is not a failed
+        one.
+        """
+        self._following = None
+        self._ears = None
+        if self._listening is not None:
+            self._listening.cancel()
+            self._listening = None
 
     async def _backchannels(self, ident: str) -> None:
         """Ask every few seconds whether there is somewhere to speak.
@@ -1682,32 +1745,56 @@ class Person:
         together take one to two seconds, and this process is also
         serving the page, the hub and the conversation.
         """
+        # How far the voice had got when this last looked.  A ring that
+        # has not grown is a microphone that has stopped sending, and
+        # the window it holds has already been read.
+        seen = -1.0
         while not self._stop.is_set():
             await asyncio.sleep(_backchannel.STEP_SECONDS)
-            held = self._demo_voice
-            if held is None or held[0] != ident or self._ears is None:
+            mic = self._following
+            if mic is None or mic.ident != ident or self._ears is None:
                 return
             # SNAPSHOT ON THIS THREAD, read on the other: the ring is
-            # being appended to from every `POST /demo/{id}/voz`, and
-            # framing a WAV is a copy rather than work.
-            window = held[1].wav(_backchannel.WINDOW_SECONDS)
-            heard = held[1].heard
+            # being appended to from every `POST /voz` and every
+            # `POST /demo/{id}/voz`, and framing a WAV is a copy rather
+            # than work.
+            window = mic.ring.wav(_backchannel.WINDOW_SECONDS)
+            heard = mic.ring.heard
             if not window:
                 continue
+            # NOTHING NEW SINCE THE LAST LOOK.  The ordinary ending is
+            # `voice_end` or `demo_closed`, and both arrive; a page that
+            # was closed mid-press sends neither, and this is what keeps
+            # that from re-decoding one unchanging window every
+            # `STEP_SECONDS` for as long as the process lives.  It
+            # declines the decode rather than ending the loop, so a
+            # microphone that merely stalled is followed again the
+            # moment it resumes.
+            if heard == seen:
+                continue
+            seen = heard
             start = max(0.0, heard - min(_backchannel.WINDOW_SECONDS,
-                                         held[1].held))
+                                         mic.ring.held))
             try:
                 found = await asyncio.to_thread(self._boundaries, window, start)
             except Exception as exc:                      # noqa: BLE001
                 # A window that will not decode costs its own turn and
-                # not the demonstration: the recording is on disk either
-                # way, and the escriba going quiet is survivable where
-                # the recording failing is not.
-                self.journal.note("demo.unheard", ident=ident,
-                                  error=type(exc).__name__)
+                # not the recording: the audio is on disk either way,
+                # and the escriba going quiet is survivable where losing
+                # what was said is not.
+                self.journal.note("backchannel.unheard", source=mic.source,
+                                  ident=ident, error=type(exc).__name__)
                 continue
+            # THE DECODE OUTLIVED THE VOICE.  Seconds pass in that
+            # thread, and `_drop` cannot interrupt a coroutine that is
+            # not at an await -- so the press may have been released,
+            # the slot let go and the escriba's own reply already
+            # starting while these boundaries were being found.  They
+            # belong to a microphone nobody is holding any more.
+            if self._following is not mic:
+                return
             for boundary in found:
-                self._acknowledge(ident, boundary)
+                self._acknowledge(mic.source, ident, boundary)
                 self._ears.said(boundary)
 
     def _boundaries(self, window: bytes, start: float) -> list:
@@ -1732,7 +1819,7 @@ class Person:
         return self._ears.heard(audio, _backchannel.gaps(spoken, start),
                                 offset=start)
 
-    def _acknowledge(self, ident: str, boundary) -> None:
+    def _acknowledge(self, source: str, ident: str, boundary) -> None:
         """Play one short word over the narration.
 
         THE PAGE IS TOLD WHICH CLIP, not sent the audio: the twelve files
@@ -1753,14 +1840,14 @@ class Person:
         key = random.choice(keys)
         # `edge` AND NOT `kind`.  `Journal.note(kind, **fields)` owns
         # that name for the row's own type, and this row's type is
-        # "demo.backchannel"; passing the boundary's kind under it hands
+        # "backchannel.said"; passing the boundary's kind under it hands
         # `note` two values for one parameter.  MEASURED 2026-10-19 on
         # the deployed box: the first boundary of the first demonstration
         # raised TypeError here, outside `_backchannels`'s `try`, and the
         # task vanished -- one transcription, no rows, nothing logged,
         # and an escriba that had never once spoken on any host.
-        self.journal.note("demo.backchannel", ident=ident, key=key,
-                          at=boundary.at, edge=boundary.kind,
+        self.journal.note("backchannel.said", source=source, ident=ident,
+                          key=key, at=boundary.at, edge=boundary.kind,
                           room=boundary.room)
         self.hub.publish("backchannel", {
             "clip": f"voz/{self.locale}/{key}.ogg", "kind": boundary.kind,
@@ -1775,9 +1862,13 @@ class Person:
         them.  `voice._to_mp3` is what compresses this when a caller
         wants to spend the encode; framing is all that happens here.
         """
-        if self._demo_voice is None:
+        # AND NOT A PRESS, which holds the same slot: this is the
+        # narration of a demonstration or it is nothing, and handing back
+        # somebody's question as if it were their demo would be a lie
+        # that sounds like audio.
+        if self._following is None or self._following.source != "demo":
             return b""
-        return self._demo_voice[1].wav(seconds)
+        return self._following.ring.wav(seconds)
 
     def demo_opened(self, ident: str) -> None:
         """Tell the escriba a demonstration has started recording.
@@ -1857,14 +1948,7 @@ class Person:
         # narration has just landed in the demo's own directory, encoded
         # and complete, so keeping a lossy window of it in memory until
         # the next demonstration would be holding the worse copy.
-        self._demo_voice = None
-        self._ears = None
-        if self._listening is not None:
-            # CANCELLED RATHER THAN AWAITED: it is asleep between windows
-            # most of the time, and `demo_closed` is already the slowest
-            # thing the person waits for.
-            self._listening.cancel()
-            self._listening = None
+        self._unfollow(manifest["id"])
         self.journal.note("demo.close", ident=manifest["id"],
                           frames=manifest["frames"],
                           narrated=bool(manifest["audio"]))
@@ -2132,16 +2216,39 @@ class Person:
         scheduler and a second playback path never has to exist. What is
         added is who is speaking: `by` to show, `by_id` so a browser can
         recognise its own voice and decline to play it.
+
+        AND THE ESCRIBA LISTENS TO IT TOO.  This tap was built to let the
+        room hear somebody; it carries the same samples the escriba
+        follows during a demonstration, for the whole length of the
+        press, whether or not anybody else is in the room — `startRec`
+        opens it unconditionally. So a long question gets the same
+        acknowledgements a long narration gets, and the only thing that
+        had to be built was pointing at audio that was already arriving.
+
+        A DEMONSTRATION KEEPS THE MICROPHONE.  The page will not start a
+        turn while one is recording, but a guest's page cannot see the
+        host's demonstration at all — so the rule is enforced here rather
+        than assumed there. Between presses the newest one wins, which is
+        also what frees a slot whose page went away without releasing it.
         """
         self.hub.publish("speech", {
             "stream": stream, "rate": rate, "channels": channels,
             "pcm": base64.b64encode(pcm).decode("ascii"),
             "by": by, "by_id": by_id})
+        held = self._following
+        if held is None or (held.source == "turn" and held.ident != stream):
+            self._follow("turn", stream)
+        elif held.source == "demo":
+            return
+        self._following.ring.add(pcm, rate, channels)
 
     def voice_end(self, stream: str, by_id: str) -> None:
         """That microphone stopped.  Ends the stream the pieces built."""
         self.hub.publish("speech", {"stream": stream, "final": True,
                                     "by_id": by_id})
+        # AND THE ESCRIBA STOPS LISTENING TO IT, before the turn this
+        # press just became begins to answer.
+        self._unfollow(stream)
 
     def day(self, date: str) -> List[dict]:
         """A past day's conversation, read back out of the manifest.

@@ -420,9 +420,11 @@ async def _commission() -> None:
         # the whole narration has just landed in the demo's own
         # directory -- so keeping a lossy window of it in memory until
         # the next demonstration would be holding the worse copy.
-        person._demo_voice = ("20261017_223855_438804", _live.Narration())
+        person._following = _driver.Mic("demo", MANIFEST["id"],
+                                       _live.Narration())
         await _said(person, MANIFEST)
-        check("closing releases the live narration", person._demo_voice, None)
+        check("closing releases the live narration", person._following,
+              None)
     finally:
         shutil.rmtree(root)
 
@@ -550,7 +552,7 @@ async def _live_route(ws: Path) -> None:
     """The route, and the lazy ring behind it."""
     person = Person.__new__(Person)
     person.ws = ws
-    person._demo_voice = None
+    person._following = None
     # NO TRANSCRIBER, which is a deployment that named no `--transcribe`
     # model.  The acknowledgements are read off a transcript, so this is
     # the case where the escriba follows a demonstration without ever
@@ -609,9 +611,10 @@ async def _live_route(ws: Path) -> None:
     # named or nothing is, so a deployment with none gets no
     # acknowledgements -- and the row is how somebody finds out why the
     # escriba never spoke, instead of wondering.
-    deaf = [r for r in person.journal.rows() if r["kind"] == "demo.deaf"]
+    deaf = [r for r in person.journal.rows() if r["kind"] == "backchannel.deaf"]
     check("with no transcriber, the silence is recorded", len(deaf), 1)
     check("and names the reason", deaf[0]["why"], "no transcriber")
+    check("and says which microphone went unheard", deaf[0]["source"], "demo")
     check("and nothing is left listening", person._listening, None)
     # THE ONE STEP NOBODY HAD EVER RUN.  `tests_backchannel` covers the
     # detector and `tests_web.js` covers the page, and `_acknowledge` is
@@ -623,13 +626,19 @@ async def _live_route(ws: Path) -> None:
     # nothing in the log, and an escriba that had never spoken once.
     person.locale = "es"
     person.hub = _hub.Hub(lambda: {})
-    person._acknowledge(ident, _backchannel.Boundary(at=2.8, kind="idea",
-                                                     room=0.4))
-    spoke = [r for r in person.journal.rows() if r["kind"] == "demo.backchannel"]
+    person._acknowledge("demo", ident,
+                        _backchannel.Boundary(at=2.8, kind="idea", room=0.4))
+    spoke = [r for r in person.journal.rows() if r["kind"] == "backchannel.said"]
     check("an acknowledgement reaches the record", len(spoke), 1)
     # THE ROW'S OWN KIND IS THE ROW'S, and the boundary's kind travels
     # under a name of its own. These two legs are the collision.
-    check("the row keeps its own kind", spoke[0]["kind"], "demo.backchannel")
+    check("the row keeps its own kind", spoke[0]["kind"], "backchannel.said")
+    # AND SAYS WHICH MICROPHONE IT WAS.  A demonstration's id and a
+    # press's stream id are both opaque strings; a reader of the record
+    # cannot tell them apart by looking, so the row says which it is
+    # rather than leaving it to be inferred from the id's shape.
+    check("and which microphone it was listening to", spoke[0]["source"],
+          "demo")
     check("and the boundary's kind rides beside it", spoke[0]["edge"], "idea")
     check("naming a clip the page can actually fetch",
           (_app.VOICE / "es" / f"{spoke[0]['key']}.ogg").is_file(), True)
@@ -639,16 +648,72 @@ async def _live_route(ws: Path) -> None:
     # mid-recording does not refuse the rest of a demonstration that is
     # plainly going on.  Nothing told this `Person` the demo opened.
     check("without anybody having announced the demo",
-          person._demo_voice[0], ident)
+          person._following.ident, ident)
+    check("and it knows what it is following", person._following.source,
+          "demo")
 
     # AND A CLOSED DEMONSTRATION STOPS BEING ONE, so narration arriving
     # after the manifest is sealed is refused rather than appended to a
     # recording nobody is making any more.
     demo.close_demo(ws, ident, b"", "webm")
-    person._demo_voice = None
+    person._following = None
     await refused("narration after the close is 404",
                   _app.demo_voice(Req(b"\x01\x02", rate=48000, channels=1),
                                   ident), 404)
+
+    # ---- THE SAME EAR, POINTED AT A PRESS OF THE BUTTON ---------------
+    #
+    # `POST /voz` was built to let the ROOM hear somebody, and it carries
+    # the identical samples in the identical shape for the whole length
+    # of every press, with or without a guest to hear them -- `startRec`
+    # opens that tap unconditionally.  So a long question is followed the
+    # way a long narration is, and the only thing this needed was
+    # pointing at audio that was already arriving.
+    person.voice("abcd", b"\x01\x02" * 480, 48000, 1, "quien", "id-1")
+    check("a press is followed too", person._following.ident, "abcd")
+    check("and the record will say which microphone it was",
+          person._following.source, "turn")
+    check("with the samples in the ring",
+          len(person._following.ring.wav(1.0)) - 44, 960)
+    # AND IT IS NOT A DEMONSTRATION, which holds the same slot.  Handing
+    # somebody's question back as the narration of a demo would be a lie
+    # that sounds exactly like audio.
+    check("but a press is not narration", person.demo_heard(1.0), b"")
+
+    # THE NEWEST PRESS WINS.  `voice_end` is the ordinary ending and the
+    # page sends it on every press it completes -- but a page that was
+    # closed mid-press sends nothing at all, and the next press is what
+    # must not then go unheard.
+    person.voice("efgh", b"\x03\x04" * 480, 48000, 1, "quien", "id-1")
+    check("a later press takes the microphone", person._following.ident,
+          "efgh")
+    person.voice_end("abcd", "id-1")
+    check("and an ending for the older one changes nothing",
+          person._following.ident, "efgh")
+
+    # RELEASED BEFORE THE TURN IT JUST BECAME BEGINS TO ANSWER.  A decode
+    # takes seconds and the reply starts at once, so a listener left
+    # running would acknowledge over the answer.
+    slow = asyncio.create_task(asyncio.sleep(30))
+    person._listening = slow
+    person.voice_end("efgh", "id-1")
+    check("releasing the button lets the microphone go", person._following,
+          None)
+    await asyncio.sleep(0.01)
+    check("and stops anything still decoding", slow.cancelled(), True)
+
+    # A DEMONSTRATION KEEPS THE MICROPHONE.  The page will not start a
+    # turn while one is recording -- but a GUEST's page cannot see the
+    # host's demonstration at all, and a guest's press arrives here by
+    # the same route the host's does.
+    second = demo.open_demo(ws)
+    await _app.demo_voice(Req(b"\x05\x06" * 480, rate=48000, channels=1),
+                          second)
+    check("a demonstration takes it", person._following.source, "demo")
+    person.voice("ijkl", b"\x07\x08" * 480, 48000, 1, "otro", "id-2")
+    check("and keeps it against a press", person._following.ident, second)
+    check("whose samples never joined the narration",
+          len(person.demo_heard(1.0)) - 44, 960)
 
 
 with tempfile.TemporaryDirectory() as tmp:
