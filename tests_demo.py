@@ -561,7 +561,16 @@ async def _eyes() -> None:
         # escriba announced "el documento ya está listo, con las 12
         # capturas clave".
         class Ended:
+            """`Session.terminus` in the shape the SDK documents it.
+
+            HAND-WRITTEN RATHER THAN IMPORTED so this suite does not
+            depend on which build is in the venv: `context_collections`
+            arrived with jaato #1753, and these legs have to run on
+            either side of that install.
+            """
+
             reason = "budget_exhausted"
+            context_collections = ()
 
         class Writer:
             terminus = Ended()
@@ -586,6 +595,40 @@ async def _eyes() -> None:
         finally:
             _sdk.IPCClient.session = real_session
 
+        # ---- NOR IS ONE WRITTEN ON CONTEXT THAT WAS COLLECTED ---------
+        #
+        # The payload is ACCEPTED here, so every completion gate passed:
+        # the file is on disk and its citations are real.  What neither
+        # gate can see is that the session lost its history writing it.
+        # MEASURED 2026-10-19 16:43: twelve captures billed ~455k prompt
+        # tokens for a 17k-token request, the #1440 calibration read the
+        # ratio as occupancy, GC collected -- and the pass after that
+        # took the documenter's own task, so it wrote a second document
+        # about nothing and named THAT one as `raiz`.
+        class Collected(Ended):
+            reason = "natural"
+            context_collections = ({"agent_id": "main",
+                                    "items_collected": 7,
+                                    "tokens_freed": 9001},)
+
+        class Lost(Writer):
+            terminus = Collected()
+
+            async def complete(self, *a, **kw):
+                return {"raiz": "docs/x/index.md"}
+
+        _sdk.IPCClient.session = staticmethod(lambda **kw: Lost())
+        try:
+            await person._commission({"id": ident, "frames": 3, "audio": "",
+                                      "root": f"demo/{ident}"}, "de qué iba",
+                                     kept)
+            check("an accepted payload is not enough on its own", True, False)
+        except _driver.Unwritten as exc:
+            check("a collected session is refused, with the pass named",
+                  ("main" in str(exc), "7 items" in str(exc)), (True, True))
+        finally:
+            _sdk.IPCClient.session = real_session
+
         # ---- THREE NARRATION STATES, AND THEY ARE NOT THE SAME --------
         #
         # The documenter is a TEXT-AND-VISION model: it cannot hear.
@@ -596,7 +639,12 @@ async def _eyes() -> None:
         # them, because there was nothing to write prose from.
         seen: list = []
 
+        class Clean(Ended):
+            reason = "natural"
+
         class Ok(Writer):
+            terminus = Clean()
+
             async def complete(self, prompt, *a, **kw):
                 seen.append(prompt)
                 return {"raiz": "docs/x/index.md"}

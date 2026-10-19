@@ -483,14 +483,22 @@ class FloorTaken(RuntimeError):
 
 
 class Unwritten(RuntimeError):
-    """The documenter's session ended without an accepted completion.
+    """Nothing vouches for the document, whatever is on disk.
 
-    NOT THE SAME AS "no file was written".  A documenter can write a
-    file and then fail its own completion gate -- `docs_are_real`
-    refuses a payload citing sources that do not exist -- and what is
-    left on disk is then a document nothing vouches for.  The accepted
-    payload is the only thing that says the citations were checked, so
-    its absence is what this reports, whatever is on disk.
+    NOT THE SAME AS "no file was written", and TWO CAUSES REACH IT.
+
+    No accepted completion.  A documenter can write a file and then fail
+    its own completion gate -- `docs_are_real` refuses a payload citing
+    sources that do not exist -- and what is left on disk is then a
+    document nothing vouches for.  The accepted payload is the only
+    thing that says the citations were checked.
+
+    Or an accepted payload from a session that lost its history writing
+    it.  A completion gate reads what the agent CLAIMS against what is
+    on disk; neither it nor `capturas_reales` can see that the agent
+    forgot what it was asked for halfway through, because the file
+    exists and its citations are real.  `Session.terminus` can see it,
+    so `_writer` reads it and this is what it raises.
     """
 
 
@@ -2566,13 +2574,6 @@ class Person:
             self.say("agent.document_demo", brief=brief,
                      frames=manifest["frames"], narration=narration),
             {"capturas": named})
-            # `complete` RETURNS None FOR THREE DIFFERENT ENDINGS and
-            # raises for none of them, which is the whole trap: a budget
-            # ceiling, a refused completion and a session somebody
-            # stopped all look identical here.  `Session.terminus` is
-            # the only place the reason survives, and nothing in this
-            # repository read it.
-            #
         raiz = str(written.get("raiz", ""))
         self.journal.note("demo.written", ident=manifest["id"],
                           raiz=raiz[:200])
@@ -2603,6 +2604,9 @@ class Person:
         `budget_exhausted`.  Nothing looked, and at 13:56 the escriba
         told her "el documento ya está listo".  That sentence was the
         defect: an outcome asserted by somebody who never checked.
+
+        SO THE TERMINUS IS READ ON BOTH PATHS, because a payload that
+        arrived is not on its own a document somebody can vouch for.
         """
         from jaato_sdk import IPCClient
 
@@ -2610,11 +2614,38 @@ class Person:
                 profile="documentalista", agent="documentalista",
                 agent_params=dict(params), **self.conn) as writer:
             written = await writer.complete(task, timeout=DOCUMENT_TIMEOUT)
+            # `complete` RECORDS THE TERMINUS AND THEN RETURNS, for
+            # every ending it has, so this is readable on both paths and
+            # does not need asking for.
+            ended = writer.terminus
             if written is None:
-                ended = getattr(writer, "terminus", None)
+                raise Unwritten(f"no accepted completion: {ended.reason}")
+            # AND A PAYLOAD IS NOT A VOUCHER IF THE SESSION LOST ITS
+            # HISTORY WRITING IT.  `terminus.context_collections` names
+            # every GC pass that REMOVED something while the call ran
+            # (jaato #1753).  MEASURED 2026-10-19 16:43: twelve captures
+            # were billed ~455k prompt tokens for a 17k-token request,
+            # the #1440 calibration read that ratio as an occupancy
+            # correction, GC collected -- and because the notice goes in
+            # as a USER message and the budget locked "message 0", the
+            # next pass took the documenter's own task.  It then wrote a
+            # SECOND document about nothing and `signal_completion`
+            # named that one as `raiz`.  The payload was ACCEPTED; the
+            # document was junk.  The framework no longer collects for
+            # that reason; this is what refuses the result if anything
+            # ever collects again, because `docs_are_real` cannot catch
+            # it -- the file existed and its citations were real.
+            #
+            # BINARY ON PURPOSE.  A pass reports `items_collected` and
+            # `tokens_freed` but never says WHAT went, so any rule finer
+            # than "something was collected" would be a number nobody
+            # measured.
+            if ended.context_collections:
                 raise Unwritten(
-                    f"no accepted completion: "
-                    f"{getattr(ended, 'reason', 'unknown')}")
+                    "written on collected context: " + "; ".join(
+                        f"{pass_.get('agent_id', '?')} lost "
+                        f"{pass_.get('items_collected', '?')} items"
+                        for pass_ in ended.context_collections))
             return written
 
     async def _tell(self, prompt: str) -> None:
