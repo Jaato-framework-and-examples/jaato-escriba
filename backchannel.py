@@ -251,20 +251,33 @@ def samples(wav: bytes):
     return np.frombuffer(out.stdout, dtype=np.float32)
 
 
-def silences(audio, offset: float = 0.0) -> List[Tuple[float, float]]:
-    """Every gap between two stretches of speech: (when it starts, how long).
+def speech(audio) -> List[Tuple[float, float]]:
+    """Every stretch the VAD calls speech: (start, end) in window seconds.
 
     ASKED WITH `cadence`'s OPTIONS and not the VAD's own, which merge
     anything under two seconds and pad each segment by 400 ms: with its
     defaults every recording this project has reports ZERO gaps.
+
+    KEPT RATHER THAN DISCARDED.  `silences` is the gaps BETWEEN these
+    and used to compute them inline, which threw away the one fact a
+    caller needs BEFORE it decodes: whether anything was said at all.
     """
     from faster_whisper.vad import VadOptions, get_speech_timestamps
 
-    spoken = get_speech_timestamps(
+    return [(s["start"] / RATE, s["end"] / RATE) for s in get_speech_timestamps(
         audio, VadOptions(min_silence_duration_ms=MIN_SILENCE_MS,
-                          speech_pad_ms=0))
-    return [(a["end"] / RATE + offset, (b["start"] - a["end"]) / RATE)
-            for a, b in zip(spoken, spoken[1:])]
+                          speech_pad_ms=0))]
+
+
+def gaps(spoken: Sequence[Tuple[float, float]],
+         offset: float = 0.0) -> List[Tuple[float, float]]:
+    """The silences between stretches `speech` already found."""
+    return [(a[1] + offset, b[0] - a[1]) for a, b in zip(spoken, spoken[1:])]
+
+
+def silences(audio, offset: float = 0.0) -> List[Tuple[float, float]]:
+    """Every gap between two stretches of speech: (when it starts, how long)."""
+    return gaps(speech(audio), offset)
 
 
 class Listener:

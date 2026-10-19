@@ -329,6 +329,8 @@ import escriba_web.driver as _driver                     # noqa: E402
 from escriba_web.driver import Person                     # noqa: E402
 import demo_live as _live                                 # noqa: E402
 import journal as _journal                                # noqa: E402
+import backchannel as _backchannel                        # noqa: E402
+from escriba_web import hub as _hub                        # noqa: E402
 
 MANIFEST = {"id": "20261017_223855_438804", "frames": 49,
             "root": "demo/20261017_223855_438804",
@@ -611,6 +613,26 @@ async def _live_route(ws: Path) -> None:
     check("with no transcriber, the silence is recorded", len(deaf), 1)
     check("and names the reason", deaf[0]["why"], "no transcriber")
     check("and nothing is left listening", person._listening, None)
+    # THE ONE STEP NOBODY HAD EVER RUN.  `tests_backchannel` covers the
+    # detector and `tests_web.js` covers the page, and `_acknowledge` is
+    # the function between them -- so a `kind=` field colliding with
+    # `Journal.note`'s own first parameter shipped, and every
+    # acknowledgement died on a TypeError raised OUTSIDE
+    # `_backchannels`'s `try`, inside a task nothing awaited.  Measured
+    # 2026-10-19 on the deployed box: one transcription, no rows,
+    # nothing in the log, and an escriba that had never spoken once.
+    person.locale = "es"
+    person.hub = _hub.Hub(lambda: {})
+    person._acknowledge(ident, _backchannel.Boundary(at=2.8, kind="idea",
+                                                     room=0.4))
+    spoke = [r for r in person.journal.rows() if r["kind"] == "demo.backchannel"]
+    check("an acknowledgement reaches the record", len(spoke), 1)
+    # THE ROW'S OWN KIND IS THE ROW'S, and the boundary's kind travels
+    # under a name of its own. These two legs are the collision.
+    check("the row keeps its own kind", spoke[0]["kind"], "demo.backchannel")
+    check("and the boundary's kind rides beside it", spoke[0]["edge"], "idea")
+    check("naming a clip the page can actually fetch",
+          (_app.VOICE / "es" / f"{spoke[0]['key']}.ogg").is_file(), True)
     check("with how much of the demo has been heard", voiced[0]["heard"], 0.01)
     # THE RING IS MADE ON THE FIRST PIECE, asked of the DIRECTORY rather
     # than of what the process remembers -- so a server restarted

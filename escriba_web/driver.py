@@ -1122,10 +1122,38 @@ class Person:
         a transcription, a budget read, a session being reopened -- so
         this is not a theoretical hazard here.  One set, discarded on
         completion, and every `create_task` goes through it.
+
+        AND A TASK THAT DIES SAYS SO.  `discard` alone drops the last
+        reference to a task holding an exception nobody retrieved, which
+        asyncio reports only at garbage-collection time and sometimes not
+        at all.  The cost of that was measured on 2026-10-19: a
+        `TypeError` in `_acknowledge` ended the backchannel task of every
+        demonstration ever recorded, and the box's logs held nothing to
+        find -- the defect was invisible for as long as it existed.
         """
         self._running.add(task)
-        task.add_done_callback(self._running.discard)
+        task.add_done_callback(self._died)
         return task
+
+    def _died(self, task: asyncio.Task) -> None:
+        """Release a finished task, and report one that failed.
+
+        CANCELLATION IS NOT A FAILURE: `demo_closed` cancels the
+        backchannel task on purpose, and `_stop` ends the rest.
+        """
+        self._running.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is None:
+            return
+        # BOTH PLACES, because they answer different questions.  The
+        # journal is what a demonstration's own record is read from, and
+        # the log is where a traceback can be found.
+        self.journal.note("task.failed", task=task.get_name(),
+                          error=f"{type(error).__name__}: {error}"[:200])
+        log.error("background task %s failed", task.get_name(),
+                  exc_info=error)
 
     def _settle(self) -> None:
         """Close the books on a turn that produced no speech.
@@ -1633,7 +1661,12 @@ class Person:
             self.journal.note("demo.deaf", ident=ident, why="no transcriber")
             return
         self._ears = _backchannel.Listener(self.scribe)
-        self._listening = asyncio.create_task(self._backchannels(ident))
+        # HELD LIKE EVERY OTHER TASK.  The attribute keeps it from being
+        # collected, which is what `_hold` is usually for, but it is NOT
+        # what `_hold` is only for: the done-callback is what turns a
+        # task dying into something somebody can read.
+        self._listening = self._hold(asyncio.create_task(
+            self._backchannels(ident), name=f"backchannel:{ident}"))
 
     async def _backchannels(self, ident: str) -> None:
         """Ask every few seconds whether there is somewhere to speak.
@@ -1678,9 +1711,25 @@ class Person:
                 self._ears.said(boundary)
 
     def _boundaries(self, window: bytes, start: float) -> list:
-        """Decode, find the silences, and ask where to speak. Off-thread."""
+        """Decode, find the silences, and ask where to speak. Off-thread.
+
+        A WINDOW NOBODY SPOKE INTO IS NOT DECODED.  The VAD runs first
+        and costs milliseconds; the model costs seconds and, on a window
+        with no speech in it, costs the most and answers worst.
+        MEASURED 2026-10-19, `base`, eight seconds: 4.7 s with speech,
+        9–16 s without, and on the deployed box 18–24 s.  What comes back
+        is invented -- "No, no, no, no." for room tone, and the priming
+        text read back for digital silence -- and it is invented WITH a
+        full stop, which is what this function is looking for.  Measured
+        the same day, no speechless window yielded a boundary anyway:
+        `snap` has no real silence edge to move a mark to when the whole
+        window is silence.  So this declines a decode that was pure cost.
+        """
         audio = _backchannel.samples(window)
-        return self._ears.heard(audio, _backchannel.silences(audio, start),
+        spoken = _backchannel.speech(audio)
+        if not spoken:
+            return []
+        return self._ears.heard(audio, _backchannel.gaps(spoken, start),
                                 offset=start)
 
     def _acknowledge(self, ident: str, boundary) -> None:
@@ -1702,8 +1751,16 @@ class Person:
         if not keys:
             return
         key = random.choice(keys)
+        # `edge` AND NOT `kind`.  `Journal.note(kind, **fields)` owns
+        # that name for the row's own type, and this row's type is
+        # "demo.backchannel"; passing the boundary's kind under it hands
+        # `note` two values for one parameter.  MEASURED 2026-10-19 on
+        # the deployed box: the first boundary of the first demonstration
+        # raised TypeError here, outside `_backchannels`'s `try`, and the
+        # task vanished -- one transcription, no rows, nothing logged,
+        # and an escriba that had never once spoken on any host.
         self.journal.note("demo.backchannel", ident=ident, key=key,
-                          at=boundary.at, kind=boundary.kind,
+                          at=boundary.at, edge=boundary.kind,
                           room=boundary.room)
         self.hub.publish("backchannel", {
             "clip": f"voz/{self.locale}/{key}.ogg", "kind": boundary.kind,
