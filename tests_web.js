@@ -199,7 +199,7 @@ vm.runInContext(blocks[blocks.length - 1] +
   "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows, api, " +
   "renderGuest, renderScratch, renderTranscript, pttFace, paintSequence, " +
   "seqGrip, sayBack, BACK, demoFace, demoUnavailable, renderDays, " +
-  "dayIsHere};",
+  "dayIsHere, openReader, closeReader, READ, ZOOMS};",
   ctx);
 const T = sandbox.__test;
 
@@ -1336,6 +1336,38 @@ check("and an answer that never came says that instead",
   T.demoFace();
   check("and the invitation comes back when it can be honoured",
         note && note.textContent, ES["demo.hint"]);
+}
+
+// ----------------------------------------------- the document reader
+//
+// HOW WIDE AND HOW BIG, REMEMBERED PER READER.  A document of
+// screenshots is read at a different size from one of prose, and
+// somebody who sets it once should not set it again on the next one.
+{
+  T.openReader({ path: "docs/demo/index.md", at: "19 oct 16:47" });
+  const sheet = byId.get("reader-slot").walk()
+    .find((n) => n.className === "sheet");
+  check("the reader opens a sheet", !!sheet, true);
+  check("with an edge to drag",
+        !!(sheet && sheet.walk().find((n) => n.className === "grip")), true);
+  const zoom = sheet && sheet.walk().find((n) => n.className === "zoom");
+  check("and a zoom control", !!zoom, true);
+  check("starting at the size it was left at",
+        zoom && zoom.textContent.includes("100%"), true);
+
+  // THROUGH A LADDER, so a zoom cannot drift to 103 % and cannot run
+  // away: the ends hold.
+  const [less, , more] = zoom.children;
+  more.onclick(); more.onclick();
+  check("stepping up moves through the ladder",
+        Math.round(T.READ.zoom * 100), Math.round(T.ZOOMS[4] * 100));
+  check("and is remembered for the next document",
+        sandbox.localStorage.getItem("escriba-doc-zoom"), String(T.ZOOMS[4]));
+  for (let i = 0; i < 20; i++) more.onclick();
+  check("the top of the ladder holds", T.READ.zoom, T.ZOOMS[T.ZOOMS.length - 1]);
+  for (let i = 0; i < 20; i++) less.onclick();
+  check("and so does the bottom", T.READ.zoom, T.ZOOMS[0]);
+  T.closeReader();
 }
 
 // ------------------------------------------------------ a download row
