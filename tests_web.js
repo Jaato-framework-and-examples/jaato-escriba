@@ -1318,10 +1318,24 @@ T.onEvent("entry", { id: 500077, kind: "diagrama",
   const text = row ? row.textContent : "";
   check("a diagram row is titled by what it is of",
         text.includes("las cuatro dimensiones"), true);
-  check("and shows its source until a picture exists",
-        text.includes("A[bundle]-->B[fuentes]"), true);
+  // IT SAYS IT IS DRAWING, with the spinner the transcript uses while
+  // it waits for words.  MEASURED on a live page 2026-10-19 15:17: the
+  // first cut put the raw Mermaid in the slot until the picture
+  // arrived, and the owner read it mid-load without knowing a drawing
+  // was coming.  The source is the raw material of an answer, not one.
+  check("a diagram row says it is drawing",
+        text.includes(ES["diagram.drawing"]), true);
+  check("with the same spinner the transcript waits with",
+        !!(row && row.walk().find((n) => n.className === "spin")), true);
   check("in a slot the drawing can replace",
         !!(row && row.walk().find((n) => n.className === "draw")), true);
+  // THE SOURCE IS THE FAILURE STATE NOW, and only that: with a reason
+  // beside it, so "the drawing did not happen" cannot be read as "it
+  // chose to answer in text".  Not reachable from this stub -- it has
+  // no dynamic `import`, so the module never loads and never fails
+  // here either -- which is said rather than faked.
+  check("and the source is not shown as though it were the answer",
+        text.includes("A[bundle]-->B[fuentes]"), false);
 }
 
 // ------------------------------------------- the newlines somebody wrote

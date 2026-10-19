@@ -212,6 +212,9 @@ nav .note code{font-family:var(--mono)}
    it beats an empty frame that reads as "it drew nothing". */
 .diagrama .dsrc{margin:0;padding:var(--space-3);background:var(--chip);border-radius:8px;
                 font-family:var(--mono);font-size:12px;white-space:pre-wrap;overflow-x:auto}
+.diagrama .dwhy{font-size:12px;color:var(--bad)}
+.diagrama .dwait{display:flex;align-items:center;gap:var(--space-2);
+                 font-size:13px;color:var(--muted)}
 .anotado{display:flex;gap:var(--space-3);align-items:baseline;flex-wrap:wrap}
 .anotado .text{font-size:15px;line-height:1.45}
 .fuentes{display:flex;flex-direction:column;gap:4px;width:100%;margin-top:var(--space-2);font-size:13px}
@@ -3272,18 +3275,40 @@ let drawn = 0;
 
 async function drawMermaid(slot, source) {
   if (!source) return;
-  // THE SOURCE IS DRAWN FIRST and replaced only once a picture exists.
-  // Not an error path: it is what the escriba produced and what the
-  // journal holds, so it is the honest thing to show while the module
-  // loads, and the thing to be left with when it will not — a module
-  // that never arrives, or a diagram that will not parse. An empty
-  // frame would read as "it drew nothing", which is a different and
-  // untrue statement.
-  slot.append(el("pre", "dsrc", source));
+  // SAYING IT IS DRAWING, not showing the source.  The first cut put
+  // the Mermaid in the slot and replaced it when the picture arrived,
+  // on the reasoning that the source is what the escriba produced and
+  // what the record holds.  MEASURED on a live page 2026-10-19 15:17:
+  // the owner read a diagram mid-load and did not know a drawing was
+  // coming at all.  The source is not an answer; it is the raw material
+  // of one, and showing it unlabelled reads as a choice somebody made.
+  // THE SAME SPINNER THE TRANSCRIPT USES while it waits for words, and
+  // for its reason: with motion reduced it stops turning and the text
+  // beside it carries the meaning on its own, so the cue is never only
+  // the animation.
+  const wait = el("div", "dwait");
+  wait.append(el("span", "spin"), el("span", null, tx("diagram.drawing")));
+  slot.append(wait);
+  // A FAILURE MUST BE SEEN, which is this page's rule for playback and
+  // is no different here.  THEN the source earns its place: it is what
+  // the escriba wrote, it is what the journal holds, and with a reason
+  // beside it the person can tell "the drawing did not happen" from
+  // "it chose to answer in text".  Two causes, said apart, because they
+  // are acted on differently -- a module that will not load is a
+  // network or a version, and a diagram that will not parse is the
+  // escriba's own code, right there to read.
+  const failed = (why) => {
+    slot.textContent = "";
+    slot.append(el("pre", "dsrc", source), el("div", "dwhy", tx(why)));
+  };
   let lib;
   try {
     lib = await mermaidLib();
-  } catch (err) { return; }
+  } catch (err) {
+    console.error("mermaid: the module did not load", err);
+    failed("diagram.no_module");
+    return;
+  }
   try {
     const { svg } = await lib.render("d" + (++drawn), source);
     // `innerHTML` WITH mermaid's OWN OUTPUT, under `securityLevel:
@@ -3292,7 +3317,10 @@ async function drawMermaid(slot, source) {
     // should.
     slot.textContent = "";
     slot.innerHTML = svg;
-  } catch (err) { /* the source stays, which is the point */ }
+  } catch (err) {
+    console.error("mermaid: the diagram did not parse", err);
+    failed("diagram.no_parse");
+  }
 }
 
 // ---------------------------------------------------------------- backchannel
