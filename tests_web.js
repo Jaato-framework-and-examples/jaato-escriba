@@ -1267,5 +1267,27 @@ check("and an answer that never came says that instead",
         note && note.textContent, ES["demo.hint"]);
 }
 
+// ------------------------------------------- the newlines somebody wrote
+//
+// A GUARD ON A RULE NO DOM STUB CAN EXERCISE, and it says so rather than
+// pretending to be a render test: the stub has no stylesheet, so the only
+// thing assertable here is that the declaration is present.
+//
+// The reply arrives with real newlines in it -- MEASURED 2026-10-19,
+// "...segun esas normas.\n\nPor cierto, ..." in the provider's own
+// transcript -- and `el()` puts them in the DOM with `textContent`, which
+// keeps them.  HTML then collapses every one into a single space on the
+// way to the screen, so a reply written in three paragraphs reached the
+// person as one long line and the breaks were invisible.
+{
+  const styles = PAGE_HTML.replace(/\s+/g, "");
+  for (const sel of [".spokep{", ".heard{"]) {
+    const at = styles.indexOf(sel);
+    const rule = at < 0 ? "" : styles.slice(at, styles.indexOf("}", at));
+    check(`${sel} keeps the line breaks it was given`,
+          rule.includes("white-space:pre-line"), true);
+  }
+}
+
 console.log(fail ? `${fail} failure(s)` : "web page renders OK");
 process.exit(fail ? 1 : 0);

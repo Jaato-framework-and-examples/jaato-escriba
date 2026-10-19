@@ -165,8 +165,15 @@ nav .note code{font-family:var(--mono)}
 .bar .prog{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--accent-soft)}
 .bar .glyph,.bar .dur{position:relative}
 .bar .dur{font-weight:700;font-size:14px;font-variant-numeric:tabular-nums}
+/* WHITE SPACE AS WRITTEN, for the line breaks only.  What the model
+   says arrives with real newlines in it -- "...esas normas.\n\nPor
+   cierto, ..." -- `textContent` puts them in the DOM, and HTML then
+   collapses every one of them into a single space, so a reply written
+   in three paragraphs reached the person as one.  `pre-line` honours
+   the break and still collapses runs of spaces, which `pre-wrap` would
+   keep. */
 .heard{margin:var(--space-2) 0 0;font-size:15px;line-height:1.45;color:var(--ink-2);max-width:68ch;
-       text-wrap:pretty}
+       text-wrap:pretty;white-space:pre-line}
 .heard.waiting{display:flex;align-items:center;gap:var(--space-2);color:var(--muted);font-size:13px}
 .spin{width:12px;height:12px;flex:none;border-radius:50%;border:2px solid var(--line-strong);
       border-top-color:var(--accent);animation:turn .8s linear infinite}
@@ -178,7 +185,8 @@ nav .note code{font-family:var(--mono)}
 .spoke{display:flex;flex-direction:column;gap:var(--space-2);padding-left:var(--space-4);
        border-left:3px solid var(--accent)}
 .spoke.sounding{border-left-color:var(--ok)}
-.spoke p{margin:0;font-size:18px;line-height:1.5;text-wrap:pretty;max-width:68ch}
+.spoke p{margin:0;font-size:18px;line-height:1.5;text-wrap:pretty;max-width:68ch;
+         white-space:pre-line}
 .spoke p.nothing{font-size:15px;color:var(--muted);font-style:italic}
 .spoke .meta{display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap;font-size:13px}
 .listen{display:flex;align-items:center;gap:var(--space-2);padding:3px 10px;border:1px solid var(--line-strong);
