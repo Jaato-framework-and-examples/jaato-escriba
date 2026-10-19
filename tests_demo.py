@@ -480,8 +480,8 @@ asyncio.run(_commission())
 # all of them the same shape: a `decide` built by a conversational model
 # with the images left off, so the decision model scored screenshots it
 # had never been sent and answered with calibrated confidence for every
-# one.  `capturas_elegidas` catches it AFTER the fact and cannot prevent
-# it.  Built here instead, where it is deterministic -- so these legs
+# one.  A completion gate caught it AFTER the fact and could not
+# prevent it.  Built here instead, where it is deterministic -- so these legs
 # are the statement of record that the pictures go with the questions.
 async def _eyes() -> None:
     root = Path(tempfile.mkdtemp(prefix="escriba-choose-"))

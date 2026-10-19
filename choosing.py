@@ -17,8 +17,9 @@ been measured failing FOUR times:
   2026-10-17, twice, by two different agents: `decide` called with no
   images at all, the frames named in prose instead, and the decision
   model scoring screenshots it had never been sent -- with calibrated
-  confidence for every one.  That is what `capturas_elegidas` was written
-  to catch, and it caught it.
+  confidence for every one.  A completion gate caught that twice and
+  could not prevent it; this module makes it unreachable instead, and
+  the gate was removed once nothing could reach it.
 
   2026-10-19, 06:50: the same call made correctly, which is the point --
   it is not that the model cannot, it is that it does not reliably.
