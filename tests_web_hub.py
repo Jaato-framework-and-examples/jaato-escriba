@@ -203,6 +203,33 @@ async def main():
     check("both entries are published", [r["kind"] for r in rows], ["spoke", "anotado"])
     check("the reply carries its audio", rows[0]["audio"], "att_0196475cd416e2b5")
     check("and they are different rows", rows[0]["id"] != rows[1]["id"], True)
+
+    # AND A ROW THAT CHANGES IN PLACE IS REPUBLISHED WHEREVER IT SITS.
+    # The escriba has a SILENT tier by declaration — `escribano`, where
+    # it annotates — so a reply answered from there sounds nothing,
+    # ever, and `_settle` marks it `silent` so the page can stop waiting.
+    # But `spoke()` appends the reply AND its `anotado`, so the row that
+    # changes is SECOND to last: republishing only `entries[-1]` left
+    # the flag in the process and the row reading "audio llegando…" for
+    # the rest of the session.  MEASURED on a live page 2026-10-19
+    # 14:59; the same mistake for NEW rows is recorded a few lines up.
+    drain(q)
+    board.spoke("He guardado un resumen.", "Resumen guardado.")
+    drain(q)
+    reply = [e for e in board.state.entries if e.kind == "spoke"][-1]
+    check("the reply is not the last row", board.state.entries[-1].kind,
+          "anotado")
+    reply.silent = True
+    board._refreshed()
+    moved = [d for k, d in drain(q) if k == "entry"]
+    check("the row that changed is republished",
+          [d["id"] for d in moved], [reply.id])
+    check("carrying what changed", moved[0]["silent"], True)
+    # AND NOTHING ELSE IS.  A refresh that republished every row would
+    # make the page redraw the whole conversation on every status tick.
+    board._refreshed()
+    check("an unchanged refresh publishes no rows",
+          [k for k, _ in drain(q) if k == "entry"], [])
     check("a reply that named no source carries none", rows[1]["links"], [])
 
     # WHERE IT CAME FROM RIDES THE ANNOTATION, not the speech: the

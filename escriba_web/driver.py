@@ -323,7 +323,10 @@ class WebBoard(_board.StateBoard):
         super().__init__()
         self.hub = hub
         self._high = 0                 # the highest entry id published
-        self._sig: Optional[tuple] = None
+        #: What each live row LOOKED like when it was last published,
+        #: by id.  Per row and not just for the last one: see
+        #: `_refreshed`.
+        self._sig: Dict[int, tuple] = {}
         self._counts: Optional[dict] = None
         self._status: Optional[dict] = None
         self._panels: Dict[str, int] = {}
@@ -367,19 +370,33 @@ class WebBoard(_board.StateBoard):
         # only `entries[-1]` dropped the reply itself on every closed turn.
         # The browser got the annotation and nothing to listen to, which is
         # exactly how it was found.
+        # ANY ROW THAT CHANGED, not just the last one.  A row already
+        # sent can change in place -- a folded repeat bumps its count,
+        # audio arrives after the text, a transcript lands, `_settle`
+        # marks a reply silent -- and the changed row is not always at
+        # the end.
+        #
+        # MEASURED 2026-10-19 14:59: a reply answered from `escribano`
+        # sat on "audio llegando…" for the rest of the session.  That
+        # tier is SILENT by declaration, so no audio was ever coming;
+        # `_settle` had correctly set `silent` on the reply, and
+        # `spoke()` adds the reply AND its `anotado` before refreshing
+        # once -- so the row that changed was second to last, this
+        # looked only at the last, and the flag never left the process.
+        # The same comment above records the same mistake for NEW rows,
+        # fixed then and left standing here.
         for e in s.entries:
+            sig = self._draws(e)
             if e.id > self._high:
                 self._high = e.id
-                self._sig = self._draws(e)
-                self.hub.publish("entry", entry_json(e))
-        last = s.entries[-1] if s.entries else None
-        if last is not None:
-            # A row already sent can still change in place: a folded repeat
-            # bumps its count, and audio arrives after the text.
-            sig = self._draws(last)
-            if sig != self._sig:
-                self._sig = sig
-                self.hub.publish("entry", entry_json(last))
+            elif self._sig.get(e.id) == sig:
+                continue
+            self._sig[e.id] = sig
+            self.hub.publish("entry", entry_json(e))
+        # The deque drops its oldest at 400; their signatures go with
+        # them, or this grows for the life of the conversation.
+        live = {e.id for e in s.entries}
+        self._sig = {i: v for i, v in self._sig.items() if i in live}
         counts = self.counts()
         if counts != self._counts:
             self._counts = counts
