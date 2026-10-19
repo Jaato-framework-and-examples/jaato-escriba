@@ -48,7 +48,7 @@ dependencies = [
     # and the manifest does not name.
     "ddgs>=9.16.0",
     # This is a FLOOR WITH A REASON, not a snapshot of what happened to
-    # be installed.  Three of them:
+    # be installed.  Five of them:
     #   - `jaato-server` imports `reported_cache_count` (added in SDK
     #     0.21.0, commit 8e6f0182) from seven model providers, and declares
     #     no floor of its own — see jaato#1055.  A resolver that picks an
@@ -75,7 +75,18 @@ dependencies = [
     #     question type are SERVER-side (`plugins/decision/`), so this
     #     floor is not what reaches them; it is what keeps client and
     #     daemon on one SDK line instead of two.
-    "jaato-sdk>=0.30.0rc22",
+    #   - rc24 is the first cut carrying `Terminus.context_collections`
+    #     (jaato#1753, commit 6b40decf), which `driver.py:_writer` reads
+    #     on the success path to refuse a document written by a session
+    #     that lost its history.  THE ATTRIBUTE IS THE FLOOR: older
+    #     `Terminus` declares `__slots__` without it, so reading it
+    #     raises `AttributeError` — caught by both callers and reported
+    #     as "the document could not be written", which would be every
+    #     commission, blamed on the wrong thing.  Measured: the escriba
+    #     runs from its OWN virtualenv, the daemon's is separate, and
+    #     `uv sync --frozen` keeps whatever the lock says — so the lock
+    #     is what has to move, and this is what makes it move.
+    "jaato-sdk>=0.30.0rc24",
     # `memory.py:25` reads the curated store.
     "PyYAML>=6.0",
     # `audioop`, removed from the standard library in 3.13 (PEP 594) and
@@ -150,4 +161,13 @@ stt = ["faster-whisper>=1.2"]
 # provider key is a `pass://` pointer, and resolving it runner-side under
 # confinement fails.  The SDK floor above moves in the SAME step, and not
 # as tidiness: see its third bullet.
-daemon = ["jaato-server[openrouter,web]>=1.3.0rc10"]
+#
+# And to rc27 for jaato#1753, which is a PAIRING and not an upgrade.  The
+# server half of that fix is what stops GC collecting a vision agent's
+# own task; the SDK half only REPORTS the pass.  `_writer` refuses a
+# document whose session collected, so against an older daemon — which
+# still reads an image's billing as its occupancy and collects on nearly
+# every commission — that refusal would fire for the framework's reason
+# rather than ours, and no document would ever be accepted.  The client
+# and the daemon have to be on both halves or neither.
+daemon = ["jaato-server[openrouter,web]>=1.3.0rc27"]
