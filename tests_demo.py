@@ -518,12 +518,12 @@ async def _eyes() -> None:
               [i["path"] for i in args["images"]][:3],
               [f"demo/{ident}/000{n}.png" for n in (1, 2, 3)])
 
-        # THE PERMISSION THE DRIVER NOW ANSWERS, and only this one.
-        approve = kw["on_permission"]
-        check("yes to decide",
-              approve(type("E", (), {"tool_name": "decide"})()), "y")
-        check("and no to anything else",
-              approve(type("E", (), {"tool_name": "cli"})()), "n")
+        # AND IT ANSWERS NO PERMISSION OF ITS OWN.  The escriba's
+        # whitelist names `decide`, so the gate never asks -- measured,
+        # `"method": "whitelist"`.  An answerer here could only matter
+        # by overriding a decision to take `decide` off that list.
+        check("the driver answers no permission on the escriba's behalf",
+              "on_permission" in kw, False)
 
         # BY SCORE TO CHOOSE, BY TIME TO READ.
         check("the dullest are dropped", [f["n"] for f in kept],

@@ -318,23 +318,6 @@ TURN_TIMEOUT = 180.0
 DOCUMENT_TIMEOUT = 900.0
 
 
-def _approve_decide(event) -> str:
-    """Yes to `decide`, and to nothing else.
-
-    A CONTROL THAT MOVED, written down where it moved to.  `decide` is
-    deliberately NOT auto-approved in the profile -- "a call spends
-    money and sends workspace content to a decision model" -- because
-    until now its only caller was a model, and a model should not spend
-    without being asked.  The driver is not a model: it calls this once
-    per demonstration, over captures the person recorded, in the second
-    after they pressed stop.  Pressing stop IS the commission, so the
-    spend follows from something the person did.
-
-    Narrow on purpose: anything that is not `decide` is refused, which
-    cannot happen from here and would be worth finding out about.
-    """
-    return "y" if getattr(event, "tool_name", "") == "decide" else "n"
-
 
 #: How much speech is gathered before a piece of it goes out, in seconds.
 #: The provider streams in pieces far smaller than this, and one SSE
@@ -2066,6 +2049,17 @@ class Person:
         decision model does the only part that is a judgement; `choosing`
         does the rest, deterministically, and this is the seam between
         them.
+
+        NO PERMISSION ANSWERER, and that is measured rather than
+        assumed.  This passed one for a while, on the profile comment
+        that `decide` is "NOT auto-approved by its plugin" -- true, and
+        not the whole policy: the escriba's own whitelist names `decide`,
+        so the gate never asks.  MEASURED 2026-10-19 against a live
+        call: `"reason": "Tool 'decide' is whitelisted", "method":
+        "whitelist"`.  The answerer was never consulted, so it was code
+        that could only ever matter by OVERRIDING a future decision to
+        take `decide` off that whitelist -- and if somebody takes it
+        off, this should stop working loudly, not keep working quietly.
         """
         frames = _demo.frames(self.ws, ident)
         if not frames:
@@ -2076,8 +2070,7 @@ class Person:
                 "decision", "decide",
                 _choosing.questions(batch, self.say("decide.captures"),
                                     self.say("decide.advance")),
-                profile="escriba", on_permission=_approve_decide,
-                timeout=DOCUMENT_TIMEOUT)
+                profile="escriba", timeout=DOCUMENT_TIMEOUT)
             # TWO WAYS TO FAIL AND THEY ARE NOT THE SAME.  `ok` false is
             # the call never running -- a tool outside the profile's
             # surface, a profile that does not resolve.  `success` false
