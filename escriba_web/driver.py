@@ -160,10 +160,22 @@ def _iso(at: datetime) -> str:
 
 
 def entry_json(e) -> Dict[str, Any]:
+    """One row of the conversation, on the wire.
+
+    NAMED FIELD BY FIELD, which is deliberate -- a row carries only what
+    the page is meant to receive -- and is therefore the one place a new
+    field is silently dropped.  MEASURED 2026-10-19: the first diagram
+    the escriba ever drew arrived as a titled row with nothing in it.
+    The board had the Mermaid, the page knew how to draw it, and both
+    halves had legs; the SEAM between them had none, so `mermaid` was
+    missing here and `drawMermaid` returned on an empty source without
+    even the text to fall back to.
+    """
     return {"id": e.id, "at": _iso(e.at), "kind": e.kind, "text": e.text,
             "seconds": e.seconds, "audio": e.audio, "repeats": e.repeats,
             "silent": e.silent, "transcribing": e.transcribing,
             "links": list(getattr(e, "links", None) or []),
+            "mermaid": getattr(e, "mermaid", "") or "",
             "by": getattr(e, "by", "") or ""}
 
 

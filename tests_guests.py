@@ -1041,6 +1041,15 @@ async def main() -> int:
                 "mermaid": "```mermaid\nflowchart LR\n  X-->Y\n```"})
     check("a fenced diagram keeps only its code",
           host.board.state.entries[-1].mermaid, "flowchart LR\n  X-->Y")
+    # AND IT REACHES THE PAGE.  `entry_json` names its fields one by
+    # one, so it is the one place a new one is silently dropped -- and
+    # it was: the first diagram the escriba ever drew arrived as a
+    # titled row with nothing inside it, because the board had the
+    # Mermaid and the wire did not carry it.  Both halves had legs; this
+    # seam had none.
+    check("and the source reaches the page",
+          _driver.entry_json(host.board.state.entries[-1])["mermaid"],
+          "flowchart LR\n  X-->Y")
 
     refused("and rewriting it afterwards is refused",
             {"email": "marta@ejemplo.es", "motivo": "otra cosa",
