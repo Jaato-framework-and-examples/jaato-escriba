@@ -199,9 +199,30 @@ vm.runInContext(blocks[blocks.length - 1] +
   "renderEngines, keyOf, onSpeech, maybeAutoplay, wake, VOICE, rows, api, " +
   "renderGuest, renderScratch, renderTranscript, pttFace, paintSequence, " +
   "seqGrip, sayBack, BACK, demoFace, demoUnavailable, renderDays, " +
-  "dayIsHere, openReader, closeReader, READ, ZOOMS};",
+  "dayIsHere, openReader, closeReader, READ, ZOOMS, renderDisclosure};",
   ctx);
 const T = sandbox.__test;
+
+// --------------------------------------- what they are talking to (50(1))
+// The sentence is the framework's, read off the audit record, so the page
+// renders it VERBATIM or renders nothing: a reworded, truncated or
+// translated copy would make the ledger's `text` a statement about
+// something nobody was shown.
+const aviso = byId.get("disclosure");
+check("nothing is claimed before a snapshot says so", aviso.hidden, true);
+T.S.disclosure = "Estás interactuando con un sistema de IA operado por X, "
+  + "no con un ser humano.";
+T.renderDisclosure();
+check("the announcement is shown", aviso.hidden, false);
+check("and shown word for word", aviso.textContent, T.S.disclosure);
+// NOT MARKUP.  The provider's name reaches this string from a profile,
+// and `textContent` is what keeps a name from becoming an element.
+T.S.disclosure = "<b>IA</b>";
+T.renderDisclosure();
+check("a provider name cannot carry markup in", aviso.textContent, "<b>IA</b>");
+T.S.disclosure = "";
+T.renderDisclosure();
+check("and an undeclared session claims nothing", aviso.hidden, true);
 
 // ------------------------------------------------ the page before the hub
 // The defect this file exists for: with no backend, every one of these was

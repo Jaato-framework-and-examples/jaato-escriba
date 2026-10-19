@@ -760,6 +760,14 @@ class Person:
         #: and once through the client it replaced.
         self._unwatch: Optional[Any] = None
         self.opened = datetime.now()
+        #: The Art. 50(1) announcement this session's person was given,
+        #: once it has been read off the audit record.  MEMOISED BECAUSE
+        #: IT IS A STANDING FACT: the daemon writes the row once, before
+        #: the first turn, and it does not change for the life of the
+        #: session -- so the snapshot asks until the row is there and
+        #: never again.  Cleared when a session is replaced, because the
+        #: next one makes its own announcement and its own row.
+        self._told: Optional[str] = None
         self._scribe = None
         self._stack: Optional[Any] = None
         self._ticker: Optional[asyncio.Task] = None
@@ -1076,6 +1084,10 @@ class Person:
                            "handler": self._order}],
             on_status_change=self._connection, **self.conn)
         self._scribe = await self._stack.__aenter__()
+        # A NEW SESSION ANNOUNCES AGAIN, and writes its own row.  Held
+        # text from the session this one replaced would be a statement
+        # about an interaction that has ended.
+        self._told = None
         self.archive.identify(self._scribe.session_id,
                               getattr(self._scribe.client, "client_id", None))
         self._watcher = enrichment.Observer(
@@ -2765,8 +2777,39 @@ class Person:
         self.hub.publish("state", self.snapshot())
         return self.locale
 
+    def disclosure(self) -> str:
+        """What this person has been told they are talking to (Art. 50(1)).
+
+        THE FRAMEWORK'S SENTENCE, NOT OURS.  `archive.announcement` reads
+        it from the row the daemon wrote, so the text on screen is the
+        text the ledger says was delivered.  Rendering our own wording
+        would make the record a statement about something else.
+
+        ASKED UNTIL IT IS THERE, which is not a poll with a clock: the
+        row is written immediately after the daemon answers
+        `session.new` -- a moment this client cannot observe, because
+        the facade creates the session inside one call -- so the first
+        snapshot after a session opens may be a few milliseconds early.
+        Every snapshot the page asks for is another chance, and once
+        found it is held.
+
+        `""` when there is nothing to show, which today is every
+        session: no profile in this workspace declares
+        `regulatory.interacts_with_persons`, so the framework writes no
+        row and makes no statement.  That is the declaration's absence
+        showing through, and it is the honest rendering of it.
+        """
+        if self._told is None and self._scribe is not None:
+            self._told = _archive.announcement(self.ws,
+                                               self._scribe.session_id)
+        return self._told or ""
+
     def snapshot(self) -> dict:
         return self.board.snapshot(session_at=_iso(self.opened),
+                                   # WHAT THEY ARE TALKING TO, said by
+                                   # the framework and proved by the
+                                   # ledger (Art. 50(1)).
+                                   disclosure=self.disclosure(),
                                    who=self.who,
                                    locale=self.locale,
                                    locales=[{"code": c,
@@ -2855,6 +2898,14 @@ class Person:
                 # The pills still have to work: a guest watching an
                 # escriba think needs to see that it is thinking.
                 "status": self.board.status(),
+                # A GUEST IS A NATURAL PERSON INTERACTING WITH IT.
+                # They speak to the escriba and hear it answer, so Art.
+                # 50(1) is owed to them as much as to the host -- and
+                # this snapshot is BUILT key by key, so it would have
+                # been withheld by the same construction that withholds
+                # the host's memory.  The host's session is the one that
+                # announced, and its text is the one that applies.
+                "disclosure": self.disclosure(),
                 "guest": True, "host": self.who, "who": name,
                 "self_id": _token(principal),
                 # WHO ELSE IS HERE, which a guest in an interview is

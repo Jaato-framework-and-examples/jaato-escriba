@@ -408,6 +408,18 @@ async def main() -> int:
 
     theirs = host.guest_snapshot(GUEST, "marta.ruiz")
     check("a guest arrives to an empty transcript", theirs["entries"], [])
+    # BUT THEY ARE TOLD WHAT THEY ARE TALKING TO.  Art. 50(1) is owed to
+    # every natural person interacting with the system, and a guest
+    # speaks to the escriba and hears it answer.  This snapshot is BUILT
+    # key by key, so the key had to be added on purpose -- the same
+    # construction that withholds the host's memory would have withheld
+    # this.  Empty here because the test session declares no
+    # `regulatory:` block, which is exactly what every session does
+    # today; what is asserted is that the key TRAVELS.
+    check("a guest is told what they are talking to",
+          "disclosure" in theirs, True)
+    check("and the host is told the same thing",
+          "disclosure" in mine, True)
     check("with no memory panel", theirs["items"], {})
     check("no counts", theirs["counts"], {})
     check("no days", theirs["days"], [])

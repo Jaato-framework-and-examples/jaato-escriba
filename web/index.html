@@ -458,6 +458,11 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
 #guest-band .warn { opacity: .8; }
 #guest-band .why { opacity: .95; max-width: 40em; }
 #guest-band button { margin-left: auto; }
+/* Quiet, permanent, and not dismissible: the person is not being
+   alerted to something, they are being told what they are talking to,
+   and that stays true for as long as the page is open. */
+#disclosure { padding: 6px 14px; font-size: 12px; opacity: .85;
+  border-bottom: 1px solid var(--line, #333); }
 #guest-offer { padding: 14px; display: flex; gap: 10px; align-items: center;
   flex-wrap: wrap; border-bottom: 1px solid var(--line, #333); }
 #guest-offer .nm { font-weight: 600; }
@@ -496,6 +501,15 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
   <div id="guest-offer" hidden></div>
 
   <div id="alert-slot"></div>
+
+  <!-- WHAT THEY ARE TALKING TO (Regulation (EU) 2024/1689, Art. 50(1)).
+       ABOVE `main` AND NOT A ROW IN THE TRANSCRIPT: a sentence that
+       scrolls away has been shown once to somebody who may have been
+       looking elsewhere, and the Article asks that the person BE
+       informed rather than that they were sent a message. The text is
+       the framework's own, read from the audit record the daemon wrote,
+       so what is on screen is what the ledger says was delivered. -->
+  <div id="disclosure" hidden></div>
 
   <main id="main">
     <nav>
@@ -596,6 +610,10 @@ const S = {
   counts: {}, items: { memoria: [], referencias: [], documentos: [] }, days: [],
   status: { status: "listening", query: null },
   session_at: null, archive_dir: null, playback: "navegador",
+  //: The Art. 50(1) sentence, verbatim from the audit record. Empty
+  //: until a snapshot carries one, like every other fact here, and
+  //: empty for as long as no profile declares `interacts_with_persons`.
+  disclosure: "",
   //: Who the backend says is connected: the identity their directory was
   //: provisioned for. Empty until the first snapshot, like every other
   //: fact here — a page that has spoken to nothing knows no name.
@@ -3248,6 +3266,11 @@ function onEvent(kind, data) {
     // snapshot is BUILT narrow — no transcript from before they came in,
     // no memory, no references, no documents — so there is nothing here
     // to hide; this is what stops the page asking for any of it.
+    // ART. 50(1), AND IT ARRIVES FOR A GUEST TOO: they speak to the
+    // escriba and hear it answer, so they are owed the same sentence.
+    // `""` while no profile declares `interacts_with_persons`, which is
+    // the framework making no statement nobody authorised.
+    S.disclosure = data.disclosure || "";
     S.guest = !!data.guest;
     S.host = data.host || "";
     S.selfId = data.self_id || "";
@@ -3719,6 +3742,15 @@ function mockTurn(seconds) {
 // build, when the truth was "nothing has connected yet".  The chrome is
 // drawn from the empty state first: four pills with `escuchando` waiting,
 // counts reading `—`, tabs at zero.  The alert then says what is wrong.
+function renderDisclosure() {
+  // VERBATIM. The ledger records the text AS DELIVERED, so a page that
+  // reworded, truncated or translated it would make the record a
+  // statement about a sentence nobody was shown. `textContent`, so a
+  // provider name cannot carry markup into the page either.
+  const n = $("disclosure");
+  n.textContent = S.disclosure;
+  n.hidden = !S.disclosure;
+}
 function renderAll() {
   applyTheme();                 // its label is a string like any other
   // ASKED HERE AND NOT AT BOOT, unlike the microphone's: the reason is a
@@ -3728,7 +3760,7 @@ function renderAll() {
   S.demo.reason = demoUnavailable();
   renderLangs(); renderPills(); renderCounts(); renderTabs(); renderPanel();
   renderDays(); renderTranscript(); renderEngines(); pttFace(); demoFace();
-  renderGuest(); renderScratch();
+  renderGuest(); renderScratch(); renderDisclosure();
   // The static markup carries no Spanish any more, so the parts of the
   // chrome that are not redrawn by a renderer are set here.
   $("demo-btn").onclick = () => (S.demo.id ? stopDemo("") : startDemo());
