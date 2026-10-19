@@ -2234,8 +2234,13 @@ class Person:
         recording = folder / manifest["audio"]
         target = _transcribe.text_path(recording)
         if not target.exists():
-            pieces = _transcribe.Transcriber(
-                self.scribe, language=self.locale).timed(recording)
+            # THE SHARED TRANSCRIBER, BORROWED, which is what `Listener`
+            # does and for its reason: loading the model costs seconds
+            # and hundreds of megabytes, and one is held per host.
+            # Constructing one here would have passed that instance as a
+            # model NAME.  This person's language, not the host's: the
+            # model is shared, the language is not.
+            pieces = self.scribe.timed(recording, self.locale)
             if not pieces:
                 return ""
             target.write_text(_transcribe.timeline(pieces) + "\n",

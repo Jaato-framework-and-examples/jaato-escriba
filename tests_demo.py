@@ -620,6 +620,34 @@ async def _eyes() -> None:
         # NOTHING TO TRANSCRIBE IS NOT A FAILURE.  A demonstration with
         # the microphone refused, and a deployment that named no
         # `--transcribe` model, both reach here with nothing to read.
+        # THE SHARED TRANSCRIBER IS BORROWED, not constructed: one is
+        # held per host and `self.scribe` IS that instance, so building
+        # a new one here passed it as a model name.  Caught before it
+        # ever ran.
+        asked: list = []
+
+        class Lent:
+            def timed(self, recording, language=None):
+                asked.append((recording.name, language))
+                return [(0.0, 2.0, "esto son las fuentes")]
+
+        person.scribe = Lent()
+        folder = demo.folder(ws, ident)
+        (folder / "n.webm").write_bytes(b"x")
+        said = person._narrate(dict(base, audio="n.webm"))
+        check("the transcript is written beside the recording",
+              said, f"demo/{ident}/n.txt")
+        check("with a clock on its line",
+              (ws / said).read_text(encoding="utf-8").strip(),
+              "[00:00] esto son las fuentes")
+        check("asked of the shared transcriber, in this person's language",
+              asked, [("n.webm", "es")])
+        # WRITTEN ONCE AND KEPT: re-transcribing the same bytes with a
+        # different model would silently change what the record says a
+        # person said.
+        person._narrate(dict(base, audio="n.webm"))
+        check("and not transcribed twice", len(asked), 1)
+
         person.scribe = None
         check("no transcriber, no transcript",
               person._narrate(dict(base, audio="n.webm")), "")
