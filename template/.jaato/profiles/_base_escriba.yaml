@@ -439,6 +439,7 @@ plugin_configs:
           # silently refused, which here means an escriba that says it
           # has drawn something and has not.
           - dibujar
+          - ofrecer_descarga
           # The tier switch itself.  A denied `enter_tier` would strand
           # the voice tier holding something to write and no way to write
           # it.

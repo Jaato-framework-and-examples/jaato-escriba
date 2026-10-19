@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import staging                                          # noqa: E402
 from fastapi import Request                              # noqa: E402
 from escriba_web.hub import VOICE_BACKLOG, Hub, frame                   # noqa: E402
+import escriba_web.driver as _driver                     # noqa: E402
 from escriba_web.driver import WebBoard, entry_json      # noqa: E402
 import run_escriba as _run                               # noqa: E402
 from jaato_sdk import AgentError                         # noqa: E402
@@ -562,6 +563,29 @@ async def main():
         target = (ws / path).resolve()
         inside = docs in target.parents and target.is_file()
         check(f"doc {path!r}", inside, allowed)
+
+    # `/descarga` and `/captura` run the SAME containment, against
+    # `driver.DOWNLOADABLE` -- the one list the tool and the route both
+    # read, so the thing the escriba may offer and the thing the server
+    # will serve cannot drift apart.  Everything outside those four is
+    # machinery: the person's memories, their session records, the file
+    # that selects the profile set.
+    (ws / "demo").mkdir()
+    (ws / "demo" / "d1").mkdir()
+    (ws / "demo" / "d1" / "narration.txt").write_text("[00:00] hola")
+    (ws / ".jaato").mkdir()
+    (ws / ".jaato" / "stored.json").write_text("not yours either")
+    roots = [(ws / name).resolve() for name in _driver.DOWNLOADABLE]
+    for path, allowed in (("docs/ok.md", True),
+                          ("demo/d1/narration.txt", True),
+                          ("secret.md", False),
+                          (".jaato/stored.json", False),
+                          ("docs/../secret.md", False),
+                          ("demo/../.jaato/stored.json", False),
+                          ("/etc/passwd", False)):
+        target = (ws / path.lstrip("/")).resolve()
+        inside = any(r in target.parents for r in roots) and target.is_file()
+        check(f"descarga {path!r}", inside, allowed)
 
     # ------------------------------------------- the voice, piece by piece
     # The file the row plays is named after the digest of the WHOLE

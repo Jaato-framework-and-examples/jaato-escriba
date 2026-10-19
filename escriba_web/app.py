@@ -44,6 +44,7 @@ import sequence as _sequence                                      # noqa: E402
 import staging as _staging                                        # noqa: E402
 import workspace as _workspace                                     # noqa: E402
 
+from . import driver as _driver                                    # noqa: E402
 from .driver import FloorTaken, NothingHeard, NotReady, Person     # noqa: E402
 from .guests import ROOM, Invitation, label, token  # noqa: E402
 from .hub import frame                                             # noqa: E402
@@ -588,6 +589,30 @@ async def captura(request: Request, path: str) -> FileResponse:
     if demos not in target.parents or not target.is_file():
         raise HTTPException(404, "no such capture")
     return FileResponse(target)
+
+
+@app.get("/descarga")
+async def descarga(request: Request, path: str) -> FileResponse:
+    """A file the escriba offered, on its way to the person's disk.
+
+    THE SAME FOUR PLACES THE TOOL MAY NAME, checked again here and not
+    merely once at the offer: the path comes back over the wire from a
+    row this server filled, and a row is not a promise about what the
+    next request will carry.  Resolved first, then required to be INSIDE
+    one of them -- `..` defeats a prefix test, and `driver.DOWNLOADABLE`
+    is the one list both sides read so they cannot drift apart.
+
+    NO GUEST ROUTE.  A guest receives no documents and no demonstrations
+    (`guest_snapshot` is built key by key), so nothing they can see
+    names a file, and nothing here would be theirs to take.
+    """
+    person = await person_of(request)
+    target = (person.ws / path.lstrip("/")).resolve()
+    roots = [(person.ws / name).resolve() for name in _driver.DOWNLOADABLE]
+    if not any(r in target.parents for r in roots) or not target.is_file():
+        raise HTTPException(404, "no such file")
+    return FileResponse(target, filename=target.name,
+                        content_disposition_type="attachment")
 
 
 @app.get("/secuencia")

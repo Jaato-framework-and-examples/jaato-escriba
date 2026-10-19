@@ -114,6 +114,48 @@ JUSTIFY_SCHEMA = {
 }
 
 
+#: Handing a file over, as a thing the escriba may offer.
+DOWNLOAD_TOOL = "ofrecer_descarga"
+
+#: WHAT MAY BE OFFERED, named rather than reasoned about.  These four
+#: are the person's own artifacts -- what they recorded, what was
+#: written for them, what they staged -- and they are exactly
+#: `workspace.RUNTIME`'s artifact half.  Everything else in a workspace
+#: is machinery: `.jaato/` holds their memories, session records and
+#: logs, `.env` selects the profile set, and neither is a thing somebody
+#: asks to be sent.  An ALLOWLIST and not a denylist, because the caller
+#: is a model naming a path and the question "is this safe to send" has
+#: no good general answer -- the answerable question is "is this one of
+#: the four places we put things for them".
+DOWNLOADABLE = ("docs", "demo", "staged", "audio")
+
+DOWNLOAD_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["ruta", "titulo"],
+    "properties": {
+        "ruta": {
+            "type": "string",
+            "minLength": 1,
+            "description": "El camino del fichero dentro del espacio de "
+                           "trabajo, tal y como lo has leido: "
+                           "«docs/algo/index.md», "
+                           "«demo/<id>/narration.txt». No te lo inventes "
+                           "ni lo adivines: si no has visto ese camino "
+                           "escrito, no ofrezcas la descarga.",
+        },
+        "titulo": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Como se llama lo que ofreces, en pocas "
+                           "palabras y para ella: «la documentacion de la "
+                           "demostracion», «lo que dijiste mientras "
+                           "grababas». Es lo unico que lo nombra en la "
+                           "transcripcion.",
+        },
+    },
+}
+
 #: Drawing, as a thing the escriba may ASK FOR and not a thing it makes.
 #: The model writes Mermaid -- a few lines of text it is good at -- and
 #: the page draws it.  Nothing renders server-side: a diagram is a VIEW
@@ -176,6 +218,8 @@ def entry_json(e) -> Dict[str, Any]:
             "silent": e.silent, "transcribing": e.transcribing,
             "links": list(getattr(e, "links", None) or []),
             "mermaid": getattr(e, "mermaid", "") or "",
+            "path": getattr(e, "path", "") or "",
+            "size": getattr(e, "size", 0) or 0,
             "by": getattr(e, "by", "") or ""}
 
 
@@ -897,7 +941,19 @@ class Person:
                                "cuenta a cada paso: dibuja cuando lo pida "
                                "o cuando lo dicho tenga forma de esquema.",
                            "parameters": DRAW_SCHEMA,
-                           "handler": self._draw}],
+                           "handler": self._draw},
+                          {"name": DOWNLOAD_TOOL,
+                           "description":
+                               "Ofrecele un fichero del espacio de "
+                               "trabajo para que se lo baje: un documento "
+                               "que se acaba de escribir, la "
+                               "transcripcion de una demostracion, una "
+                               "grabacion. Aparece en la conversacion con "
+                               "un boton. Ofrecelo cuando lo pida o "
+                               "cuando acabe de aparecer algo que es "
+                               "suyo y no tiene otra forma de sacar.",
+                           "parameters": DOWNLOAD_SCHEMA,
+                           "handler": self._offer}],
             on_status_change=self._connection, **self.conn)
         self._scribe = await self._stack.__aenter__()
         self.archive.identify(self._scribe.session_id,
@@ -1465,6 +1521,43 @@ class Person:
     def invitations(self) -> List[dict]:
         """Everybody this host has named, in whatever state."""
         return [i.json() for i in ROOM.of_host(self.principal)]
+
+    def _offer(self, args: dict) -> dict:
+        """Put a file of this person's own in front of them to take.
+
+        RUNS ON THIS LOOP, like every host tool here.
+
+        THE PATH IS CHECKED, NOT TRUSTED, and checked the way `/doc` and
+        `/captura` check theirs: resolved FIRST and then required to be
+        inside one of `DOWNLOADABLE`.  A prefix test is what `..`
+        defeats, and the caller here is a model naming a string.
+
+        A REFUSAL IS RAISED so the framework returns it as the call's
+        error and the model can answer it -- each cause told apart,
+        because the escriba has to know what to do differently: a path
+        that does not exist is a path it invented, and a path outside
+        those four is a thing that is not the person's to be sent.
+        """
+        ruta = str(args.get("ruta") or "").strip().lstrip("/")
+        titulo = str(args.get("titulo") or "").strip()
+        if not ruta or not titulo:
+            raise ValueError("una descarga necesita ruta y titulo")
+        target = (self.ws / ruta).resolve()
+        roots = [(self.ws / name).resolve() for name in DOWNLOADABLE]
+        if not any(r in target.parents for r in roots):
+            raise ValueError(
+                f"«{ruta}» no esta en {', '.join(DOWNLOADABLE)}, que es lo "
+                "unico que se le puede ofrecer: ahi estan sus documentos, "
+                "sus demostraciones, lo que ha subido y sus grabaciones. "
+                "Lo demas es maquinaria y no es cosa suya.")
+        if not target.is_file():
+            raise ValueError(
+                f"«{ruta}» no existe. El camino es el que has leido, no "
+                "uno parecido: copialo tal cual o no ofrezcas nada.")
+        self.journal.note("descarga", ruta=ruta, titulo=titulo[:120],
+                          size=target.stat().st_size)
+        self.board.offered(titulo, ruta, target.stat().st_size)
+        return {"ofrecido": True}
 
     def _draw(self, args: dict) -> dict:
         """A diagram of what is being talked about, into the transcript.

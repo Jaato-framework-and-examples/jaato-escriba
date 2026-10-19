@@ -198,6 +198,10 @@ nav .note code{font-family:var(--mono)}
 .tag.bad{background:var(--bad-soft);color:var(--bad);font-weight:500}
 .tag.accent{background:var(--accent-soft);color:var(--accent-ink);font-weight:500}
 .tag.neutral{background:var(--chip);color:var(--ink-2)}
+.descarga{display:flex;flex-direction:column;gap:var(--space-2);padding-left:var(--space-4);
+          border-left:3px solid var(--line-strong);align-items:flex-start}
+.descarga .dtitle{font-size:15px;color:var(--ink);font-weight:600}
+.descarga .meta{display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap;font-size:13px}
 .diagrama{display:flex;flex-direction:column;gap:var(--space-2);padding-left:var(--space-4);
           border-left:3px solid var(--line-strong)}
 .diagrama .dtitle{font-size:13px;color:var(--ink-2);font-weight:600}
@@ -1122,6 +1126,24 @@ function paint(e) {
     if (S.failed === e.id) meta.append(el("span", "tag bad", tx("entry.playback_failed")));
     if (S.showIds && e.audio) meta.append(el("span", "audit", e.audio));
     w.append(meta);
+    r.body.append(w);
+    return;
+  }
+
+  if (e.kind === "descarga") {
+    const w = el("div", "descarga");
+    w.append(el("div", "dtitle", e.text));
+    const a = el("a", "listen", tx("entry.download"));
+    a.href = api("/descarga?path=" + encodeURIComponent(e.path || ""));
+    // `download` ASKS THE BROWSER TO SAVE rather than navigate, and the
+    // server says the same thing with Content-Disposition: a markdown
+    // file would otherwise be rendered in a tab and a recording would
+    // start playing, neither of which is what was offered.
+    a.setAttribute("download", "");
+    const meta = el("div", "meta");
+    meta.append(el("span", "audit", e.path || ""),
+                el("span", "tag neutral", bytes(e.size || 0)));
+    w.append(a, meta);
     r.body.append(w);
     return;
   }
@@ -3204,6 +3226,15 @@ let lost = null;
 //: dropped keeps delivering — two streams patching rows by id into one
 //: transcript, which reads as the escriba answering itself.
 let source = null;
+// HOW BIG, IN WORDS SOMEBODY READS.  A person deciding whether to take
+// an eighteen-megabyte recording over a phone connection is deciding on
+// exactly that number, and the row is the only place they learn it.
+function bytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return Math.round(n / 1024) + " kB";
+  return (n / (1024 * 1024)).toFixed(1) + " MB";
+}
+
 // ---------------------------------------------------------------- diagrams
 //
 // THE ESCRIBA ASKS FOR A DRAWING; IT DOES NOT MAKE ONE.  `dibujar` sends

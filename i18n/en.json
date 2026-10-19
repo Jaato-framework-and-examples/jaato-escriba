@@ -85,6 +85,7 @@
   "dim.tool_calls": "tool calls",
   "dim.turns": "turns",
   "dim.usd": "cost",
+  "entry.download": "download",
   "entry.ended": "the track ended",
   "entry.local_transcript": "local transcript of the recording",
   "entry.muted": "the track is muted",

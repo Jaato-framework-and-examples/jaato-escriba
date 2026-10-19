@@ -1267,6 +1267,35 @@ check("and an answer that never came says that instead",
         note && note.textContent, ES["demo.hint"]);
 }
 
+// ------------------------------------------------------ a download row
+//
+// THE ESCRIBA OFFERS A FILE OF THE PERSON'S OWN and the row is where it
+// stays.  A document is written once and mentioned once; a sentence
+// saying "ya está listo" scrolls away, and the path and the button have
+// nowhere else durable to live.
+T.onEvent("entry", { id: 500078, kind: "descarga",
+                     at: new Date().toISOString(), repeats: 1,
+                     text: "la documentación de la demostración",
+                     path: "docs/dimensiones/index.md", size: 3223 });
+{
+  const row = byId.get("scroll").walk()
+    .find((n) => n.dataset && String(n.dataset.id) === "500078");
+  const text = row ? row.textContent : "";
+  check("a download row is named for her",
+        text.includes("la documentación de la demostración"), true);
+  check("and says how big it is before she takes it",
+        text.includes("3.1 MB") || text.includes("kB"), true);
+  const link = row && row.walk().find((n) => n.tagName === "A");
+  check("the link points at the serving route",
+        !!(link && String(link.attrs.href || link.href)
+                     .includes("/descarga?path=")), true);
+  // `download` ASKS THE BROWSER TO SAVE rather than navigate: a
+  // markdown file would otherwise render in a tab and a recording would
+  // start playing, neither of which is what was offered.
+  check("and asks the browser to save rather than open",
+        !!(link && "download" in link.attrs), true);
+}
+
 // ------------------------------------------------------- a diagram row
 //
 // THE SOURCE IS WHAT TRAVELS.  `dibujar` sends Mermaid text and the

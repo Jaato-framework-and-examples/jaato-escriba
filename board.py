@@ -50,7 +50,7 @@ TRANSCRIPT = 400
 class Entry:
     """One line of the conversation, before anyone decides how it looks."""
     at: datetime
-    kind: str                     # said | spoke | note | anotado | diagrama
+    kind: str            # said | spoke | note | anotado | diagrama | descarga
     text: str
     seconds: Optional[float] = None
     audio: Optional[str] = None   # the att_ id, when there is a recording
@@ -89,6 +89,13 @@ class Entry:
     #: and a view that cannot draw -- a terminal -- still has something
     #: a person can read.
     mermaid: str = ""
+    #: A `descarga` row: the workspace-relative path being offered and
+    #: how big it is.  The SIZE travels because a person deciding
+    #: whether to take an eighteen-megabyte recording over a phone
+    #: connection is deciding on exactly that, and the row is the only
+    #: place they could learn it.
+    path: str = ""
+    size: int = 0
     #: Stable for the life of this entry, and the only safe way to say
     #: WHICH row changed.  Three things arrive after a row is first drawn
     #: — the rest of a streamed reply, the audio id once the provider has
@@ -193,6 +200,8 @@ class NullBoard:
               links: Optional[list] = None) -> None: ...
 
     def drew(self, titulo: str, mermaid: str) -> None: ...
+
+    def offered(self, titulo: str, path: str, size: int) -> None: ...
     # facts
     def memories(self, curated: int, raw: int) -> None: ...
     def catalogue(self, total: int) -> None: ...
@@ -330,6 +339,18 @@ class StateBoard(NullBoard):
         """
         self.state.thinking = False
         self.state.add("diagrama", titulo, mermaid=mermaid)
+        self._refreshed()
+
+    def offered(self, titulo: str, path: str, size: int) -> None:
+        """A file of the person's own, put in front of them to take.
+
+        A ROW AND NOT A NOTICE: it has to stay where they can find it
+        again.  A document is written once and mentioned once, and a
+        sentence saying "ya está listo" scrolls away; the row is the
+        only durable place the path and the button can live.
+        """
+        self.state.thinking = False
+        self.state.add("descarga", titulo, path=path, size=size)
         self._refreshed()
 
     def memories(self, curated: int, raw: int) -> None:

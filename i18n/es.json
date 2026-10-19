@@ -85,6 +85,7 @@
   "dim.tool_calls": "llamadas",
   "dim.turns": "turnos",
   "dim.usd": "coste",
+  "entry.download": "descargar",
   "entry.ended": "la pista terminó",
   "entry.local_transcript": "transcripción local de la grabación",
   "entry.muted": "la pista está silenciada",

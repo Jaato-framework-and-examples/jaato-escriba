@@ -1051,6 +1051,53 @@ async def main() -> int:
           _driver.entry_json(host.board.state.entries[-1])["mermaid"],
           "flowchart LR\n  X-->Y")
 
+    # ------------------------------------- handing a file over
+    #
+    # AN ALLOWLIST AND NOT A DENYLIST.  The caller is a model naming a
+    # string, and "is this safe to send" has no good general answer;
+    # "is this one of the four places we put things for them" does.
+    (host.ws / "docs").mkdir(exist_ok=True)
+    (host.ws / "docs" / "x.md").write_text("# hola", encoding="utf-8")
+
+    def no_offer(label_, args):
+        global fail
+        try:
+            host._offer(args)
+        except ValueError:
+            print(f"  ok   {label_}")
+            return
+        print(f"  FAIL {label_:<54} was allowed")
+        fail += 1
+
+    no_offer("a file outside the four places is refused",
+             {"ruta": ".env", "titulo": "la configuracion"})
+    no_offer("and so are the person's own session records",
+             {"ruta": ".jaato/memory/curated.jsonl", "titulo": "memorias"})
+    # RESOLVED FIRST, THEN CHECKED.  A prefix test is what `..` defeats,
+    # which is why neither this nor the route uses one.
+    no_offer("a path that climbs out is refused",
+             {"ruta": "docs/../.env", "titulo": "nada"})
+    no_offer("a path nobody wrote is refused",
+             {"ruta": "docs/no-existe.md", "titulo": "inventado"})
+    no_offer("and one with no title", {"ruta": "docs/x.md", "titulo": " "})
+
+    out = host._offer({"ruta": "docs/x.md", "titulo": "la documentacion"})
+    check("the escriba is told it landed", out["ofrecido"], True)
+    row = host.board.state.entries[-1]
+    check("and it is a row of the conversation", row.kind, "descarga")
+    check("named for her, not by its path", row.text, "la documentacion")
+    check("carrying the path the route will serve", row.path, "docs/x.md")
+    # HOW BIG, because a person deciding whether to take an
+    # eighteen-megabyte recording over a phone is deciding on that.
+    check("and how big it is", row.size, len("# hola"))
+    # THE SEAM, which is where the first diagram was lost: `entry_json`
+    # names its fields one by one, so a new one reaches the page only
+    # when it is named there too.
+    wired = _driver.entry_json(row)
+    check("the path reaches the page", wired["path"], "docs/x.md")
+    check("and so does the size", wired["size"], len("# hola"))
+
+
     refused("and rewriting it afterwards is refused",
             {"email": "marta@ejemplo.es", "motivo": "otra cosa",
              "tema": "otro tema"})
