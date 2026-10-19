@@ -109,7 +109,8 @@ variance is in pause LENGTH.
 `python -m cadence --calibration <audio>…` reproduces it. **The overview
 keeps its place on CONTENT** — the PARA QUÉ a demonstration's
 screenshots never show — which is what `inventory.py` asks for and
-`agent.demo_done` passes to the documenter.
+`agent.demo_brief` asks the escriba for, and `choosing` passes to the
+documenter.
 
 ## 5. Any threshold at all — rejected by ear, and then by measurement
 

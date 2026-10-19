@@ -52,6 +52,7 @@ import yaml                                                      # noqa: E402
 import transcribe as _transcribe                                 # noqa: E402
 import demo as _demo                                             # noqa: E402
 import backchannel as _backchannel                              # noqa: E402
+import choosing as _choosing                                     # noqa: E402
 import demo_live as _live                                        # noqa: E402
 import journal as _journal                                      # noqa: E402
 import workspace as _workspace                                   # noqa: E402
@@ -308,6 +309,31 @@ class NothingHeard(RuntimeError):
 #: returning, and a page reading "pensando…" until somebody restarted
 #: the service.  A turn that cannot end on its own must end anyway.
 TURN_TIMEOUT = 180.0
+
+#: How long a demonstration's document may take to write.  Minutes, not
+#: seconds: the documenter opens twelve screenshots, reads memories and
+#: references, and writes a file.  NOBODY WAITS FOR IT -- it runs in a
+#: held background task and the person is told when it lands -- so this
+#: is a ceiling on a stuck session, not a budget for a working one.
+DOCUMENT_TIMEOUT = 900.0
+
+
+def _approve_decide(event) -> str:
+    """Yes to `decide`, and to nothing else.
+
+    A CONTROL THAT MOVED, written down where it moved to.  `decide` is
+    deliberately NOT auto-approved in the profile -- "a call spends
+    money and sends workspace content to a decision model" -- because
+    until now its only caller was a model, and a model should not spend
+    without being asked.  The driver is not a model: it calls this once
+    per demonstration, over captures the person recorded, in the second
+    after they pressed stop.  Pressing stop IS the commission, so the
+    spend follows from something the person did.
+
+    Narrow on purpose: anything that is not `decide` is refused, which
+    cannot happen from here and would be worth finding out about.
+    """
+    return "y" if getattr(event, "tool_name", "") == "decide" else "n"
 
 
 #: How much speech is gathered before a piece of it goes out, in seconds.
@@ -1959,30 +1985,28 @@ class Person:
             # looking is the transcript.
             self.board.note(self.say("note.demo_unwritten"))
             return
-        # NAMED, NOT DESCRIBED. The documentalista's `file_edit` is
-        # subset to `[writeNewFile, updateFile, readFile]`, so it cannot
-        # list a directory: a prompt that points at the folder sends it
-        # to read the folder. MEASURED on the same session: 98 readFile
-        # calls, every one answering `Not a file: demo/<id>/`, until the
-        # `tool_calls: 100` ceiling aborted it with no document written.
-        # `frames.jsonl` is the index this module already writes, and it
-        # is a file, so the one tool it has is enough.
-        narration = (
-            self.say("agent.demo_narration", root=manifest["root"],
-                     audio=manifest["audio"])
-            if manifest["audio"] else self.say("agent.demo_no_narration"))
+        # ONE TURN, AND THE ONLY PART OF A COMMISSION THAT NEEDS
+        # JUDGEMENT.  In `voz`, so she hears it: what the recording is
+        # OF, and that the document is on its way.  The SAME sentence
+        # comes back in `anotado`, and that is what the documenter is
+        # commissioned with -- so this does not ask twice for one
+        # sentence, and there is no second, silent turn to lose.
+        #
+        # EVERYTHING ELSE MOVED OUT.  Choosing the captures and naming
+        # them to the documenter used to happen here, inside the model's
+        # turn, and `choosing`'s docstring records the four measured
+        # ways that failed.  It is mechanical, so it is done below where
+        # it is deterministic.
         async with self._turn_lock:
             with self._holding(""):
                 lines = self._notices
                 self._notices = []
                 try:
-                    await asyncio.wait_for(
+                    payload = await asyncio.wait_for(
                         _turn(self._scribe,
                               "\n".join(lines + [
-                                  self.say("agent.demo_done",
-                                           frames=manifest["frames"],
-                                           root=manifest["root"],
-                                           narration=narration)]),
+                                  self.say("agent.demo_brief",
+                                           frames=manifest["frames"])]),
                               None, self._relay(),
                               log=self.archive.turn, tui=self.board),
                         timeout=TURN_TIMEOUT)
@@ -1995,9 +2019,138 @@ class Person:
                 except SessionGone as over:
                     self._ended(over)
                     return
+        # NOBODY WAITS FOR THE DOCUMENT.  It is minutes of another
+        # agent's work and she has just pressed stop; the page answers
+        # now and she is told when it lands.
+        self._hold(asyncio.create_task(
+            self._document(manifest, (payload.get("anotado") or "").strip()),
+            name=f"document:{manifest['id']}"))
+
+    async def _document(self, manifest: Dict[str, Any], brief: str) -> None:
+        """Choose the captures, have the document written, and say so.
+
+        THE WHOLE COMMISSION, off the turn that triggered it.  Each step
+        can fail on its own and they fail differently, so each says so
+        differently: nothing chosen means the document will never exist
+        and she has to ask again; nothing written means the captures are
+        chosen and the writing is what went wrong.  Reporting both as
+        "no se pudo" would send her to look in the wrong place.
+        """
+        ident = manifest["id"]
+        try:
+            chosen = await self._choose(ident)
+        except Exception as exc:                          # noqa: BLE001
+            self.journal.note("demo.unchosen", ident=ident,
+                              error=f"{type(exc).__name__}: {exc}"[:200])
+            log.error("choosing the captures of %s failed", ident,
+                      exc_info=exc)
+            await self._tell(self.say("agent.demo_unchosen"))
+            return
+        try:
+            await self._commission(manifest, brief, chosen)
+        except Exception as exc:                          # noqa: BLE001
+            self.journal.note("demo.unwritten", ident=ident,
+                              error=f"{type(exc).__name__}: {exc}"[:200])
+            log.error("writing the document of %s failed", ident,
+                      exc_info=exc)
+            await self._tell(self.say("agent.demo_unwritten"))
+            return
+        await self._tell(self.say("agent.demo_ready", n=len(chosen)))
+
+    async def _choose(self, ident: str) -> List[Dict[str, Any]]:
+        """Score every capture of this demonstration and keep the best.
+
+        ONE QUESTION PER CAPTURE, in calls of `choosing.BATCH`, with the
+        capture itself attached -- which is the thing that kept not
+        happening when a conversational model built this call.  The
+        decision model does the only part that is a judgement; `choosing`
+        does the rest, deterministically, and this is the seam between
+        them.
+        """
+        frames = _demo.frames(self.ws, ident)
+        if not frames:
+            raise _demo.NoSuchDemo(f"{ident} recorded no captures")
+        scored: List[Dict[str, Any]] = []
+        for batch in _choosing.batches(frames):
+            answer = await self._scribe.client.invoke_plugin_tool(
+                "decision", "decide",
+                _choosing.questions(batch, self.say("decide.captures"),
+                                    self.say("decide.advance")),
+                profile="escriba", on_permission=_approve_decide,
+                timeout=DOCUMENT_TIMEOUT)
+            # TWO WAYS TO FAIL AND THEY ARE NOT THE SAME.  `ok` false is
+            # the call never running -- a tool outside the profile's
+            # surface, a profile that does not resolve.  `success` false
+            # is the call running and the tool refusing, which includes
+            # a permission nobody answered.
+            if not answer.ok:
+                raise RuntimeError(f"decide: {answer.category}: {answer.error}")
+            if not answer.success:
+                raise RuntimeError(f"decide refused: {answer.result}")
+            scored.extend(_choosing.scores(batch, answer.result["answers"]))
+        kept = _choosing.best(scored)
+        _choosing.write(self.ws, ident, kept, scored=len(scored))
+        self.journal.note("demo.chosen", ident=ident, scored=len(scored),
+                          kept=len(kept),
+                          best=round(max(f["score"] for f in kept), 2))
+        return kept
+
+    async def _commission(self, manifest: Dict[str, Any], brief: str,
+                          chosen: List[Dict[str, Any]]) -> None:
+        """The documenter, as a session of this driver's own.
+
+        A SIBLING AND NOT A SUBAGENT, which is what `enrichment` already
+        does for the judge: `IPCClient.session` under this person's own
+        workspace and env, finished with `complete` because it SHOULD
+        end.  The scribe is not in this path at all, so there is no
+        `spawn_subagent` to get wrong and nothing to gate.
+
+        THE CAPTURES DO NOT TRAVEL IN THE PROMPT.  `agent_params` names
+        the file `choosing` wrote, and the documenter's own prefetch
+        reads it into its system prompt before its first turn -- so a
+        commission whose selection cannot be read aborts session
+        preparation instead of starting an agent with no captures.  That
+        is the gate, and it is the framework's rather than ours.
+
+        `agent_params` IS `Dict[str, str]` END TO END, which is why this
+        is a path and not a list: `enrichment` carries the scar of
+        passing a list that arrived as its `repr()`.
+        """
+        from jaato_sdk import IPCClient
+
+        named = (_demo.ROOT / manifest["id"] / _choosing.CHOSEN).as_posix()
+        narration = (
+            self.say("agent.demo_narration", root=manifest["root"],
+                     audio=manifest["audio"])
+            if manifest["audio"] else self.say("agent.demo_no_narration"))
+        self.journal.note("demo.commission", ident=manifest["id"],
+                          captures=len(chosen), brief=brief[:120])
+        async with IPCClient.session(
+                profile="documentalista", agent="documentalista",
+                agent_params={"capturas": named}, **self.conn) as writer:
+            await writer.complete(
+                self.say("agent.document_demo", brief=brief,
+                         frames=manifest["frames"], narration=narration),
+                timeout=DOCUMENT_TIMEOUT)
+
+    async def _tell(self, prompt: str) -> None:
+        """One turn whose only job is to say something to her.
+
+        THE SAME SHAPE EVERY INJECTED TURN IN THIS FILE USES -- the turn
+        lock, the floor, the queued notices drained into it -- gathered
+        here because the commission now has three endings to announce
+        and writing it out three more times is three places for it to
+        drift.
+        """
+        if self._scribe is None:
+            return
+        async with self._turn_lock:
+            with self._holding(""):
+                lines = self._notices
+                self._notices = []
                 try:
                     await asyncio.wait_for(
-                        _turn(self._scribe, self.say("agent.demo_said"),
+                        _turn(self._scribe, "\n".join(lines + [prompt]),
                               None, self._relay(),
                               log=self.archive.turn, tui=self.board),
                         timeout=TURN_TIMEOUT)

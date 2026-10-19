@@ -206,8 +206,16 @@ def _if_over(scribe, cause: Optional[Exception] = None) -> None:
                       details=over.details) from cause
 
 
-async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
+async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> dict:
     """One turn, tolerating a turn that does its work but never closes.
+
+    RETURNS THE TYPED PAYLOAD, and `{}` for a turn that did not close.
+    Every caller but one ignores it; the one that does not is the
+    driver commissioning a demonstration's document, which needs the
+    escriba's `anotado` -- one sentence saying what the recording is OF.
+    That is the only part of the commission that needs judgement, and
+    the payload is where the escriba has already written it, so asking
+    for it again in a second turn would be asking twice.
 
     `complete` and not `ask`, now that the scribe is completion-gated: its
     turn ends at `signal_completion`, and `complete` is what waits for
@@ -298,7 +306,7 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
         if _session_is_gone(exc):
             raise SessionGone(str(exc)) from exc
         (tui or _LINES).note(f"   ↳ (turn not closed: {str(exc)[:60]})")
-        return
+        return {}
     finally:
         unsubscribe()
     words = spoken()
@@ -338,6 +346,7 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> None:
     # has nowhere to go, and losing this turn's record to say so would
     # trade a fact for a warning.
     _if_over(scribe)
+    return payload or {}
 
 
 def _forget(ws: Path, assume_yes: bool) -> int:

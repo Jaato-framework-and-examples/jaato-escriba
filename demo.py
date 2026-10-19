@@ -269,6 +269,15 @@ def close_demo(workspace: Path, ident: str, audio: bytes,
     return manifest
 
 
+def folder(workspace: Path, ident: str) -> Path:
+    """Where this demonstration's files are.
+
+    Public because the selection lands beside them (`choosing.write`)
+    and one module should own where a demonstration lives.
+    """
+    return _dir(workspace, ident)
+
+
 def frames(workspace: Path, ident: str) -> List[Dict[str, Any]]:
     """Every frame of one demo, in the order they were captured.
 

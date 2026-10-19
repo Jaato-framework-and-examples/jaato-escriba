@@ -42,9 +42,12 @@ persona grabó su pantalla mientras enseñaba cómo se hace algo. Es la
 única excepción a «dos sitios y solo dos»: aquí la fuente es lo que se
 ve.
 
-**El encargo te da las capturas por su nombre, una lista de ficheros.**
-Ya están elegidas —el escriba las eligió mirándolas— y son pocas a
+**Las capturas te llegan ya elegidas, arriba, con su ruta entera.** No
+las eligió nadie a ojo: se puntuaron todas mirándolas una a una y se
+quedaron las mejores, en el orden en que ocurrieron. Son pocas a
 propósito. Tu trabajo empieza donde acaba esa lista.
+
+{{!py:scripts/capturas.py}}
 
 **Ábrelas todas, una a una, con `readFile`, en el orden en que vienen.**
 No es un paso optativo ni una formalidad: una captura que no abres es

@@ -339,6 +339,7 @@ from escriba_web.driver import Person                     # noqa: E402
 import demo_live as _live                                 # noqa: E402
 import journal as _journal                                # noqa: E402
 import backchannel as _backchannel                        # noqa: E402
+import choosing                                           # noqa: E402
 from escriba_web import hub as _hub                        # noqa: E402
 
 MANIFEST = {"id": "20261017_223855_438804", "frames": 49,
@@ -346,17 +347,29 @@ MANIFEST = {"id": "20261017_223855_438804", "frames": 49,
             "audio": "narration.webm", "bytes": 18393684}
 
 
-async def _said(person, manifest) -> list:
-    """Every prompt `demo_closed` sends, with no daemon behind it."""
+async def _said(person, manifest, anotado="de qué iba") -> tuple:
+    """Every prompt `demo_closed` sends, and the document it starts.
+
+    NO DAEMON AND NO DOCUMENT.  `_document` is the driver's own work --
+    a decision call and another agent's session -- and it runs in a held
+    task; these legs are about the TURN, so it is stubbed and its own
+    legs are below.
+    """
     out: list = []
+    started: list = []
     real, _driver._turn = _driver._turn, (
-        lambda scribe, prompt, att, relay, **kw: out.append(prompt) or _ok(None))
+        lambda scribe, prompt, att, relay, **kw:
+        out.append(prompt) or _ok({"anotado": anotado}))
     person._scribe = object()
+    person._document = (
+        lambda m, brief: started.append((m["id"], brief)) or _ok(None))
     try:
         await person.demo_closed(dict(manifest))
+        # The task is created, not awaited: let it run.
+        await asyncio.sleep(0)
     finally:
         _driver._turn = real
-    return out
+    return out, started
 
 
 async def _ok(value):
@@ -372,57 +385,65 @@ async def _commission() -> None:
     try:
         person = Person("demo-sub-0001", root=root,
                         identity={"username": "dani", "email": "dani@ejemplo.es"})
-        said = await _said(person, MANIFEST)
+        said, started = await _said(person, MANIFEST)
 
-        check("commissioning and announcing are two turns", len(said), 2)
-        check("the first names the index, not the folder",
-              "frames.jsonl" in said[0], True)
-        # CHOOSE FIRST, HAND OVER SECOND.  The scribe picks the frames
-        # and the documentalista is given their NAMES; a commission that
-        # points at the folder leaves it with nothing it can open,
-        # because it has no way to list a directory.
-        check("the commission puts choosing before handing over",
-              said[0].index("PRIMERO") < said[0].index("DESPUÉS"), True)
-        check("and says to name the paths, not the folder",
-              "caminos en orden" in said[0], True)
-        check("and what handing over a folder costs",
-              "no encontrará nada" in said[0], True)
-        check("the first keeps quiet, because it is not heard there",
-              "No hables en este turno" in said[0], True)
-        check("the narration is named by file, so it can be opened",
-              "narration.webm" in said[0], True)
-        check("neither turn notes anything, so nothing is enriched",
-              [p.count("nada_que_anotar: true") for p in said], [1, 1])
+        # ONE TURN, WHERE THERE WERE TWO.  The first used to commission
+        # the document in `escribano` and the second to say so in `voz`.
+        # The commissioning left the model entirely -- see `choosing` --
+        # so what is left is the half that was always a judgement: what
+        # the recording is OF.
+        check("closing a demonstration costs one turn", len(said), 1)
+        check("spoken where she can hear it", "`voz`" in said[0], True)
+        check("and told to stay out of the silent tier",
+              "No entres en `escribano`" in said[0], True)
+        # THE SCRIBE IS NOT ASKED TO COMMISSION ANYTHING ANY MORE, and
+        # the prompt has to say so: an escriba told a document is coming
+        # and left holding `spawn_subagent` is an escriba that may
+        # commission a second one.
+        check("it is told the document is already under way",
+              "ya se está preparando" in said[0], True)
+        check("and asked for no captures", "capturas" in said[0]
+              and "elegir capturas" in said[0], True)
+        check("nothing is named for it to open", "frames.jsonl" in said[0],
+              False)
+        check("the one thing it must produce is the sentence",
+              "`anotado`" in said[0], True)
 
-        # THE SECOND TURN ENTERS NO TIER.  The session's `initial` is
-        # `voz`, so a turn that enters nothing is heard by construction --
-        # which is the whole reason this is a turn and not a sentence
-        # ordered inside the first one.
-        announced = said[1] if len(said) > 1 else ""
-        check("the second turn speaks in voz", "`voz`" in announced, True)
-        check("and is told to stay out of escribano",
-              "No entres en `escribano`" in announced, True)
+        # AND THAT SENTENCE IS WHAT THE DOCUMENT IS COMMISSIONED WITH.
+        # It is read off the turn's own payload rather than asked for in
+        # a second turn, because the escriba has already written it.
+        check("the document is started", [i for i, _ in started],
+              [MANIFEST["id"]])
+        check("with the escriba's own sentence", started[0][1], "de qué iba")
 
-        # A demonstration recorded with the microphone refused is still a
-        # sequence of screens.  What must not happen is a prompt naming a
-        # narration file that is not there.
-        quiet = await _said(person, dict(MANIFEST, audio=""))
-        check("a demo with no narration says so", "sin micrófono" in quiet[0], True)
-        check("and names no audio file", "narration" in quiet[0], False)
+        # NOTHING TO SAY IS NOT A REASON NOT TO WRITE.  A turn that
+        # closed without annotating still recorded a demonstration, and
+        # the document is the person's either way.
+        _, anyway = await _said(person, MANIFEST, anotado="")
+        check("a turn that annotated nothing still starts it",
+              len(anyway), 1)
+        check("with an empty brief rather than a missing one",
+              anyway[0][1], "")
 
-        # NOTHING COMMISSIONED AND COMMISSIONED-BUT-UNANNOUNCED ARE NOT
-        # THE SAME FAILURE.  The first means the document will never
-        # exist; announcing it then would be a lie.
+        # A TURN THAT NEVER CLOSED COMMISSIONS NOTHING.  The escriba has
+        # not said what this is, and the person has been told nothing --
+        # so starting a document now would announce work nobody can
+        # describe.
         tried: list = []
+        started_anyway: list = []
         real, _driver._turn = _driver._turn, (
             lambda scribe, prompt, att, relay, **kw:
             tried.append(prompt) or _timeout())
         person._scribe = object()
+        person._document = (
+            lambda m, brief: started_anyway.append(m) or _ok(None))
         try:
             await person.demo_closed(dict(MANIFEST))
+            await asyncio.sleep(0)
         finally:
             _driver._turn = real
-        check("a commission that times out is not announced", len(tried), 1)
+        check("a brief that times out is one turn", len(tried), 1)
+        check("and starts no document", started_anyway, [])
 
         # AND THE LIVE BUFFER IS RELEASED, on the ordinary ending.  What
         # it held was the recent past of a recording in progress, and
@@ -439,6 +460,105 @@ async def _commission() -> None:
 
 
 asyncio.run(_commission())
+
+
+# ------------------------------------------- the call that kept going out
+#                                                              without eyes
+#
+# THE ONE STEP THAT HAS NEVER RELIABLY WORKED.  Four measured failures,
+# all of them the same shape: a `decide` built by a conversational model
+# with the images left off, so the decision model scored screenshots it
+# had never been sent and answered with calibrated confidence for every
+# one.  `capturas_elegidas` catches it AFTER the fact and cannot prevent
+# it.  Built here instead, where it is deterministic -- so these legs
+# are the statement of record that the pictures go with the questions.
+async def _eyes() -> None:
+    root = Path(tempfile.mkdtemp(prefix="escriba-choose-"))
+    try:
+        person = Person("demo-eyes-0001", root=root,
+                        identity={"username": "dani"})
+        ws = person.ws
+        ident = demo.open_demo(ws)
+        # MORE CAPTURES THAN ARE KEPT, because that is the only shape
+        # where choosing means anything: `KEEP` of them survive and the
+        # rest do not.
+        for n in range(choosing.KEEP + 2):
+            demo.frame(ws, ident, png(800, 600), n * 2000)
+
+        calls: list = []
+        #: The two dullest are the first two; everything else scores
+        #: above them, so the selection is "all but those".
+        scores = {f"F{n:04d}": 9.0 for n in range(1, choosing.KEEP + 3)}
+        scores["F0001"], scores["F0002"] = 1.0, 2.0
+
+        class Answer:
+            ok, success = True, True
+            result = {"answers": {k: {"type": "score", "value": v}
+                                  for k, v in scores.items()}}
+
+        class Client:
+            async def invoke_plugin_tool(self, plugin, tool, args, **kw):
+                calls.append((plugin, tool, args, kw))
+                return Answer()
+
+        person._scribe = type("S", (), {"client": Client()})()
+        kept = await person._choose(ident)
+
+        check("one call for a demonstration this size", len(calls), 1)
+        plugin, tool, args, kw = calls[0]
+        check("it is the decision plugin's own tool", (plugin, tool),
+              ("decision", "decide"))
+        check("run under the escriba's own profile", kw["profile"], "escriba")
+        # THE WHOLE POINT.  Without `images` the decision model scores
+        # file names, and answers anyway.
+        check("every capture is SENT, not described", len(args["images"]),
+              choosing.KEEP + 2)
+        check("one question each", len(args["questions"]), choosing.KEEP + 2)
+        check("and the paths are the ones the index wrote",
+              [i["path"] for i in args["images"]][:3],
+              [f"demo/{ident}/000{n}.png" for n in (1, 2, 3)])
+
+        # THE PERMISSION THE DRIVER NOW ANSWERS, and only this one.
+        approve = kw["on_permission"]
+        check("yes to decide",
+              approve(type("E", (), {"tool_name": "decide"})()), "y")
+        check("and no to anything else",
+              approve(type("E", (), {"tool_name": "cli"})()), "n")
+
+        # BY SCORE TO CHOOSE, BY TIME TO READ.
+        check("the dullest are dropped", [f["n"] for f in kept],
+              list(range(3, choosing.KEEP + 3)))
+        check("and what is kept is in the order it happened",
+              [f["at_ms"] for f in kept][:2], [4000, 6000])
+        check("written where the documenter's prefetch will look",
+              [f["n"] for f in choosing.chosen(ws, ident)],
+              list(range(3, choosing.KEEP + 3)))
+        row = [r for r in person.journal.rows() if r["kind"] == "demo.chosen"]
+        check("with a row saying how many were looked at", row[0]["scored"],
+              choosing.KEEP + 2)
+        check("and how many survived", row[0]["kept"], choosing.KEEP)
+
+        # A CALL THAT DID NOT RUN AND A CALL THAT WAS REFUSED ARE NOT THE
+        # SAME FAILURE, and neither may pass for a selection.
+        class Refused(Answer):
+            success = False
+            result = {"error": "denied"}
+
+        class NoClient(Client):
+            async def invoke_plugin_tool(self, *a, **kw):
+                return Refused()
+
+        person._scribe = type("S", (), {"client": NoClient()})()
+        try:
+            await person._choose(ident)
+            check("a refused call is not a selection", True, False)
+        except RuntimeError as exc:
+            check("a refused call says so", "refused" in str(exc), True)
+    finally:
+        shutil.rmtree(root)
+
+
+asyncio.run(_eyes())
 
 # ------------------------------------------------ who chooses the frames
 #
@@ -475,7 +595,6 @@ _e_persona, _d_persona = _agent("escriba"), _agent("documentalista")
 # ---- the scribe chooses
 check("the scribe binds exactly one decision model",
       sorted(_escriba.get("decision_models") or {}), ["vista"])
-check("and names it in its own instructions", "`vista`" in _e_persona, True)
 check("decide is preloaded, not left to discovery",
       "decision(mode:preload, tools:[decide])" in " ".join(_escriba["plugins"]), True)
 
@@ -487,40 +606,58 @@ _allowed = (((_escriba.get("plugin_configs") or {}).get("permission") or {})
             .get("policy") or {}).get("whitelist", {}).get("tools") or []
 check("and the scribe's whitelist lets it through", "decide" in _allowed, True)
 
-# ---- the documentalista does not
+# ---- and no longer chooses
+#
+# THE PROCEDURE LEFT THE PROSE.  It used to be five numbered steps here,
+# and the legs below used to read them back out of the persona -- which
+# asserted that the instructions SAID the right numbers, never that
+# anything did them.  They are in `choosing` now, so they are checked
+# against the SDK's own limits a few lines down, where a drift raises
+# instead of reading fine.
+check("the scribe is told the document is not its to commission",
+      "NO lo encargas tú" in _e_persona, True)
+check("and not to spawn a second one",
+      "encargarás un segundo documento" in _e_persona, True)
+check("what is left to it is the sentence",
+      "Lo que sí es tuyo es la frase" in _e_persona, True)
+check("the index is no longer its to read",
+      "frames.jsonl" in _e_persona, False)
+
+# ---- the documentalista does not choose either
 check("the documentalista binds no decision model",
       _documentalista.get("decision_models"), None)
 _d_allowed = (((_documentalista.get("plugin_configs") or {}).get("permission") or {})
               .get("policy") or {}).get("whitelist", {}).get("tools") or []
 check("and cannot call decide", "decide" in _d_allowed, False)
 check("its instructions tell it to OPEN what it is handed",
-      "Ábrelas todas" in _d_persona, True)
+      "Ábrelas todas" in _d_persona or "Ábrelas TODAS" in _d_persona, True)
 check("and to link what it describes, which is what gets checked",
       "Enlaza cada captura" in _d_persona, True)
+# THE CAPTURES ARRIVE BEFORE ITS FIRST TURN, mandatory, so a commission
+# whose selection cannot be read aborts session preparation instead of
+# starting an agent with nothing to look at.
+check("and its captures are expanded into the prompt, not written into it",
+      "{{!py:scripts/capturas.py}}" in _d_persona, True)
 
-# ---- the two numbers the scribe must not invent
+# ---- the two numbers that must not drift from the call that takes them
 #
-# A `score` takes 2..10 levels: the first cut said "de 0 a 10" -- eleven --
-# and every call came back "score takes 2..10 levels, got 11". And nothing
-# told it to pass `images`, so it called decide with `images=0`: the ledger
-# recorded 8 questions on 907 input tokens, a text-only call, and Jev
-# scored the frames from their FILE NAMES. With the images attached the
-# same 8 questions cost 14,500.
+# A `score` takes 2..10 levels: the first cut asked for eleven and every
+# call came back "score takes 2..10 levels, got 11". And a call with no
+# images scores file names and answers anyway: the ledger recorded 8
+# questions on 907 input tokens where the same 8 with pictures cost
+# 14,500.  Both were prose in a persona and both shipped wrong; they are
+# constants now, so this reads them against the SDK's own.
 from jaato_sdk.plugins.model_provider.decisions import (  # noqa: E402
     MAX_IMAGES, MAX_SCORE_LEVELS, MIN_SCORE_LEVELS)
 
 check("the SDK still allows 64 images a call", MAX_IMAGES, 64)
 check("and 2..10 score levels", (MIN_SCORE_LEVELS, MAX_SCORE_LEVELS), (2, 10))
-check("the scribe batches by the question limit, not the image one",
-      "32 capturas" in _e_persona, True)
-check("asks for a legal number of levels",
-      "1 a 10" in _e_persona and "de 0 a 10" not in _e_persona, True)
-check("attaches the images rather than only naming them",
-      "`images`" in _e_persona and '"path"' in _e_persona, True)
-check("says what an imageless call costs",
-      "Sin `images` no se ve nada" in _e_persona, True)
-check("and caps what reaches the documentalista",
-      "12 mejores" in _e_persona, True)
+check("a batch fits the images a call takes",
+      choosing.BATCH <= MAX_IMAGES, True)
+check("and the scale is one the call will accept",
+      MIN_SCORE_LEVELS <= len(choosing.LEVELS) <= MAX_SCORE_LEVELS, True)
+check("the documenter is given fewer captures than one call scores",
+      choosing.KEEP < choosing.BATCH, True)
 
 # ------------------------------------------- the narration, while it runs
 #

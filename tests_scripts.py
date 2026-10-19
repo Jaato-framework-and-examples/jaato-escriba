@@ -563,5 +563,72 @@ check("an absolute path and a relative one are one capture",
           {"name": "F0001", "path": f"/home/x/workspace/{DEMO}/0001.png"}]},
           {"answers": []}), _task(1)), [])
 
+# ------------------------------------------------ scripts/capturas.py
+#
+# THE GATE, AND IT IS THE FRAMEWORK'S RATHER THAN OURS.  The documenter's
+# persona expands this with the MANDATORY `{{!py:...}}` form, so a
+# `render` that raises aborts session preparation -- which is the only
+# way to stop an agent starting with no captures and describing screens
+# it never opened.  Everything below is about which cases raise.
+import types                                              # noqa: E402
+
+PRE = HERE / "template/.jaato/scripts/capturas.py"
+_pspec = importlib.util.spec_from_file_location("capturas_prefetch", PRE)
+prefetch = importlib.util.module_from_spec(_pspec)
+_pspec.loader.exec_module(prefetch)
+
+
+def _ctx(ws, **params):
+    return types.SimpleNamespace(agent_params=params, workspace_path=str(ws))
+
+
+def _selection(ws, chosen, scored=29):
+    (ws / "demo" / "d1").mkdir(parents=True, exist_ok=True)
+    (ws / "demo" / "d1" / "elegidas.json").write_text(json.dumps(
+        {"id": "d1", "scored": scored, "chosen": chosen}), encoding="utf-8")
+    return "demo/d1/elegidas.json"
+
+
+_pre_ws = Path(tempfile.mkdtemp(prefix="prefetch-"))
+try:
+    # NOT EVERY DOCUMENT IS A DEMONSTRATION.  Most commissions are a
+    # topic and have no captures, so the absence of the PARAMETER is the
+    # ordinary case and says nothing at all.
+    check("a commission with no captures embeds nothing",
+          prefetch.render(_ctx(_pre_ws), []), "")
+
+    named = _selection(_pre_ws, [
+        {"n": 3, "path": "demo/d1/0003.png", "at_ms": 6000, "score": 9.1},
+        {"n": 9, "path": "demo/d1/0009.png", "at_ms": 125000, "score": 8.4}])
+    text = prefetch.render(_ctx(_pre_ws, capturas=named), [])
+    check("the paths reach the prompt without passing through a sentence",
+          [l for l in text.splitlines() if l.startswith(("1.", "2."))],
+          ["1. `demo/d1/0003.png` (00:06)", "2. `demo/d1/0009.png` (02:05)"])
+    # HOW MANY WERE LOOKED AT, because "twelve of twenty-nine" and
+    # "twelve because there were twelve" are different documents.
+    check("and how many they were chosen from", "2 de las 29" in text, True)
+
+    # A COMMISSION THAT SAYS IT HAS A SELECTION AND DOES NOT is the exact
+    # failure this exists to stop, so it raises rather than embedding
+    # nothing: an empty expansion would start the documenter blind.
+    try:
+        prefetch.render(_ctx(_pre_ws, capturas="demo/nope/elegidas.json"), [])
+        check("a missing selection aborts the session", True, False)
+    except OSError:
+        check("a missing selection aborts the session", True, True)
+
+    # AND SO DOES ONE THAT CHOSE NOTHING.  A file that parses and holds
+    # no captures is the same agent with the same nothing to look at.
+    empty = _selection(_pre_ws, [])
+    try:
+        prefetch.render(_ctx(_pre_ws, capturas=empty), [])
+        check("a selection of nothing aborts it too", True, False)
+    except RuntimeError as exc:
+        check("a selection of nothing aborts it too, and says so",
+              "sin capturas" in str(exc), True)
+finally:
+    shutil.rmtree(_pre_ws)
+
+
 print("scripts OK" if not fail else f"{fail} failure(s)")
 sys.exit(1 if fail else 0)
