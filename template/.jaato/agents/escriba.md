@@ -249,13 +249,15 @@ cualquier otro documento. Pero antes tienes que **elegir las capturas**,
 porque el `documentalista` no las elige: las recibe por su nombre.
 
 1. Lee el índice, «<carpeta>/frames.jsonl»: una línea por captura, con
-   su nombre de fichero y su milisegundo.
+   su campo `path` —el camino entero, ya montado—, su nombre de fichero
+   y su milisegundo.
 2. Puntúalas con `decide`, modelo `vista`, por lotes de **32 capturas
    como mucho** (el límite es 32 preguntas y 64 imágenes por llamada).
    En cada llamada va el array `images` con una entrada por captura,
-   `{"name": "F0001", "path": "<carpeta>/0001.png"}` —el camino, nunca
-   los bytes— y en el `state` te refieres a cada una con
-   `{{image:F0001}}`. **Sin `images` no se ve nada**: el modelo puntúa a
+   `{"name": "F0001", "path": "<el campo `path` de esa línea, copiado
+   tal cual>"}` —el camino, nunca los bytes—: **no lo construyas tú**,
+   está escrito en el índice. Y en el `state` te refieres a cada una
+   con `{{image:F0001}}`. **Sin `images` no se ve nada**: el modelo puntúa a
    ciegas por el nombre del fichero y te contesta igual, con una
    seguridad que no ha ganado.
 3. Una pregunta `score` por captura, con `levels` de **1 a 10**: diez

@@ -99,6 +99,15 @@ try:
     # POST arrived is the frame's time plus the upload.
     row = demo.frame(ws, ident, png(1568, 882), 2000)
     check("the server numbers the frame", row["file"], "0001.png")
+    # AND WRITES THE WHOLE PATH DOWN, so that reading the index is all
+    # anybody has to do to name a capture.  Workspace-relative, like
+    # the manifest's `root` and `staging`'s `path`: the session resolves
+    # it against ITS workspace, and an absolute path would be this
+    # host's rather than the runner's.
+    check("and writes the path nobody should have to build",
+          row["path"], f"demo/{ident}/0001.png")
+    check("which is where the file actually is",
+          (ws / row["path"]).is_file(), True)
     check("the page's offset is kept", row["at_ms"], 2000)
     check("the size is measured", row["w"], 1568)
     demo.frame(ws, ident, png(800, 600), 4000)

@@ -212,7 +212,20 @@ def frame(workspace: Path, ident: str, data: bytes, at_ms: int) -> Dict[str, Any
     n = count + 1
     name = f"{n:04d}.{'png' if info.format == 'png' else 'jpg'}"
     (folder / name).write_bytes(data)
-    row = {"n": n, "file": name, "at_ms": int(at_ms), "bytes": len(data),
+    # `path` IS THE WHOLE PATH, and it is here so that nobody has to
+    # build it.  The escriba reads this index and then names each
+    # capture to `decide` as {"name": ..., "path": ...}; until now the
+    # index carried the bare filename and the folder arrived in a
+    # different sentence of a different prompt, so the model had to join
+    # two strings from two places.  MEASURED 2026-10-19, session
+    # 20261019_101728: it read this file, invented a `frames/`
+    # subdirectory that has never existed -- almost certainly out of
+    # this file's own NAME, which was the word sitting in the path it
+    # had just read successfully -- and then asked thirty times for
+    # files that were not there.  A string copied is a string that
+    # cannot be mis-joined.
+    row = {"n": n, "file": name, "path": (ROOT / ident / name).as_posix(),
+           "at_ms": int(at_ms), "bytes": len(data),
            "w": info.width, "h": info.height}
     with (folder / FRAMES).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
