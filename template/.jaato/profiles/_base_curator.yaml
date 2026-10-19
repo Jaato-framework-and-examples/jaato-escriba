@@ -139,3 +139,27 @@ apparmor_fragments: []
 # leak and a trace if it is ever switched on.
 env:
   JAATO_TELEMETRY_REDACT_CONTENT: "true"
+
+# WHAT THIS DECLARES ABOUT ITSELF (Regulation (EU) 2024/1689).
+#
+# `interacts_with_persons: false` IS A DETERMINATION AND NOT A BLANK.
+# The framework's own words for it: "it is a component another system
+# drives".  That is exactly what this is -- it is run by a sweep over what is already on disk -- so no Art. 50(1)
+# announcement is owed here and none is emitted.  Absent would mean
+# something different and worse: nothing would have decided which of the
+# two it is, which is what `validate` reports as `disclosure_absent`.
+#
+# The provider and the risk class are the SAME SYSTEM's, because this is
+# a part of it rather than a system of its own.  `_base_escriba.yaml`
+# carries the reasoning for `limited` and is the only one of the four
+# that declares it talks to anybody.
+regulatory:
+  intended_purpose: >
+    Curates what the second brain recorded: it reads the raw memories
+    and writes the curated store the escriba retrieves from.  It is
+    run by a scheduled sweep and never speaks to the person.
+  risk_class: limited
+  interacts_with_persons: false
+  provider:
+    name: DarumaLabs S.L.
+    contact: darumalabs@darumalabs.ai

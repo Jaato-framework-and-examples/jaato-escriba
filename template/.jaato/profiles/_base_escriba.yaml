@@ -488,6 +488,54 @@ apparmor_fragments: []
 # the ledger exists BEFORE anything declares `interacts_with_persons`,
 # or the person is told and the telling is not recorded.
 #
+# WHAT THIS APPLICATION DECLARES ABOUT ITSELF (Regulation (EU) 2024/1689).
+#
+# DECLARED, NEVER INFERRED.  Absent is UNDECLARED and not `minimal`:
+# whether a use is high-risk is the provider's own determination (Art.
+# 6(4)), and until this block existed the framework correctly refused to
+# make a legal statement on anybody's behalf.  What that cost is
+# measurable: `announcement_for` returned `not_declared`, the create path
+# emitted nothing and recorded nothing, and every person who has ever
+# used this was never told by the system's DESIGN what they were talking
+# to.  Only the model's own instruction piece covered it, and that piece
+# only answers a person who thinks to ask.
+#
+# `interacts_with_persons: true` IS THE ONE THAT ACTS.  It arms the Art.
+# 50(1) first-interaction announcement and its `announcement` ledger row.
+# This is the only profile of the four that declares it true, because it
+# is the only one a person speaks to; the other three are components this
+# one drives and say so.
+#
+# `risk_class: limited` is the determination, not a default.  No Annex
+# III use is present -- no biometrics, no employment, credit or
+# education decisions, no scoring of people, no profiling -- so it is
+# not high.  `minimal` would contradict the line above it: Art. 50's
+# transparency duties are what the limited band IS, and a system that
+# declares it talks to people cannot also declare that nothing applies.
+#
+# `disclosure_text` IS IN THE PROFILE AND NOT IN `i18n/`, which breaks
+# this project's rule that user-facing text comes from the catalogue.
+# Forced rather than chosen: the `announcement` record quotes this string
+# as the text AS DELIVERED, so rendering a translation of our own would
+# make the ledger a statement about a sentence nobody was shown.  One
+# language until jaato#1758 lets the text vary by the locale the record
+# already binds.
+regulatory:
+  intended_purpose: >
+    A personal second brain.  It listens to one named person,
+    transcribes what they say, remembers it, retrieves it on request,
+    and writes documents and diagrams from it.  One workspace per
+    person, isolated by AppArmor.  It does not profile, score or decide
+    anything about anybody.
+  risk_class: limited
+  interacts_with_persons: true
+  provider:
+    name: DarumaLabs S.L.
+    contact: darumalabs@darumalabs.ai
+  disclosure_text: >-
+    Estás hablando con un sistema de IA operado por DarumaLabs S.L., no
+    con una persona.
+
 # Workspace-relative, so it lands in THIS person's tree. The default
 # would interleave every person on the host into one file.
 trace:
