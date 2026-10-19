@@ -409,6 +409,16 @@ async def _commission() -> None:
               False)
         check("the one thing it must produce is the sentence",
               "`anotado`" in said[0], True)
+        # AND THE SENTENCE IS ABOUT THE DEMONSTRATION, NOT THE DOCUMENT.
+        # `wrote_something` refuses an `anotado` that announces a
+        # document when no `spawn_subagent` ran -- for a good reason,
+        # since that was a person waiting for a file nobody was writing.
+        # The driver commissions this one, so the escriba never spawns,
+        # so an `anotado` mentioning the document would be refused on
+        # every demonstration.  The brief it must write is what the
+        # recording SHOWS; the document is something it says out loud.
+        check("and the note is told to leave the document out",
+              "no hables del documento" in said[0], True)
 
         # AND THAT SENTENCE IS WHAT THE DOCUMENT IS COMMISSIONED WITH.
         # It is read off the turn's own payload rather than asked for in

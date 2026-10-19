@@ -245,7 +245,8 @@ nav .note code{font-family:var(--mono)}
    the `wait` colour and at about a third of the width. It is the second
    thing this tray does, and it should read as second without reading as
    an afterthought. */
-.demo{padding:var(--space-4) var(--space-5);border:1px solid var(--wait);border-radius:12px;
+.demo{display:flex;align-items:center;justify-content:center;gap:var(--space-3);
+      padding:var(--space-4) var(--space-5);border:1px solid var(--wait);border-radius:12px;
       background:var(--wait);color:var(--on-strong);cursor:pointer;font-weight:600;
       font-size:clamp(13px,1.1vw,16px);line-height:1.15;text-align:center;
       width:clamp(130px,22vw,230px);user-select:none}
@@ -506,7 +507,15 @@ aside{background:var(--panel);border-left:1px solid var(--line);display:grid;
             <span class="sub" id="ptt-sub"></span></span>
           <span class="time" id="ptt-time"></span>
         </button>
-        <button class="demo" id="demo-btn"></button>
+        <button class="demo" id="demo-btn">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="square" aria-hidden="true">
+            <rect x="2" y="4" width="20" height="13" rx="1"></rect>
+            <path d="M8 21h8"></path><path d="M12 17v4"></path>
+            <circle cx="12" cy="10.5" r="2.5" fill="currentColor" stroke="none"></circle>
+          </svg>
+          <span class="t" id="demo-label"></span>
+        </button>
         </div>
         <div class="demo-note" id="demo-note"></div>
       </div>
@@ -1631,7 +1640,16 @@ function demoFace() {
   const note = $("demo-note");
   if (!b || !note) return;
   const on = !!S.demo.id;
-  b.textContent = on ? tx("demo.recording", { n: S.demo.frames }) : tx("demo.start");
+  // THE LABEL, NOT THE BUTTON: the icon is markup and setting
+  // `textContent` on the button would delete it.  The microphone has
+  // the same split for the same reason.
+  const label = $("demo-label");
+  if (label) {
+    label.textContent = on ? tx("demo.recording", { n: S.demo.frames })
+                           : tx("demo.start");
+  } else {
+    b.textContent = on ? tx("demo.recording", { n: S.demo.frames }) : tx("demo.start");
+  }
   b.className = on ? "demo on" : "demo";
   // A BUTTON THAT CANNOT WORK IS DISABLED, which is `pttFace`'s rule for
   // the microphone: the reason is shown instead of being discovered by
