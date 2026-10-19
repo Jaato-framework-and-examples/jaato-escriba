@@ -2647,7 +2647,26 @@ function onSpeech(f) {
   // key is up, and without this you would hear your own tail.
   if (f.by_id && f.by_id === S.selfId) return;
   if (S.recording || !VOICE.ctx || VOICE.ctx.state !== "running") return;
-  if (f.stream !== VOICE.stream) { hush(); VOICE.stream = f.stream; }
+  // A NEW STREAM AFTER A CLEAN ENDING IS THE NEXT THING SAID, not a
+  // replacement for the last.  One turn can speak several times — the
+  // model answers, calls a tool, answers again — and each utterance is
+  // its own stream.  `final` sets `VOICE.stream = null` and deliberately
+  // leaves `VOICE.at` where it is, so the next one is scheduled AFTER
+  // what is still queued and the two play in order.
+  //
+  // MEASURED on a live page 2026-10-19 16:41: three replies in one turn,
+  // each cutting the one before it off mid-sentence.  Frames arrive far
+  // faster than real time, so utterance 1 was still scheduled in the
+  // future when utterance 2's first frame called `hush()` and stopped
+  // it.  The person heard three fragments.
+  //
+  // CUTTING IS STILL RIGHT when the previous stream never ended — a turn
+  // that timed out, a session that went away — because what is queued
+  // then is answering a question nobody is waiting on any more.
+  if (f.stream !== VOICE.stream) {
+    if (VOICE.stream !== null) hush();
+    VOICE.stream = f.stream;
+  }
   const ctx = VOICE.ctx;
   const pcm = samples(f.pcm);
   // The buffer keeps the stream's own rate; a context running at another

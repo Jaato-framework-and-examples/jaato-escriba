@@ -145,9 +145,14 @@ const sandbox = {
     }
     createBufferSource() {
       const ctx = this;
+      // `stopped` is recorded, not swallowed: whether a scheduled piece
+      // was cut before it sounded is the difference between hearing a
+      // reply and hearing its first half.
+      const row = { at: null, buffer: null, stopped: false };
       return { buffer: null, connect() {},
-               start(at) { ctx.started.push({ at, buffer: this.buffer }); },
-               stop() {} };
+               start(at) { row.at = at; row.buffer = this.buffer;
+                           ctx.started.push(row); },
+               stop() { row.stopped = true; } };
     }
   },
   setTimeout, clearTimeout, setInterval, clearInterval,
@@ -676,6 +681,40 @@ check("whole samples, one channel", audio.started[0].buffer.length, 12000);
 
 T.onSpeech({ stream: "s2", final: true, audio: "sha-heard" });
 check("what sounded is recorded as heard", T.S.sounded.has("sha-heard"), true);
+
+// A SECOND UTTERANCE IN THE SAME TURN QUEUES; IT DOES NOT CUT.
+//
+// One turn can speak several times — the model answers, calls a tool,
+// answers again — and each utterance is its own stream.  MEASURED on a
+// live page 2026-10-19 16:41: three replies in one turn, each cutting
+// the one before off mid-sentence, because a new stream id hushed
+// whatever was scheduled.  Frames arrive far faster than real time, so
+// the previous utterance was still queued in the FUTURE when the next
+// one stopped it.
+{
+  const before = audio.started.length;
+  T.onSpeech({ stream: "s3", rate: 24000, channels: 1, pcm: piece(12000) });
+  check("the next utterance is scheduled, not dropped",
+        audio.started.length, before + 1);
+  check("and starts where the last one ended, rather than at zero",
+        audio.started[before].at, 1.0);
+  check("nothing already queued was stopped",
+        audio.started.slice(0, before).some((s) => s.stopped), false);
+}
+
+// CUTTING IS STILL RIGHT when the previous stream never ENDED: a turn
+// that timed out or a session that went away leaves audio answering a
+// question nobody is waiting on.
+{
+  T.onSpeech({ stream: "s4", rate: 24000, channels: 1, pcm: piece(12000) });
+  const live = audio.started.length;
+  T.onSpeech({ stream: "s5", rate: 24000, channels: 1, pcm: piece(12000) });
+  check("an unfinished stream is cut off by the next",
+        audio.started[live - 1].stopped, true);
+  check("and the new one starts from now",
+        audio.started[audio.started.length - 1].at, 0);
+}
+T.onSpeech({ stream: "s5", final: true, audio: "sha-last" });
 
 // AND THEREFORE NOT PLAYED AGAIN. The file arrives named a moment later;
 // playing it then would repeat the reply the person just heard.
