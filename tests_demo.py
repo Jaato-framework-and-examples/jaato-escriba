@@ -340,6 +340,7 @@ import demo_live as _live                                 # noqa: E402
 import journal as _journal                                # noqa: E402
 import backchannel as _backchannel                        # noqa: E402
 import choosing                                           # noqa: E402
+import transcribe as _transcribe                          # noqa: E402
 from escriba_web import hub as _hub                        # noqa: E402
 
 MANIFEST = {"id": "20261017_223855_438804", "frames": 49,
@@ -574,6 +575,64 @@ async def _eyes() -> None:
                   "budget_exhausted" in str(exc), True)
         finally:
             _sdk.IPCClient.session = real_session
+
+        # ---- THREE NARRATION STATES, AND THEY ARE NOT THE SAME --------
+        #
+        # The documenter is a TEXT-AND-VISION model: it cannot hear.
+        # Naming it the `.webm` was naming a file it has no way to open,
+        # so everything the person explained while recording reached it
+        # as nothing.  MEASURED 2026-10-19: the first document this
+        # system produced had twelve captures and no prose about any of
+        # them, because there was nothing to write prose from.
+        seen: list = []
+
+        class Ok(Writer):
+            async def complete(self, prompt, *a, **kw):
+                seen.append(prompt)
+                return {"raiz": "docs/x/index.md"}
+
+        _sdk.IPCClient.session = staticmethod(lambda **kw: Ok())
+        base = {"id": ident, "frames": 3, "root": f"demo/{ident}"}
+        try:
+            await person._commission(dict(base, audio="n.webm"), "b", kept,
+                                     "demo/x/n.txt")
+            await person._commission(dict(base, audio="n.webm"), "b", kept, "")
+            await person._commission(dict(base, audio=""), "b", kept, "")
+        finally:
+            _sdk.IPCClient.session = real_session
+        check("a transcript is named as a file it can read",
+              "demo/x/n.txt" in seen[0], True)
+        # AND NEITHER SIDE IS ALIGNED FOR IT.  Which words explain a
+        # screen is a judgement -- a sentence often lands seconds after
+        # the frame it explains -- so both carry a clock and the model
+        # does the matching.  A window of N seconds would be a constant
+        # fitted to one speaker, which is the mistake BACKCHANNEL.md
+        # records twice.
+        check("and both clocks are handed over, not one alignment",
+              "su momento" in seen[0], True)
+        check("narration it cannot read is said to be unreadable",
+              "no puedes oírla" in seen[1], True)
+        check("so it is told not to claim what was explained",
+              "no lo sabes" in seen[1], True)
+        check("and silence is said to be silence",
+              "sin micrófono" in seen[2], True)
+
+        # NOTHING TO TRANSCRIBE IS NOT A FAILURE.  A demonstration with
+        # the microphone refused, and a deployment that named no
+        # `--transcribe` model, both reach here with nothing to read.
+        person.scribe = None
+        check("no transcriber, no transcript",
+              person._narrate(dict(base, audio="n.webm")), "")
+        check("no narration, no transcript",
+              person._narrate(dict(base, audio="")), "")
+
+        # The timed rendering itself: a clock on every line, and a piece
+        # the model returned empty is not a line.
+        check("the transcript carries a clock per line",
+              _transcribe.timeline([(0.0, 2.0, "Hola"),
+                                    (62.5, 65.0, "y aquí las fuentes"),
+                                    (70.0, 71.0, "")]),
+              "[00:00] Hola\n[01:02] y aquí las fuentes")
 
         # A CALL THAT DID NOT RUN AND A CALL THAT WAS REFUSED ARE NOT THE
         # SAME FAILURE, and neither may pass for a selection.

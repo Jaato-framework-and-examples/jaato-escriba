@@ -39,6 +39,45 @@ def text_path(recording: Path) -> Path:
     return recording.with_suffix(".txt")
 
 
+def _decode(recording: Path):
+    """16 kHz mono float32 from whatever container ffmpeg can open.
+
+    ONE DECODER FOR BOTH READERS.  `Transcriber.transcribe` wants the
+    text and `Transcriber.timed` wants it in pieces, and they must be
+    reading the same bytes: a second ffmpeg invocation elsewhere is a
+    second place for the sample rate to drift, and the model's 16 kHz is
+    not negotiable.
+    """
+    import numpy as np
+
+    raw = subprocess.run(
+        [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-i", str(recording),
+         "-f", "f32le", "-ac", "1", "-ar", "16000", "pipe:1"],
+        capture_output=True)
+    if raw.returncode != 0:
+        raise Unavailable(
+            f"ffmpeg could not decode {recording.name}: "
+            f"{raw.stderr.decode('utf-8', 'replace')[:200]}")
+    return np.frombuffer(raw.stdout, dtype=np.float32)
+
+
+def timeline(pieces) -> str:
+    """Timed lines, one per piece: `[mm:ss] what was said`.
+
+    THE TIMES ARE THE WHOLE POINT and the reason this is not just the
+    transcript.  A demonstration's captures each carry the moment they
+    were taken, and what explains a screen is sometimes said twenty
+    seconds after it appears.  So nothing here decides which words go
+    with which capture: both sides carry a clock, and the reader -- a
+    model, reading prose -- does the matching, because that is a
+    judgement and not arithmetic.  A window of N seconds either side
+    would be a constant fitted to one recording of one speaker, which is
+    the mistake `BACKCHANNEL.md` records twice.
+    """
+    return "\n".join(f"[{int(start) // 60:02d}:{int(start) % 60:02d}] {text}"
+                      for start, _end, text in pieces if text)
+
+
 def _ffmpeg() -> str:
     exe = shutil.which("ffmpeg")
     if exe is None:
@@ -99,17 +138,7 @@ class Transcriber:
         fragile path.  16 kHz mono float32 is what the model wants, and
         what the recording already is.
         """
-        import numpy as np
-
-        raw = subprocess.run(
-            [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-i", str(recording),
-             "-f", "f32le", "-ac", "1", "-ar", "16000", "pipe:1"],
-            capture_output=True)
-        if raw.returncode != 0:
-            raise Unavailable(
-                f"ffmpeg could not decode {recording.name}: "
-                f"{raw.stderr.decode('utf-8', 'replace')[:200]}")
-        samples = np.frombuffer(raw.stdout, dtype=np.float32)
+        samples = _decode(recording)
         if not samples.size:
             return ""
         # PER CALL, not per process.  One Transcriber is shared by every
@@ -145,6 +174,25 @@ class Transcriber:
         got, _info = self._load().transcribe(
             samples, language=language or self.language, vad_filter=False,
             initial_prompt=prime)
+        return [(s.start, s.end, s.text.strip()) for s in got]
+
+    def timed(self, recording: Path, language: Optional[str] = None) -> list:
+        """A whole recording in pieces, each with the seconds it spans.
+
+        `segments` TAKES SAMPLES because the live narration never becomes
+        a file -- it arrives as PCM in half-second pieces and is gone.
+        This takes the file, because a demonstration's narration IS one
+        and arrives whole at the close.
+
+        `vad_filter=True`, like `transcribe` and unlike `segments`: a
+        listener hunting a sentence end must see every pause, and a
+        reader wanting the words is better off without the silences.
+        """
+        samples = _decode(recording)
+        if not samples.size:
+            return []
+        got, _info = self._load().transcribe(
+            samples, language=language or self.language, vad_filter=True)
         return [(s.start, s.end, s.text.strip()) for s in got]
 
     def write(self, recording: Path, language: Optional[str] = None) -> Optional[str]:

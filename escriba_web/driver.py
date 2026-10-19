@@ -2042,7 +2042,19 @@ class Person:
             await self._tell(self.say("agent.demo_unchosen"))
             return
         try:
-            await self._commission(manifest, brief, chosen)
+            said = await asyncio.to_thread(self._narrate, manifest)
+        except Exception as exc:                          # noqa: BLE001
+            # A NARRATION THAT WILL NOT DECODE IS NOT A LOST DOCUMENT.
+            # The captures are chosen and a demonstration is a procedure
+            # you can see; what is lost is the words, and the documenter
+            # is told that rather than handed a path to nothing.
+            self.journal.note("demo.unheard", ident=ident,
+                              error=f"{type(exc).__name__}: {exc}"[:200])
+            log.error("transcribing the narration of %s failed", ident,
+                      exc_info=exc)
+            said = ""
+        try:
+            await self._commission(manifest, brief, chosen, said)
         except Exception as exc:                          # noqa: BLE001
             self.journal.note("demo.unwritten", ident=ident,
                               error=f"{type(exc).__name__}: {exc}"[:200])
@@ -2100,8 +2112,45 @@ class Person:
                           best=round(max(f["score"] for f in kept), 2))
         return kept
 
+    def _narrate(self, manifest: Dict[str, Any]) -> str:
+        """What was said while recording, as timed text.  Off-thread.
+
+        THE DOCUMENTER CANNOT HEAR.  It is a text-and-vision model, and
+        until now the only thing it was told about the narration was
+        where the `.webm` lived -- a file it has no way to open.  So
+        everything the person explained while recording existed as bytes
+        on disk and as nothing else: `transcribe.pending` sweeps
+        `audio/<session>/in_*.mp3`, the presses, and has never looked at
+        a demonstration.  MEASURED 2026-10-19: the first document this
+        system produced had twelve captures and no prose about any of
+        them, because there was nothing to write prose FROM.
+
+        WRITTEN ONCE AND KEPT, which is `Transcriber.write`'s rule for
+        the same reason: re-transcribing the same bytes with a different
+        model would silently change what the record says a person said.
+
+        Returns the path the documenter is given, workspace-relative, or
+        "" when there is nothing to read -- no narration, or no
+        transcriber configured, which `--transcribe` decides and which
+        is not something to paper over with an unreadable `.webm`.
+        """
+        if not manifest["audio"] or self.scribe is None:
+            return ""
+        folder = _demo.folder(self.ws, manifest["id"])
+        recording = folder / manifest["audio"]
+        target = _transcribe.text_path(recording)
+        if not target.exists():
+            pieces = _transcribe.Transcriber(
+                self.scribe, language=self.locale).timed(recording)
+            if not pieces:
+                return ""
+            target.write_text(_transcribe.timeline(pieces) + "\n",
+                              encoding="utf-8")
+        return target.relative_to(self.ws).as_posix()
+
     async def _commission(self, manifest: Dict[str, Any], brief: str,
-                          chosen: List[Dict[str, Any]]) -> None:
+                          chosen: List[Dict[str, Any]],
+                          said: str = "") -> None:
         """The documenter, as a session of this driver's own.
 
         A SIBLING AND NOT A SUBAGENT, which is what `enrichment` already
@@ -2124,10 +2173,17 @@ class Person:
         from jaato_sdk import IPCClient
 
         named = (_demo.ROOT / manifest["id"] / _choosing.CHOSEN).as_posix()
+        # THREE STATES AND THEY ARE NOT THE SAME.  No narration at all
+        # is a demonstration recorded in silence.  Narration with a
+        # transcript is the one case where the documenter can say what
+        # was being explained.  Narration WITHOUT one -- no transcriber
+        # configured, or a decode that failed -- is words that exist and
+        # cannot be read, and saying so is better than naming a file
+        # nothing can open, which is what this did until today.
         narration = (
-            self.say("agent.demo_narration", root=manifest["root"],
-                     audio=manifest["audio"])
-            if manifest["audio"] else self.say("agent.demo_no_narration"))
+            self.say("agent.demo_narration", said=said) if said
+            else self.say("agent.demo_narration_mute") if manifest["audio"]
+            else self.say("agent.demo_no_narration"))
         self.journal.note("demo.commission", ident=manifest["id"],
                           captures=len(chosen), brief=brief[:120])
         async with IPCClient.session(
