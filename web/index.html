@@ -198,6 +198,16 @@ nav .note code{font-family:var(--mono)}
 .tag.bad{background:var(--bad-soft);color:var(--bad);font-weight:500}
 .tag.accent{background:var(--accent-soft);color:var(--accent-ink);font-weight:500}
 .tag.neutral{background:var(--chip);color:var(--ink-2)}
+.diagrama{display:flex;flex-direction:column;gap:var(--space-2);padding-left:var(--space-4);
+          border-left:3px solid var(--line-strong)}
+.diagrama .dtitle{font-size:13px;color:var(--ink-2);font-weight:600}
+.diagrama .draw{overflow-x:auto;max-width:100%}
+.diagrama .draw svg{max-width:100%;height:auto}
+/* The source, shown until a drawing exists and left when none can be
+   made.  It is what the escriba produced and what the record holds, so
+   it beats an empty frame that reads as "it drew nothing". */
+.diagrama .dsrc{margin:0;padding:var(--space-3);background:var(--chip);border-radius:8px;
+                font-family:var(--mono);font-size:12px;white-space:pre-wrap;overflow-x:auto}
 .anotado{display:flex;gap:var(--space-3);align-items:baseline;flex-wrap:wrap}
 .anotado .text{font-size:15px;line-height:1.45}
 .fuentes{display:flex;flex-direction:column;gap:4px;width:100%;margin-top:var(--space-2);font-size:13px}
@@ -1113,6 +1123,20 @@ function paint(e) {
     if (S.showIds && e.audio) meta.append(el("span", "audit", e.audio));
     w.append(meta);
     r.body.append(w);
+    return;
+  }
+
+  if (e.kind === "diagrama") {
+    const w = el("div", "diagrama");
+    w.append(el("div", "dtitle", e.text));
+    const slot = el("div", "draw");
+    w.append(slot);
+    r.body.append(w);
+    // DRAWN AFTER THE ROW IS IN THE PAGE, and asynchronously: mermaid is
+    // a large module and this is the only thing that wants it, so it is
+    // fetched on the FIRST diagram rather than on every page load by
+    // everybody who never sees one.
+    drawMermaid(slot, e.mermaid || "");
     return;
   }
 
@@ -3180,6 +3204,66 @@ let lost = null;
 //: dropped keeps delivering — two streams patching rows by id into one
 //: transcript, which reads as the escriba answering itself.
 let source = null;
+// ---------------------------------------------------------------- diagrams
+//
+// THE ESCRIBA ASKS FOR A DRAWING; IT DOES NOT MAKE ONE.  `dibujar` sends
+// Mermaid source — a few lines of text a model is good at — and the
+// picture is made here.  Nothing is rendered on the server: a diagram is
+// a VIEW of something already said, so the source is what the record
+// keeps, and keeping it means no renderer on the host and nothing sent
+// anywhere.
+//
+// LOADED ON THE FIRST DIAGRAM.  One promise, shared by every later row,
+// so a conversation with no diagram in it pays nothing.
+let mermaidReady = null;
+function mermaidLib() {
+  if (!mermaidReady) {
+    mermaidReady = import("https://esm.sh/mermaid@11.4.1").then((m) => {
+      const lib = m.default;
+      // THE PAGE'S OWN THEME, read the way the stylesheet decides it:
+      // `data-theme` when the person chose one, the system preference
+      // when they left it on auto.  mermaid is initialised ONCE, so a
+      // theme changed afterwards leaves earlier diagrams as they were —
+      // visible, and not worth reloading the module to repaint.
+      const r = document.documentElement;
+      const chosen = r.getAttribute("data-theme");
+      const night = chosen ? chosen === "dark"
+        : matchMedia("(prefers-color-scheme: dark)").matches;
+      lib.initialize({ startOnLoad: false, securityLevel: "strict",
+                       theme: night ? "dark" : "default" });
+      return lib;
+    });
+  }
+  return mermaidReady;
+}
+
+let drawn = 0;
+
+async function drawMermaid(slot, source) {
+  if (!source) return;
+  // THE SOURCE IS DRAWN FIRST and replaced only once a picture exists.
+  // Not an error path: it is what the escriba produced and what the
+  // journal holds, so it is the honest thing to show while the module
+  // loads, and the thing to be left with when it will not — a module
+  // that never arrives, or a diagram that will not parse. An empty
+  // frame would read as "it drew nothing", which is a different and
+  // untrue statement.
+  slot.append(el("pre", "dsrc", source));
+  let lib;
+  try {
+    lib = await mermaidLib();
+  } catch (err) { return; }
+  try {
+    const { svg } = await lib.render("d" + (++drawn), source);
+    // `innerHTML` WITH mermaid's OWN OUTPUT, under `securityLevel:
+    // "strict"`, which is what sanitises the labels the model wrote.
+    // Nothing else in this page assigns innerHTML and nothing else
+    // should.
+    slot.textContent = "";
+    slot.innerHTML = svg;
+  } catch (err) { /* the source stays, which is the point */ }
+}
+
 // ---------------------------------------------------------------- backchannel
 //
 // The escriba acknowledging a demonstration while it is still being

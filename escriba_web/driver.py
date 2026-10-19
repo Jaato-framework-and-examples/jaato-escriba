@@ -114,6 +114,47 @@ JUSTIFY_SCHEMA = {
 }
 
 
+#: Drawing, as a thing the escriba may ASK FOR and not a thing it makes.
+#: The model writes Mermaid -- a few lines of text it is good at -- and
+#: the page draws it.  Nothing renders server-side: a diagram is a VIEW
+#: of something already said, so the source is what is recorded and the
+#: pixels are the browser's business, which is also why this needs no
+#: renderer on the host and nothing leaves the machine.
+DRAW_TOOL = "dibujar"
+
+#: What a diagram may be, in characters.  A diagram somebody reads at a
+#: glance is short; past this it is prose with arrows in it, and the
+#: failure that matters is a model emptying an explanation into a shape.
+DRAW_LIMIT = 4000
+
+DRAW_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["titulo", "mermaid"],
+    "properties": {
+        "titulo": {
+            "type": "string",
+            "minLength": 1,
+            "description": "De que es el diagrama, en pocas palabras. Se "
+                           "lee encima del dibujo y es lo unico que lo "
+                           "nombra en la transcripcion.",
+        },
+        "mermaid": {
+            "type": "string",
+            "minLength": 1,
+            "description": "El diagrama en sintaxis Mermaid y NADA MAS: "
+                           "empieza por el tipo (`flowchart TD`, "
+                           "`sequenceDiagram`, `erDiagram`...) y no "
+                           "incluyas la valla ``` ni explicaciones. Dibuja "
+                           "lo que ya habeis hablado, no lo que supones: "
+                           "un diagrama es una afirmacion sobre como son "
+                           "las cosas y se lee como si la hubieras "
+                           "comprobado.",
+        },
+    },
+}
+
+
 def _iso(at: datetime) -> str:
     return at.isoformat(timespec="seconds")
 
@@ -833,7 +874,18 @@ class Person:
                                "hablar. Lo lee ella antes de decidir si "
                                "entra, y lo lee primero quien te lo pide.",
                            "parameters": JUSTIFY_SCHEMA,
-                           "handler": self._justify}],
+                           "handler": self._justify},
+                          {"name": DRAW_TOOL,
+                           "description":
+                               "Dibuja un diagrama de lo que estais "
+                               "hablando y ponlo en la conversacion, donde "
+                               "ella lo ve. Para cuando una relacion, un "
+                               "orden o un flujo se entiende antes mirando "
+                               "que escuchando. No lo ofrezcas por tu "
+                               "cuenta a cada paso: dibuja cuando lo pida "
+                               "o cuando lo dicho tenga forma de esquema.",
+                           "parameters": DRAW_SCHEMA,
+                           "handler": self._draw}],
             on_status_change=self._connection, **self.conn)
         self._scribe = await self._stack.__aenter__()
         self.archive.identify(self._scribe.session_id,
@@ -1401,6 +1453,48 @@ class Person:
     def invitations(self) -> List[dict]:
         """Everybody this host has named, in whatever state."""
         return [i.json() for i in ROOM.of_host(self.principal)]
+
+    def _draw(self, args: dict) -> dict:
+        """A diagram of what is being talked about, into the transcript.
+
+        RUNS ON THIS LOOP, like `_justify` and for its reason: the SDK
+        delivers a host tool's dispatch here, so the board and the hub
+        are touched directly.
+
+        THE SOURCE IS WHAT IS KEPT.  Nothing is rendered here -- no
+        renderer on the host, nothing sent anywhere -- because a diagram
+        is a VIEW of something already said.  Mermaid text journals,
+        diffs and re-renders; a PNG does none of those and would need a
+        toolchain on the box to produce.
+
+        A REFUSAL IS RAISED, so the framework returns it as the call's
+        error and the model can answer it.  Only what can be checked
+        deterministically is checked: that there is a diagram and that
+        it is the size of one.  Whether the syntax parses is the
+        renderer's answer, and the page gives it -- a diagram that will
+        not draw shows its own source rather than an empty box, so the
+        failure is visible to the person and diagnosable from the row.
+        """
+        titulo = str(args.get("titulo") or "").strip()
+        source = str(args.get("mermaid") or "").strip()
+        if not titulo or not source:
+            raise ValueError("un diagrama necesita titulo y codigo mermaid")
+        # THE FENCE IS THE ONE MISTAKE WORTH ABSORBING: ```mermaid is how
+        # the syntax is written everywhere a model has ever read it, so
+        # it arrives that way, and refusing would be refusing the right
+        # diagram for its wrapping.
+        if source.startswith("```"):
+            source = source.split("\n", 1)[-1]
+            source = source.rsplit("```", 1)[0].strip()
+        if len(source) > DRAW_LIMIT:
+            raise ValueError(
+                f"el diagrama ocupa {len(source)} caracteres y el limite "
+                f"son {DRAW_LIMIT}: eso ya no se lee de un vistazo. "
+                "Quedate con lo que hace falta para entender la relacion.")
+        self.journal.note("diagrama", titulo=titulo[:120],
+                          chars=len(source))
+        self.board.drew(titulo, source)
+        return {"dibujado": True}
 
     def _justify(self, args: dict) -> dict:
         """The escriba answering the question the host's click asked.

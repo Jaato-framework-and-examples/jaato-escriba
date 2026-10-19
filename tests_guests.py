@@ -997,6 +997,51 @@ async def main() -> int:
           ROOM.of_address(HOST, "marta@ejemplo.es").open, False)
     check("the host can send what they read",
           ROOM.open_up(HOST, "marta@ejemplo.es") is not None, True)
+    # ------------------------------------------- the other client tool
+    #
+    # `dibujar` puts a drawing of what is being discussed into the
+    # conversation.  THE SOURCE IS WHAT TRAVELS AND WHAT IS KEPT: the
+    # page draws it, nothing renders server-side, and nothing leaves the
+    # machine -- a diagram is a view of something already said, and
+    # Mermaid text journals, diffs and re-renders where a PNG does none
+    # of those.
+    def no_draw(label_, args):
+        global fail
+        try:
+            host._draw(args)
+        except ValueError:
+            print(f"  ok   {label_}")
+            return
+        print(f"  FAIL {label_:<54} was allowed")
+        fail += 1
+
+    no_draw("a diagram with no code is refused",
+            {"titulo": "el flujo", "mermaid": "   "})
+    no_draw("and one with no title",
+            {"titulo": "", "mermaid": "flowchart TD\n A-->B"})
+    # PROSE WITH ARROWS IN IT IS NOT A DIAGRAM.  The failure worth
+    # catching is a model emptying an explanation into a shape; what is
+    # checked is the one thing that can be checked here, its size.
+    no_draw("and one too long to read at a glance",
+            {"titulo": "todo", "mermaid": "flowchart TD\n" + "A-->B\n" * 2000})
+
+    drawn = host._draw({"titulo": "las cuatro dimensiones",
+                        "mermaid": "flowchart TD\n  A[bundle]-->B[fuentes]"})
+    check("the escriba is told it landed", drawn["dibujado"], True)
+    row = host.board.state.entries[-1]
+    check("and it is a row of the conversation", row.kind, "diagrama")
+    check("titled by what it is of", row.text, "las cuatro dimensiones")
+    check("carrying the source, not a picture",
+          row.mermaid, "flowchart TD\n  A[bundle]-->B[fuentes]")
+
+    # THE FENCE IS ABSORBED, not refused.  ```mermaid is how the syntax
+    # is written everywhere a model has ever read it, so it arrives that
+    # way; refusing would be refusing the right diagram for its wrapping.
+    host._draw({"titulo": "con valla",
+                "mermaid": "```mermaid\nflowchart LR\n  X-->Y\n```"})
+    check("a fenced diagram keeps only its code",
+          host.board.state.entries[-1].mermaid, "flowchart LR\n  X-->Y")
+
     refused("and rewriting it afterwards is refused",
             {"email": "marta@ejemplo.es", "motivo": "otra cosa",
              "tema": "otro tema"})

@@ -1267,6 +1267,34 @@ check("and an answer that never came says that instead",
         note && note.textContent, ES["demo.hint"]);
 }
 
+// ------------------------------------------------------- a diagram row
+//
+// THE SOURCE IS WHAT TRAVELS.  `dibujar` sends Mermaid text and the
+// PAGE draws it: nothing is rendered server-side, so the record holds
+// something that journals, diffs and re-renders, and no renderer has to
+// exist on the host.
+//
+// WHAT THIS CAN ASSERT, and it says so rather than pretending: the stub
+// has no dynamic `import`, so mermaid never loads here and the picture
+// is never made.  That is exactly the state worth pinning — the row
+// must show the escriba's own source rather than an empty frame, which
+// would read as "it drew nothing".
+T.onEvent("entry", { id: 500077, kind: "diagrama",
+                     at: new Date().toISOString(), repeats: 1,
+                     text: "las cuatro dimensiones",
+                     mermaid: "flowchart TD\n  A[bundle]-->B[fuentes]" });
+{
+  const row = byId.get("scroll").walk()
+    .find((n) => n.dataset && String(n.dataset.id) === "500077");
+  const text = row ? row.textContent : "";
+  check("a diagram row is titled by what it is of",
+        text.includes("las cuatro dimensiones"), true);
+  check("and shows its source until a picture exists",
+        text.includes("A[bundle]-->B[fuentes]"), true);
+  check("in a slot the drawing can replace",
+        !!(row && row.walk().find((n) => n.className === "draw")), true);
+}
+
 // ------------------------------------------- the newlines somebody wrote
 //
 // A GUARD ON A RULE NO DOM STUB CAN EXERCISE, and it says so rather than

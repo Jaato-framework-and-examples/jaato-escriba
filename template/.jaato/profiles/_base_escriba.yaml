@@ -434,6 +434,11 @@ plugin_configs:
           # this feature means a host watching "el escriba está
           # escribiendo…" for as long as they care to wait.
           - justificar_invitado
+          # The other client-provided tool, and the same rule applies:
+          # left off this list it is offered to the model and then
+          # silently refused, which here means an escriba that says it
+          # has drawn something and has not.
+          - dibujar
           # The tier switch itself.  A denied `enter_tier` would strand
           # the voice tier holding something to write and no way to write
           # it.
