@@ -141,11 +141,28 @@ plugin_configs:
     # Read-only in practice: `store_memory` is not in its tool list. The
     # gate is here too so a future edit cannot quietly grant it.
     allowed_scopes: ["project"]
-  file_edit:
-    # An explicit backup dir: file_edit refuses to initialise without one
-    # when no config_root is set, and the failure is a plugin that simply
-    # is not exposed — observed on another profile in this workspace.
-    backup_dir: .jaato/backups
+  # NO `backup_dir`, AND THE ABSENCE IS THE POINT.  It said
+  # `.jaato/backups` here, for a condition this application is never in:
+  # file_edit refuses to initialise without one *when no config_root is
+  # set*, and every client in this repo sets it (`driver.py:653`,
+  # `run_escriba.py:506`, `backchannel_audio.py:215`).  So backups go to
+  # `<config_root>/sessions/<id>/backups`, which file_edit grants itself.
+  #
+  # AND A RELATIVE PATH HERE IS UNPARSEABLE.  `get_apparmor_rules` emits
+  # an explicit backup_dir verbatim, so this produced the rule
+  # `.jaato/backups/ rw,` — and an AppArmor rule may not be relative.
+  # MEASURED on the deployed box 2026-10-19 12:07:39:
+  # `apparmor_parser failed for jaato-ws-workspace-…: at line 469: Lexer
+  # found unexpected character: '.' (0x2e)`, then `AppArmor confinement
+  # required but no profile was provisioned — REFUSING the session
+  # (#1253)`.  Reproduced with `apparmor_parser -Q -K`: that rule fails,
+  # the same rule made absolute parses.
+  #
+  # IT NEVER BIT BEFORE because an in-process subagent runs inside the
+  # scribe's runner and renders no profile of its own.  The moment the
+  # documenter became a session of its own, every commission died here,
+  # one step before its prefetch could run.  No other profile in this
+  # workspace sets `backup_dir`, which is why they all confine fine.
   web_fetch:
     max_length: 8000
     timeout: 15
