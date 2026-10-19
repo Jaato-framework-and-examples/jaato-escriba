@@ -551,12 +551,13 @@ async def audio_file(request: Request, att_id: str) -> FileResponse:
 @app.get("/doc")
 async def doc(request: Request, path: str) -> PlainTextResponse:
     person = await person_of(request)
-    # Resolved and then checked to be INSIDE `docs/`: the path comes from
-    # a panel this server filled, but it arrives back over the wire and
-    # `../` is the oldest trick there is.
-    docs = (person.ws / "docs").resolve()
-    target = (person.ws / path).resolve()
-    if docs not in target.parents or not target.is_file():
+    # `driver.within` resolves and then checks containment — the path
+    # comes from a panel this server filled, but it arrives back over
+    # the wire and `../` is the oldest trick there is.  One function for
+    # every route that takes a path, so the rule cannot hold on one and
+    # not another.
+    target = _driver.within(person.ws, path, ("docs",))
+    if target is None or not target.is_file():
         raise HTTPException(404, "no such document")
     return PlainTextResponse(target.read_text(encoding="utf-8"))
 
@@ -584,9 +585,8 @@ async def captura(request: Request, path: str) -> FileResponse:
     names a capture.
     """
     person = await person_of(request)
-    demos = (person.ws / _demo.ROOT).resolve()
-    target = (person.ws / path).resolve()
-    if demos not in target.parents or not target.is_file():
+    target = _driver.within(person.ws, path, (_demo.ROOT.as_posix(),))
+    if target is None or not target.is_file():
         raise HTTPException(404, "no such capture")
     return FileResponse(target)
 
@@ -607,9 +607,8 @@ async def descarga(request: Request, path: str) -> FileResponse:
     names a file, and nothing here would be theirs to take.
     """
     person = await person_of(request)
-    target = (person.ws / path.lstrip("/")).resolve()
-    roots = [(person.ws / name).resolve() for name in _driver.DOWNLOADABLE]
-    if not any(r in target.parents for r in roots) or not target.is_file():
+    target = _driver.within(person.ws, path, _driver.DOWNLOADABLE)
+    if target is None or not target.is_file():
         raise HTTPException(404, "no such file")
     return FileResponse(target, filename=target.name,
                         content_disposition_type="attachment")

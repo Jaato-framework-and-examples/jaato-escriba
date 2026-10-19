@@ -32,7 +32,7 @@ import sys
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -128,6 +128,50 @@ DOWNLOAD_TOOL = "ofrecer_descarga"
 #: no good general answer -- the answerable question is "is this one of
 #: the four places we put things for them".
 DOWNLOADABLE = ("docs", "demo", "staged", "audio")
+
+
+def within(ws: Path, path: str, names: Sequence[str]) -> Optional[Path]:
+    """The file `path` names inside one of `names`, resolved, or None.
+
+    THE ONE CONTAINMENT, read by every caller that lets a path in from
+    outside: `/doc`, `/captura`, `/descarga` and `_offer`.  Each had its
+    own copy, which is three places for the rule to drift and three to
+    fix when it changes.
+
+    RESOLVED FIRST, THEN CHECKED to be strictly BELOW a root.  A prefix
+    test is what `..` defeats; `parents` after `resolve` also judges a
+    symlink inside the tree by where it actually points, and refuses the
+    root itself, which is not a file anybody asked for.
+
+    AND THE ROOT IS CHECKED TOO, which is the part that is not obvious.
+    The roots are resolved as well, and nothing otherwise requires them
+    to stay in the workspace -- so a `docs` that was a symlink to
+    `.jaato`, or out of the workspace entirely, would make that tree
+    downloadable with every other check still passing.  Not reachable
+    today: all four are real directories and neither the escriba nor the
+    documentalista has a tool that can make a symlink (`file_edit`
+    cannot, and neither loads `cli`).  It is one tool grant away, and
+    the grant would be made for an unrelated reason by somebody who
+    would have no cause to think about this function.  Raised by the VPS
+    session reviewing the download route before it shipped.
+
+    EXISTENCE IS THE CALLER'S QUESTION, not this one's: a route answers
+    404 for both, and `_offer` must tell the escriba apart "that is not
+    yours to send" from "you invented that path", because they are
+    different things to do differently.
+    """
+    root = ws.resolve()
+    target = (ws / str(path).lstrip("/")).resolve()
+    for name in names:
+        here = ws / name
+        if here.is_symlink():
+            continue
+        where = here.resolve()
+        if where.parent != root:
+            continue
+        if where in target.parents:
+            return target
+    return None
 
 DOWNLOAD_SCHEMA = {
     "type": "object",
@@ -1542,9 +1586,8 @@ class Person:
         titulo = str(args.get("titulo") or "").strip()
         if not ruta or not titulo:
             raise ValueError("una descarga necesita ruta y titulo")
-        target = (self.ws / ruta).resolve()
-        roots = [(self.ws / name).resolve() for name in DOWNLOADABLE]
-        if not any(r in target.parents for r in roots):
+        target = within(self.ws, ruta, DOWNLOADABLE)
+        if target is None:
             raise ValueError(
                 f"«{ruta}» no esta en {', '.join(DOWNLOADABLE)}, que es lo "
                 "unico que se le puede ofrecer: ahi estan sus documentos, "

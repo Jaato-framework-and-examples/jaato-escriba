@@ -575,7 +575,6 @@ async def main():
     (ws / "demo" / "d1" / "narration.txt").write_text("[00:00] hola")
     (ws / ".jaato").mkdir()
     (ws / ".jaato" / "stored.json").write_text("not yours either")
-    roots = [(ws / name).resolve() for name in _driver.DOWNLOADABLE]
     for path, allowed in (("docs/ok.md", True),
                           ("demo/d1/narration.txt", True),
                           ("secret.md", False),
@@ -583,9 +582,35 @@ async def main():
                           ("docs/../secret.md", False),
                           ("demo/../.jaato/stored.json", False),
                           ("/etc/passwd", False)):
-        target = (ws / path.lstrip("/")).resolve()
-        inside = any(r in target.parents for r in roots) and target.is_file()
-        check(f"descarga {path!r}", inside, allowed)
+        target = _driver.within(ws, path, _driver.DOWNLOADABLE)
+        check(f"descarga {path!r}",
+              target is not None and target.is_file(), allowed)
+
+    # THE ROOT ITSELF IS CHECKED, which is the part that is not obvious:
+    # the roots are resolved too, so a `docs` that was a SYMLINK to
+    # `.jaato` would make that tree downloadable with every other check
+    # still passing.  Not reachable today — all four are real
+    # directories and no agent here has a tool that can make a symlink —
+    # and one tool grant away, granted for an unrelated reason by
+    # somebody with no cause to think about this.  Raised by the VPS
+    # session reviewing the route before it shipped.
+    (ws / "elsewhere").mkdir()
+    (ws / "elsewhere" / "private.txt").write_text("not yours")
+    (ws / "staged").symlink_to(ws / "elsewhere")
+    check("a root that is a symlink is not a root",
+          _driver.within(ws, "staged/private.txt", _driver.DOWNLOADABLE),
+          None)
+    # AND THE SAME FILE BY ITS REAL PATH IS STILL REFUSED, so the leg
+    # above is about the symlink and not about the file being unusual.
+    check("nor is the tree it points at",
+          _driver.within(ws, "elsewhere/private.txt", _driver.DOWNLOADABLE),
+          None)
+    # The one rule every route reads, so `/doc` and `/captura` cannot
+    # drift from `/descarga` the way three copies of it would.
+    check("a document is still reachable as itself",
+          _driver.within(ws, "docs/ok.md", ("docs",)) is not None, True)
+    check("but not through the download set's other roots",
+          _driver.within(ws, "demo/d1/narration.txt", ("docs",)), None)
 
     # ------------------------------------------- the voice, piece by piece
     # The file the row plays is named after the digest of the WHOLE
