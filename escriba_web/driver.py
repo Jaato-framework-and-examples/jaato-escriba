@@ -37,7 +37,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from jaato_sdk import (ClientType, EventType, IPCClient,          # noqa: E402
-                       IPCRecoveryClient)
+                       IPCRecoveryClient, PresentationContext)
 from jaato_sdk.media_identity import ATTACHMENT_ID_KEY           # noqa: E402
 
 import archive as _archive                                       # noqa: E402
@@ -865,10 +865,53 @@ class Person:
             return self.ws / ".env"
         return kbwiki.env_path(Path(self.wiki["dir"]), self.principal)
 
+    #: The width of this page's column of prose, in characters, read
+    #: from the one place that decides it: `max-width: 68ch` on `.spoke
+    #: p`, `.heard` and `.md` in `web/index.html`.  Declared because
+    #: declaring a presentation context AT ALL replaces the one the SDK
+    #: derives, and the one it derives for a client that passes none is
+    #: a TERMINAL's -- `shutil.get_terminal_size()` inside a daemonised
+    #: web server, which measures a tty nobody is looking at.
+    COLUMN = 68
+
     @property
     def conn(self) -> dict:
+        """What this client declares about itself at the handshake.
+
+        `client_type=API` is load-bearing and stays: the daemon strips
+        `signal_completion` from terminal, web and chat clients, and
+        every commission this driver makes is completion-gated.
+
+        THE LOCALE IS DECLARED HERE BECAUSE ONLY WE KNOW IT (Art. 50(1),
+        jaato#1758).  The daemon chooses the announcement's wording from
+        `regulatory.disclosure_text` by this tag, and records which tag
+        it matched -- so the row says which language the person was
+        addressed in, and `_base_escriba.yaml` can carry one sentence
+        per language instead of one sentence for everybody.  The
+        framework will not infer it: "a daemon's `LANG` says nothing
+        about the person on the other end of the socket".
+
+        THE LOCALE AT SESSION OPEN IS THE ONE THAT COUNTS.  The person
+        can change language afterwards and the announcement does not
+        follow, by design: the record says what they WERE told, and
+        re-rendering it in another language would make the ledger a
+        statement about a sentence nobody was shown.  `set_locale`
+        therefore does not reopen the session.
+
+        Every other display capability is left at the framework's
+        default rather than asserted here.  This page renders markdown
+        (`react-markdown`) and Mermaid, so some of those defaults
+        understate it -- but what the model is told about this surface
+        is a separate question from what the person is told about the
+        system, and it is not this change's to answer.
+        """
         return dict(workspace_path=str(self.ws), env_file=str(self.env_file),
-                    config_root=str(self.ws / ".jaato"), client_type=ClientType.API)
+                    config_root=str(self.ws / ".jaato"),
+                    client_type=ClientType.API,
+                    presentation=PresentationContext(
+                        content_width=self.COLUMN,
+                        client_type=ClientType.API,
+                        locale=self.locale))
 
     async def credential(self, token: Optional[str]) -> None:
         """Take the access token this request arrived with, if it is new.
@@ -2759,6 +2802,14 @@ class Person:
         the words they were written with, because the transcript is a
         record of what was said at the time, not a view that re-renders
         into the language of the moment.
+
+        THE ART. 50(1) ANNOUNCEMENT IS IN THAT SAME CATEGORY, and more
+        strictly: the daemon chose its wording from the locale declared
+        at session open, and the audit record quotes what it chose as
+        the text AS DELIVERED.  Showing a translation of it after a
+        language change would make the ledger a statement about a
+        sentence nobody was shown.  The next session announces in the
+        new language; this one does not change what it already said.
         """
         self.locale = locale if locale in i18n.available() else i18n.DEFAULT
         _workspace.set_pref(self.home, "locale", self.locale)

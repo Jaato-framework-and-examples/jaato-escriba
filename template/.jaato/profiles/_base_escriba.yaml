@@ -515,11 +515,28 @@ apparmor_fragments: []
 #
 # `disclosure_text` IS IN THE PROFILE AND NOT IN `i18n/`, which breaks
 # this project's rule that user-facing text comes from the catalogue.
-# Forced rather than chosen: the `announcement` record quotes this string
-# as the text AS DELIVERED, so rendering a translation of our own would
-# make the ledger a statement about a sentence nobody was shown.  One
-# language until jaato#1758 lets the text vary by the locale the record
-# already binds.
+# Forced rather than chosen, and still forced now that there is one
+# sentence per language: the `announcement` record quotes the string the
+# DAEMON chose as the text as delivered, so the daemon has to be the one
+# holding every wording.  A translation of our own, rendered beside it,
+# would make the ledger a statement about a sentence nobody was shown.
+# The catalogue rule gives way to the record's; nothing else here does.
+#
+# ONE ENTRY PER LOCALE, SELECTED BY THE CLIENT (jaato#1758).  The tags
+# are matched against `PresentationContext.locale`, which `driver.py`
+# declares from the language the person has chosen in the interface --
+# exact tag first, then the same language, then `*`.  The record keeps
+# `text_locale` and `locale_match` beside the text, so it says which
+# language the person was addressed in and whether that was a match or
+# a fallback.
+#
+# `*` IS THE ONE EVERY OTHER LOCALE GETS, and it is Spanish rather than
+# English on purpose: a person whose browser asks for neither of the two
+# languages this interface speaks is still looking at a Spanish
+# interface, because `i18n.DEFAULT` is `es` and the page falls back to
+# it.  Without this entry they would be told in the FRAMEWORK's English
+# sentence while reading a Spanish screen -- which is what `validate`
+# warns about as `disclosure_text_no_fallback`.
 regulatory:
   intended_purpose: >
     A personal second brain.  It listens to one named person,
@@ -532,9 +549,16 @@ regulatory:
   provider:
     name: DarumaLabs S.L.
     contact: darumalabs@darumalabs.ai
-  disclosure_text: >-
-    Estás hablando con un sistema de IA operado por DarumaLabs S.L., no
-    con una persona.
+  disclosure_text:
+    # An ANCHOR and not a second copy: `*` is the same sentence as `es`,
+    # and two copies of one sentence are two things that can drift.
+    es: &aviso_es >-
+      Estás hablando con un sistema de IA operado por DarumaLabs S.L.,
+      no con una persona.
+    en: >-
+      You are talking to an AI system operated by DarumaLabs S.L., not
+      to a person.
+    "*": *aviso_es
 
 # Workspace-relative, so it lands in THIS person's tree. The default
 # would interleave every person on the host into one file.

@@ -38,6 +38,7 @@ from fastapi import HTTPException                        # noqa: E402
 
 from escriba_web import app as _app                      # noqa: E402
 from escriba_web.driver import Person, entry_json         # noqa: E402
+from jaato_sdk import ClientType                          # noqa: E402
 import yaml                                              # noqa: E402
 import escriba_web.driver as _driver                     # noqa: E402
 from escriba_web.guests import ROOM, Room, label, reason, token   # noqa: E402
@@ -439,6 +440,35 @@ async def main() -> int:
     # anything yet, and inventing a sentence here would be this
     # application making a legal statement of its own.
     check("with no session, nothing is claimed", theirs["disclosure"], "")
+
+    # AND IT IS CHOSEN IN THEIR LANGUAGE, because this client is the only
+    # thing that knows what language its surface is in.  The daemon
+    # selects among `regulatory.disclosure_text`'s entries by this tag
+    # and records which one it matched; it will not infer it, since "a
+    # daemon's LANG says nothing about the person on the other end of
+    # the socket".  Asserted on `conn`, which is what the handshake is
+    # built from, so a declaration dropped from it fails here rather
+    # than in an audit record nobody reads.
+    check("the handshake declares the person's own language",
+          host.conn["presentation"].locale, "es")
+    check("and still says this is an API client, so completions survive",
+          host.conn["presentation"].client_type, ClientType.API)
+    host.speak("en")
+    check("a person who switches language would open the next session in it",
+          host.conn["presentation"].locale, "en")
+    # BUT NOT THE SENTENCE THEY HAVE ALREADY BEEN SHOWN.  The record says
+    # what they WERE told; re-rendering it in another language would make
+    # the ledger a statement about a sentence nobody saw.  So `set_locale`
+    # `speak` does not reopen the session, and the announcement does not
+    # follow -- the same rule its docstring already gives for transcript
+    # notes, which keep the words they were written with.
+    host._scribe = _Scribe("ya se lo dijimos en español")
+    try:
+        host.speak("es")
+        check("the announcement already delivered does not get retranslated",
+              host.snapshot()["disclosure"], "ya se lo dijimos en español")
+    finally:
+        host._scribe = None
 
     # WHOSE SENTENCE IT IS.  The text comes off the session the daemon
     # opened -- `Session.disclosure_announcement` (jaato#1761) -- and is

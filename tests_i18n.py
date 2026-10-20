@@ -86,5 +86,36 @@ check("every key enrichment names is in the catalogue",
       sorted(k for k in used if k not in base), [])
 check("and it names some", len(used) > 4, True)
 
+# ------------------------------- the Art. 50(1) sentence, per language
+# THE ONE USER-FACING STRING THAT IS NOT IN THIS CATALOGUE, and the only
+# place that rule gives way.  `regulatory.disclosure_text` lives in the
+# profile because the DAEMON chooses the wording and the `announcement`
+# audit record quotes what it chose as the text as delivered -- so a
+# translation of ours, rendered beside it, would make the ledger a
+# statement about a sentence nobody was shown.
+#
+# Which is exactly why it is checked HERE: the profile and this
+# catalogue are two lists of languages that have to agree, and nothing
+# else makes them.  Adding a third language to the interface without a
+# sentence for it would otherwise ship silently and tell that person in
+# Spanish -- recorded, correctly but uselessly, as a `fallback`.
+import yaml                                                  # noqa: E402
+
+PROFILE = HERE / "template/.jaato/profiles/_base_escriba.yaml"
+told = (yaml.safe_load(PROFILE.read_text(encoding="utf-8"))
+        ["regulatory"]["disclosure_text"])
+check("the announcement is declared per locale, not as one string",
+      isinstance(told, dict), True)
+for loc in i18n.available():
+    check(f"{loc} has an Art. 50(1) sentence of its own",
+          bool(str(told.get(loc, "")).strip()), True)
+# `*` IS WHAT EVERY OTHER LOCALE GETS, including a client that declares
+# none.  Without it the framework's own English sentence is delivered to
+# somebody reading a Spanish page, which is what `jaato-scaffold
+# validate` reports as `disclosure_text_no_fallback`.
+check("and every other locale is covered", bool(str(told.get("*", "")).strip()), True)
+check("by the default language's own wording, not a third one",
+      told["*"], told[i18n.DEFAULT])
+
 print("i18n OK" if not FAILED else f"{len(FAILED)} failure(s)")
 raise SystemExit(1 if FAILED else 0)
