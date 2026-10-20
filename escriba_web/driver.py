@@ -760,14 +760,6 @@ class Person:
         #: and once through the client it replaced.
         self._unwatch: Optional[Any] = None
         self.opened = datetime.now()
-        #: The Art. 50(1) announcement this session's person was given,
-        #: once it has been read off the audit record.  MEMOISED BECAUSE
-        #: IT IS A STANDING FACT: the daemon writes the row once, before
-        #: the first turn, and it does not change for the life of the
-        #: session -- so the snapshot asks until the row is there and
-        #: never again.  Cleared when a session is replaced, because the
-        #: next one makes its own announcement and its own row.
-        self._told: Optional[str] = None
         self._scribe = None
         self._stack: Optional[Any] = None
         self._ticker: Optional[asyncio.Task] = None
@@ -1084,10 +1076,6 @@ class Person:
                            "handler": self._order}],
             on_status_change=self._connection, **self.conn)
         self._scribe = await self._stack.__aenter__()
-        # A NEW SESSION ANNOUNCES AGAIN, and writes its own row.  Held
-        # text from the session this one replaced would be a statement
-        # about an interaction that has ended.
-        self._told = None
         self.archive.identify(self._scribe.session_id,
                               getattr(self._scribe.client, "client_id", None))
         self._watcher = enrichment.Observer(
@@ -2780,29 +2768,32 @@ class Person:
     def disclosure(self) -> str:
         """What this person has been told they are talking to (Art. 50(1)).
 
-        THE FRAMEWORK'S SENTENCE, NOT OURS.  `archive.announcement` reads
-        it from the row the daemon wrote, so the text on screen is the
-        text the ledger says was delivered.  Rendering our own wording
-        would make the record a statement about something else.
+        THE FRAMEWORK'S SENTENCE, NOT OURS, and now read where the
+        daemon offers it.  `Session.disclosure_announcement` carries the
+        text as a standing field of the session, chosen by the daemon's
+        one predicate (`JaatoServer.disclosure_choice`) -- which is also
+        what the `announcement` audit row's `text` is built from.  So
+        the sentence on screen and the sentence the ledger says was
+        delivered cannot differ, and neither is a copy of the other.
 
-        ASKED UNTIL IT IS THERE, which is not a poll with a clock: the
-        row is written immediately after the daemon answers
-        `session.new` -- a moment this client cannot observe, because
-        the facade creates the session inside one call -- so the first
-        snapshot after a session opens may be a few milliseconds early.
-        Every snapshot the page asks for is another chance, and once
-        found it is held.
+        PRESENT FROM THE FIRST SNAPSHOT, which the route this replaced
+        could not promise.  It read the text back out of the ledger row,
+        the only durable place while the SDK dropped the field
+        (jaato#1759): the row is written just after the daemon answers
+        `session.new`, a moment this client cannot observe because the
+        facade connects and creates inside one call -- so the first
+        snapshot after a session opened could be a few milliseconds
+        early and show nothing.  The field arrives WITH the session, so
+        there is no such window, nothing to ask twice and nothing to
+        memoise.
 
-        `""` when there is nothing to show, which today is every
-        session: no profile in this workspace declares
-        `regulatory.interacts_with_persons`, so the framework writes no
-        row and makes no statement.  That is the declaration's absence
-        showing through, and it is the honest rendering of it.
+        `""` when this session's profile declares no
+        `regulatory.interacts_with_persons` -- the framework declining
+        to make a legal statement nobody authorised, rendered honestly.
         """
-        if self._told is None and self._scribe is not None:
-            self._told = _archive.announcement(self.ws,
-                                               self._scribe.session_id)
-        return self._told or ""
+        if self._scribe is None:
+            return ""
+        return self._scribe.disclosure_announcement or ""
 
     def snapshot(self) -> dict:
         return self.board.snapshot(session_at=_iso(self.opened),

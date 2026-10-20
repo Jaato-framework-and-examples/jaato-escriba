@@ -86,7 +86,25 @@ dependencies = [
     #     runs from its OWN virtualenv, the daemon's is separate, and
     #     `uv sync --frozen` keeps whatever the lock says — so the lock
     #     is what has to move, and this is what makes it move.
-    "jaato-sdk>=0.30.0rc24",
+    #   - rc25 is the first cut carrying `Session.disclosure_announcement`
+    #     (jaato#1759, commit bd7a86c5), which `driver.py:disclosure`
+    #     reads to put the Art. 50(1) sentence above the conversation.
+    #     THE ATTRIBUTE IS THE FLOOR again, for the reason above it: an
+    #     older `Session` is built without it and reading it raises
+    #     `AttributeError` on the first snapshot of every session, which
+    #     is every page load.  The route it replaced read the text back
+    #     out of the `announcement` ledger row — correct, but it could
+    #     not be there in time for the first snapshot, because the row
+    #     lands just after the daemon answers `session.new`.
+    #     THE DAEMON NEED NOT MOVE WITH IT.  Measured against the
+    #     published 1.3.0rc27 wheel, which is what the deployment runs:
+    #     `session_manager.py:16476` already sends
+    #     `disclosure_announcement=` on `SessionInfoEvent`, and has
+    #     since jaato#1116 (2026-09-18).  Only the SDK was dropping it.
+    #     Verified end to end against an rc27 daemon on a private
+    #     socket: the field arrives with the session and carries the
+    #     same sentence the ledger row records as delivered.
+    "jaato-sdk>=0.30.0rc25",
     # `memory.py:25` reads the curated store.
     "PyYAML>=6.0",
     # `audioop`, removed from the standard library in 3.13 (PEP 594) and

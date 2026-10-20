@@ -274,68 +274,23 @@ check("over the ceiling: nothing recorded",
       list(tape3.dir.glob("in_*")), [])
 check("over the ceiling: the manifest says why",
       [r.get("stage") for r in rows3], [h.POLICY_STAGE, "budget"])
-# -------------------------------------- the Art. 50(1) row, read back
-# WHY THE LEDGER AND NOT AN EVENT.  The daemon answers `session.new`
-# BEFORE it announces (`_answer_session_new` then
-# `_announce_ai_interaction`), so a client built by the `IPCClient.session`
-# facade -- which connects and creates inside one call -- cannot have
-# subscribed in time to hear the one-shot `AgentOutputEvent`.  The row is
-# where the text is durable, and `delivered` is true exactly when it
-# reached somebody.
-ledger = ws / ".jaato" / "logs" / "ledger.jsonl"
-ledger.parent.mkdir(parents=True, exist_ok=True)
-(ws / ".jaato" / "sessions" / "sid-say.json").write_text(json.dumps({
-    "session_id": "sid-say",
-    "profile_snapshot": {"snapshot_version": 1, "name": "escriba",
-                         "trace": {"ledger": ".jaato/logs/ledger.jsonl"}},
-}))
-check("no ledger file yet: nothing claimed",
-      a.announcement(ws, "sid-say"), None)
-ledger.write_text("\n".join([
-    json.dumps({"stage": "response", "total_tokens": 10}),
-    # ANOTHER SESSION'S ROW.  One ledger per workspace and the daemon
-    # appends every session's rows to it, so the id is what selects.
-    json.dumps({"stage": "announcement", "session_id": "sid-other",
-                "delivered": True, "text": "de otra sesión"}),
-    json.dumps({"stage": "announcement", "session_id": "sid-say",
-                "delivered": True,
-                "text": "Estás interactuando con un sistema de IA."}),
-]) + "\n", encoding="utf-8")
-check("the row is found by session id",
-      a.announcement(ws, "sid-say"),
-      "Estás interactuando con un sistema de IA.")
-check("another session's announcement is not this one's",
-      a.announcement(ws, "sid-nobody"), None)
-
-# WITHHELD IS NOT DELIVERED.  A headless session, a client that took the
-# obligation, a predicate that raised -- each writes a row carrying
-# `withheld_reason` and no text, and showing a person "you were told"
-# off one of those would be the false statement the record exists to
-# prevent.
-ledger.write_text(json.dumps(
-    {"stage": "announcement", "session_id": "sid-say", "delivered": False,
-     "withheld_reason": "headless"}) + "\n", encoding="utf-8")
-check("a withheld announcement shows nothing",
-      a.announcement(ws, "sid-say"), None)
-
-# A PROFILE THAT CONFIGURED NO LEDGER.  The path is read from the frozen
-# profile rather than assumed, so there is nothing to look in -- and the
-# framework says so itself: with no ledger the row "is held in memory and
-# never reaches disk".
-(ws / ".jaato" / "sessions" / "sid-mute.json").write_text(json.dumps({
-    "session_id": "sid-mute",
-    "profile_snapshot": {"snapshot_version": 1, "name": "escriba"},
-}))
-check("no ledger configured: nothing to read",
-      a.announcement(ws, "sid-mute"), None)
-
-# A HALF-WRITTEN LAST LINE.  The daemon appends while this reads, so a
-# truncated final row is a real state and not a corrupt file.
-ledger.write_text(json.dumps(
-    {"stage": "announcement", "session_id": "sid-say", "delivered": True,
-     "text": "válido"}) + "\n{\"stage\": \"respo", encoding="utf-8")
-check("a partial row does not hide the one before it",
-      a.announcement(ws, "sid-say"), "válido")
+# -------------------------------- the Art. 50(1) row is NOT the screen
+# A REVERSION GUARD, and the reason is worth more than the assert.  This
+# module used to carry `announcement(workspace, session_id)`, which read
+# the delivered text back out of the ledger row, because the SDK dropped
+# the field that carries it (jaato#1759) and the row was the only
+# durable place it existed.  jaato#1761 exposed
+# `Session.disclosure_announcement`, so `Person.disclosure` reads the
+# session and this function is gone.
+#
+# Bringing it back would bring back the window it could not close: the
+# row lands just AFTER the daemon answers `session.new`, so the first
+# snapshot of a new session can be a few milliseconds early and show a
+# person nothing.  The ledger row remains the AUDIT of what was
+# delivered -- written by the daemon, read by `jaato-doctor
+# --audit-verify` -- and it is not what the page renders.
+check("the screen does not read the announcement out of the ledger",
+      hasattr(a, "announcement"), False)
 
 shutil.rmtree(ws.parent)
 

@@ -388,6 +388,23 @@ room.forget(OTHER)
 check("a session ending forgets its room", room.of_host(OTHER), [])
 
 
+class _Scribe:
+    """What `Person` needs of a session, and nothing else.
+
+    `object()` used to do, until `Person.disclosure` started reading
+    `Session.disclosure_announcement` (jaato#1761) rather than the
+    ledger row.  A double without that attribute is not a double for a
+    session: the attribute is the FLOOR -- `jaato-sdk>=0.30.0rc25` in
+    `pyproject.toml` -- so every real one has it, and a test that
+    passed against a double lacking it would be testing a session that
+    cannot exist.
+    """
+
+    def __init__(self, told=None, sid="sid-test"):
+        self.session_id = sid
+        self.disclosure_announcement = told
+
+
 async def main() -> int:
     root = Path(tempfile.mkdtemp(prefix="escriba-guest-"))
     host = Person(HOST, root=root, identity={"username": "dani",
@@ -413,13 +430,37 @@ async def main() -> int:
     # speaks to the escriba and hears it answer.  This snapshot is BUILT
     # key by key, so the key had to be added on purpose -- the same
     # construction that withholds the host's memory would have withheld
-    # this.  Empty here because the test session declares no
-    # `regulatory:` block, which is exactly what every session does
-    # today; what is asserted is that the key TRAVELS.
+    # this.
     check("a guest is told what they are talking to",
           "disclosure" in theirs, True)
     check("and the host is told the same thing",
           "disclosure" in mine, True)
+    # Empty with no session open: there is nobody to have announced
+    # anything yet, and inventing a sentence here would be this
+    # application making a legal statement of its own.
+    check("with no session, nothing is claimed", theirs["disclosure"], "")
+
+    # WHOSE SENTENCE IT IS.  The text comes off the session the daemon
+    # opened -- `Session.disclosure_announcement` (jaato#1761) -- and is
+    # not composed here, not read out of `i18n/`, and no longer read
+    # back out of the ledger row.  Both people in the room are told the
+    # same thing because there is one session and one sentence.
+    aviso = "Estás hablando con un sistema de IA operado por X, no con una persona."
+    host._scribe = _Scribe(aviso)
+    try:
+        check("the host is told what the daemon announced",
+              host.snapshot()["disclosure"], aviso)
+        check("and so is the guest, word for word",
+              host.guest_snapshot(GUEST, "marta.ruiz")["disclosure"], aviso)
+        # A PROFILE THAT DECLARED NOTHING.  The daemon announces nothing
+        # and the field is None; "" is what the page hides on, so the
+        # absence of a declaration renders as silence rather than as a
+        # sentence nobody authorised.
+        host._scribe = _Scribe(None)
+        check("a session that announced nothing shows nothing",
+              host.snapshot()["disclosure"], "")
+    finally:
+        host._scribe = None
     check("with no memory panel", theirs["items"], {})
     check("no counts", theirs["counts"], {})
     check("no days", theirs["days"], [])
@@ -824,7 +865,7 @@ async def main() -> int:
     real_turn, _driver._turn = _driver._turn, (
         lambda scribe, prompt, att, relay, **kw: said.append(prompt) or _done(None))
     real_mp3, _driver.voice._to_mp3 = _driver.voice._to_mp3, lambda b: b
-    host._scribe = object()
+    host._scribe = _Scribe()
     try:
         await host.talk(b"fake-recording", by="marta.ruiz")
         check("the arrival reaches the model on the next turn",
@@ -925,7 +966,7 @@ async def main() -> int:
     real_turn, _driver._turn = _driver._turn, (
         lambda scribe, prompt, att, relay, **kw: said.append(prompt) or _done(None))
     real_mp3, _driver.voice._to_mp3 = _driver.voice._to_mp3, lambda b: b
-    host._scribe = object()
+    host._scribe = _Scribe()
     try:
         # AND RELEASED ON EVERY PATH. A floor left held by somebody whose
         # recording never became a turn is a room in which nobody can

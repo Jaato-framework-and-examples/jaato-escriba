@@ -114,68 +114,6 @@ def frozen_profile(workspace: Path, session_id: str) -> Optional[dict]:
     return snapshot if isinstance(snapshot, dict) else None
 
 
-#: The audit record's own word for the Art. 50(1) row.  `stage` is what
-#: every ledger row carries to say which kind of record it is, so a
-#: reader that knows the ledger knows this -- the same borrowing
-#: `housekeeping.POLICY_STAGE` makes.
-ANNOUNCEMENT_STAGE = "announcement"
-
-
-def announcement(workspace: Path, session_id: str) -> Optional[str]:
-    """What this session's person was told under Art. 50(1), or None.
-
-    READ FROM THE AUDIT RECORD, and that is the point.  The framework
-    offers two other routes and this application can take neither:
-
-    * the one-shot ``AgentOutputEvent(source="system")`` is emitted
-      AFTER the daemon answers ``session.new``
-      (``session_manager.py``: ``_answer_session_new`` then
-      ``_announce_ai_interaction``), so a client using the
-      ``IPCClient.session`` facade cannot have subscribed in time --
-      the facade builds the client and creates the session in one call.
-    * ``SessionInfoEvent.disclosure_announcement`` carries it as a
-      standing field, but the SDK's ``_await_session_info`` returns
-      only the session id and keeps nothing else, and no accessor
-      exposes it.
-
-    So the text is read where it is DURABLE, from the row the daemon
-    wrote for the audit: `delivered` is true exactly when the text
-    reached a client, and the row carries that text verbatim.  The
-    screen then quotes the record rather than paraphrasing it, which is
-    the one arrangement in which what the person was shown and what the
-    ledger says they were shown cannot drift.
-
-    `None` for every state that is not "a person was told": a profile
-    declaring no `regulatory:` block writes no row at all, which is the
-    framework declining to make a legal statement nobody authorised.
-    """
-    snapshot = frozen_profile(workspace, session_id) or {}
-    named = str(((snapshot.get("trace") or {}).get("ledger") or "")).strip()
-    if not named:
-        return None
-    where = Path(named)
-    ledger = where if where.is_absolute() else workspace / where
-    try:
-        rows = ledger.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
-    for row in rows:
-        try:
-            record = json.loads(row)
-        except json.JSONDecodeError:
-            # A LEDGER IS APPENDED TO WHILE IT IS READ.  The last line
-            # of a file a daemon is writing can be half a row, and that
-            # is a real state rather than a corrupt file.
-            continue
-        if (record.get("stage") == ANNOUNCEMENT_STAGE
-                and record.get("session_id") == session_id
-                and record.get("delivered") is True):
-            text = record.get("text")
-            return text.strip() if isinstance(text, str) and text.strip() \
-                else None
-    return None
-
-
 def clocks(workspace: Path, session_id: str) -> Optional[dict]:
     """The RESOLVED retention this session runs under, or None.
 

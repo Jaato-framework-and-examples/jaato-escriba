@@ -683,7 +683,7 @@ requires-dist = [
     { name = "ddgs", specifier = ">=9.16.0" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
     { name = "faster-whisper", marker = "extra == 'stt'", specifier = ">=1.2" },
-    { name = "jaato-sdk", specifier = ">=0.30.0rc24", index = "https://test.pypi.org/simple/" },
+    { name = "jaato-sdk", specifier = ">=0.30.0rc25", index = "https://test.pypi.org/simple/" },
     { name = "jaato-server", extras = ["openrouter", "web"], marker = "extra == 'daemon'", specifier = ">=1.3.0rc27", index = "https://test.pypi.org/simple/" },
     { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.9" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -694,15 +694,15 @@ provides-extras = ["tui", "web", "stt", "daemon"]
 
 [[package]]
 name = "jaato-sdk"
-version = "0.30.0rc24"
+version = "0.30.0rc25"
 source = { registry = "https://test.pypi.org/simple/" }
 dependencies = [
     { name = "pydantic" },
     { name = "python-dotenv" },
 ]
-sdist = { url = "https://test-files.pythonhosted.org/packages/31/94/26669520778d53dc0f8b74d93b8d704893b97c9665fc610aade736f740a3/jaato_sdk-0.30.0rc24.tar.gz", hash = "sha256:a0c0eeb351e75a0ccce9d04e8ea4a76502eb8c974c887c57de8bbf94c77488a3", size = 924108, upload-time = "2026-10-19T18:57:04.519Z" }
+sdist = { url = "https://test-files.pythonhosted.org/packages/46/32/961868d1ad9bd0ee97dda7f8a52807816738570580073d138c66d910768c/jaato_sdk-0.30.0rc25.tar.gz", hash = "sha256:132341cc9ec22e180aee0467132f11fecb895fa13978ea3080698783cf3e2572", size = 932209, upload-time = "2026-10-20T09:32:01.905Z" }
 wheels = [
-    { url = "https://test-files.pythonhosted.org/packages/b5/eb/330ed3f0d6a5b3e0f9419aa7f3bfd4328c32e96b9cca2a2406e5e100110e/jaato_sdk-0.30.0rc24-py3-none-any.whl", hash = "sha256:111a8a934b2167ba0f50c642581882efa6053caaf55a84600fc13597e96d5cdf", size = 948028, upload-time = "2026-10-19T18:57:02.783Z" },
+    { url = "https://test-files.pythonhosted.org/packages/cc/d6/8bfc81443007594ab50a70f6e271c05213c5c6b5139feb54ec2e85ef9462/jaato_sdk-0.30.0rc25-py3-none-any.whl", hash = "sha256:6adf24f1072beb3b6583b63b54b369e828d8c0578457b6300480353eaec7a672", size = 956979, upload-time = "2026-10-20T09:31:59.886Z" },
 ]
 
 [[package]]
