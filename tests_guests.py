@@ -28,8 +28,10 @@ invitation is an addition to that rule, not a hole in it.
 import asyncio
 import json
 import re
+import struct
 import sys
 import tempfile
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,6 +44,8 @@ from jaato_sdk import ClientType                          # noqa: E402
 import yaml                                              # noqa: E402
 import escriba_web.driver as _driver                     # noqa: E402
 from escriba_web.guests import ROOM, Room, label, reason, token   # noqa: E402
+from escriba_web import guests as _guests_mod              # noqa: E402
+import demo as _demo_mod                                  # noqa: E402
 from escriba_web.hub import Channel, Hub                  # noqa: E402
 from escriba_web import realm as _realm                   # noqa: E402
 from starlette.routing import Match                       # noqa: E402
@@ -89,7 +93,15 @@ async def refuses(label_: str, thing, status: int) -> None:
     """
     global fail
     try:
-        await thing if asyncio.iscoroutine(thing) else thing()
+        got = thing if asyncio.iscoroutine(thing) else thing()
+        # A CALLABLE THAT RETURNED A COROUTINE is an async route handed
+        # over the other way round, and merely CALLING one runs nothing:
+        # the leg then reports whatever the route would have done as
+        # allowed, or as refused, entirely by accident. Four legs of the
+        # guest demonstration were written that way and passed before
+        # they had ever executed a route.
+        if asyncio.iscoroutine(got):
+            await got
     except HTTPException as exc:
         if exc.status_code != status:
             print(f"  FAIL {label_:<54} refused {exc.status_code}, want {status}")
@@ -126,6 +138,33 @@ class Req:
 
     async def json(self):
         return self._json
+
+
+class Up:
+    """An upload, as a route reads one: a name and an awaitable `read`."""
+
+    def __init__(self, blob: bytes, filename: str = "") -> None:
+        self._blob, self.filename = blob, filename
+
+    async def read(self) -> bytes:
+        return self._blob
+
+
+def png(width: int, height: int) -> bytes:
+    """A real PNG, because `demo.frame` reads the IHDR.
+
+    The same builder `tests_demo` uses, for the same reason: the frame
+    gate is jaato's own `decision_images`, so a stub with the right
+    magic and no header tests the gate rather than the route.
+    """
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body)))
+    raw = b"".join(b"\x00" + b"\x00\x00\x00" * width for _ in range(height))
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw))
+            + chunk(b"IEND", b""))
 
 
 # ------------------------------------------------------------ the name
@@ -810,11 +849,19 @@ async def main() -> int:
         check("no guest route resolves a person of its own", reached, [])
     finally:
         _app.person_of = real
+    # DERIVED FROM THE ROUTER, not listed here. This was a tuple of five
+    # names, which covered the five routes that existed when it was
+    # written and would have covered no route added afterwards -- and
+    # four were: a guest records demonstrations now. A list that has to
+    # be remembered is a guard that holds until somebody forgets.
     import inspect
-    for route in (_app.guest_events, _app.guest_talk, _app.guest_stage,
-                  _app.guest_audio, _app.guest_voice):
-        check(f"and {route.__name__} does not call it",
-              "person_of" in inspect.getsource(route), False)
+    guest_routes = [r for r in _app.app.routes
+                    if getattr(r, "path", "").startswith("/invitado")]
+    check("every guest route is checked, and there are more than five",
+          len(guest_routes) > 5, True)
+    for route in guest_routes:
+        check(f"and {route.endpoint.__name__} does not call it",
+              "person_of" in inspect.getsource(route.endpoint), False)
 
     # ------------------------------------------- the live microphone
     sent: list = []
@@ -1268,6 +1315,171 @@ async def main() -> int:
           [g["email"] for g in held or []], ["marta@ejemplo.es"])
     check("with what the guest was told, so a second tab agrees",
           (held or [{}])[0].get("tema"), "el cierre contable")
+
+    # --------------------------------------- the demonstration a guest brings
+    # WHICH IS WHY THEY WERE INVITED, the same way `/invitado/stage` is:
+    # the detail the host is missing is often a file, and just as often
+    # something that can only be shown.
+    ROOM.cancel(HOST)
+    gi = ROOM.invite(HOST, "marta@ejemplo.es")
+    ROOM.justify(HOST, "marta@ejemplo.es", "lo llevó ella", "el cierre")
+    ROOM.open_up(HOST, "marta@ejemplo.es")
+    ROOM.claim(gi, GUEST, "marta.ruiz")
+    tok2 = token(HOST)
+
+    # AN UNINVITED CALLER GETS NOTHING, and learns nothing from the
+    # refusal. Every demo route re-checks, like every other guest route.
+    # THE COROUTINE, NOT A LAMBDA: `refuses` awaits what it is handed and
+    # merely CALLS a callable, which for an async route builds a
+    # coroutine nobody awaits -- and a route that never ran refuses
+    # nothing. These four legs passed that way before they were run.
+    for label_, call in (
+            ("opening", _app.guest_demo_open(Req(room="deadbeef"))),
+            ("adding a frame", _app.guest_demo_frame(
+                Req(room="deadbeef"), "x", Up(b""), 0)),
+            ("narrating", _app.guest_demo_voice(Req(room="deadbeef"), "x")),
+            ("closing", _app.guest_demo_close(Req(room="deadbeef"), "x"))):
+        await refuses(f"an uninvited caller is refused {label_}", call, 403)
+
+    host._scribe = None
+    opened = await _app.guest_demo_open(Req(room=tok2))
+    ident = opened["id"]
+    check("a guest opens a demonstration", bool(ident), True)
+    check("the invitation holds the one id their routes may touch",
+          gi.demo, ident)
+    check("and it counts against the visit", gi.demos, 1)
+    # IN THE HOST'S WORKSPACE, because that is the only place the escriba
+    # can read it from -- and `demo.py` names every file itself, so the
+    # second browser never chooses a path.
+    check("the frames land in the host's workspace",
+          (host.ws / "demo" / ident).is_dir(), True)
+    check("and the room is told who is recording", host._demo_by, "marta.ruiz")
+
+    await _app.guest_demo_frame(Req(room=tok2), ident, Up(png(640, 400)), 0)
+    check("a frame is stored", len(list((host.ws / "demo" / ident).glob("*.png"))), 1)
+    # JAATO'S OWN BOUNDS, UNCHANGED: `_demo.frame` is called as the host
+    # calls it, so a frame the `decide` tool would refuse is refused here
+    # too, by the SDK and not by a copy of its limits.
+    await refuses("a frame the model would refuse is refused at the door",
+                  _app.guest_demo_frame(Req(room=tok2), ident,
+                                        Up(b"<html>not a frame</html>"), 0), 422)
+
+    # THE HOST'S OWN DEMONSTRATION IS UNREACHABLE FROM HERE. The id comes
+    # from the wire; the host's is a microsecond timestamp, which is
+    # unguessable in practice and therefore exactly the guard this
+    # project declines to rest on. The invitation says which id is
+    # theirs, so this is decided by what was written down.
+    await refuses("a guest cannot add a frame to an id that is not theirs",
+                  _app.guest_demo_frame(Req(room=tok2), "20261020_090000_000001",
+                                        Up(png(640, 400)), 0), 404)
+    await refuses("nor narrate one",
+                  _app.guest_demo_voice(Req(room=tok2), "20261020_090000_000001"), 404)
+    await refuses("nor close one",
+                  _app.guest_demo_close(Req(room=tok2), "20261020_090000_000001"), 404)
+
+    # ONE AT A TIME, FOR THE WHOLE WORKSPACE -- `open_demo`'s own rule,
+    # which its docstring calls the same shape as `FloorTaken`. Nothing
+    # new had to be built to stop a host and a guest both recording.
+    await refuses("a second recording is refused while one is open",
+                  _app.guest_demo_open(Req(room=tok2)), 409)
+
+    sent.clear()
+    closed = await _app.guest_demo_close(Req(room=tok2), ident)
+    check("closing seals the manifest", closed["frames"], 1)
+    check("and releases the id", gi.demo, None)
+    check("and nobody is recording", host._demo_by, None)
+
+    # NO TURN. This is the one real decision in the group: the host's
+    # press IS the host asking for a document ("nobody records their
+    # screen for minutes in order to leave it on disk"), a guest's press
+    # is not, and a commission is a paid turn against the HOST's budget.
+    # So the escriba is TOLD and the host asks.
+    check("the escriba is told on its next turn, not in one of its own",
+          any("marta.ruiz" in n for n in host._notices), True)
+
+    # THE PROVENANCE OF HUNDREDS OF FILES IN SOMEBODY ELSE'S WORKSPACE.
+    # A document has a name the owner recognises; a demonstration is a
+    # directory of numbered screens that nothing else would attribute.
+    rows = [json.loads(line) for line in
+            (host.archive.dir / "manifest.jsonl").read_text(
+                encoding="utf-8").splitlines() if line.strip()]
+    for stage in ("guest-demo", "guest-demo-saved"):
+        got = [r for r in rows if r.get("stage") == stage]
+        check(f"the record says who recorded it ({stage})", len(got), 1)
+        check("named", got[-1].get("guest") if got else None, "marta.ruiz")
+        check("and asserted by the invitation, like every other room row",
+              got[-1].get("source") if got else None, "invitation")
+
+    # THE HOST'S REAL, OPEN DEMONSTRATION, which is the leg that matters.
+    # A fabricated id is refused by `_demo` itself -- it names no
+    # directory -- so those legs above pass with the guard deleted and
+    # prove almost nothing. MEASURED by deleting it: of the three, only
+    # the narration leg failed, because that route returns 204 on an
+    # empty body before ever reaching `_demo`. An id that EXISTS is the
+    # case `_their_demo` is for, and without it a guest appends their
+    # screen to the host's recording and can seal it.
+    hid = _demo_mod.open_demo(host.ws)
+    host.demo_opened(hid)
+    await refuses("a guest cannot add a frame to the HOST's open demo",
+                  _app.guest_demo_frame(Req(room=tok2), hid,
+                                        Up(png(640, 400)), 0), 404)
+    await refuses("nor narrate it",
+                  _app.guest_demo_voice(Req(room=tok2, rate=48000, channels=1),
+                                        hid), 404)
+    await refuses("nor close it out from under them",
+                  _app.guest_demo_close(Req(room=tok2), hid), 404)
+    check("and the host's demonstration is untouched",
+          len(list((host.ws / "demo" / hid).glob("*.png"))), 0)
+    _demo_mod.close_demo(host.ws, hid, b"", "webm")
+    host._demo_by = None
+
+    # COUNTED AGAINST THE VISIT, because `demo.MAX_BYTES` bounds one
+    # recording and nothing bounded a colleague opening them one after
+    # another. The disk is the host's.
+    for _ in range(_guests_mod.DEMOS - gi.demos):
+        got = await _app.guest_demo_open(Req(room=tok2))
+        await _app.guest_demo_close(Req(room=tok2), got["id"])
+    check("the visit's recordings are counted", gi.demos, _guests_mod.DEMOS)
+    await refuses("and one more is refused",
+                  _app.guest_demo_open(Req(room=tok2)), 429)
+
+    # ----------------------------------- who is recording, to both pages
+    # A GUEST COULD NOT SEE THE HOST'S DEMONSTRATION AT ALL, which
+    # `Person.voice` says in as many words -- so the guest's page offered
+    # a press that `voice` refuses server-side while a demo holds the
+    # microphone, and a second recording that `open_demo` refuses with a
+    # 409. Published on the SAME marker scheme as the floor: `None`
+    # nobody, `""` the owner, a name that guest.
+    sent.clear()
+    host._scribe = None            # so `demo_closed` takes its early exit
+    host.demo_opened("20261020_120000_000001")
+    check("the host recording is the owner's marker", host._demo_by, "")
+    demos = [d for kind, d in sent if kind == "room"]
+    check("and the room is published when it starts", len(demos) >= 1, True)
+    check("carrying who is recording", (demos[-1] if demos else {}).get("demo"), "")
+    # BUILT KEY BY KEY, so a key nobody named is a key the guest's page
+    # never sees. This one is named deliberately: it tells the guest
+    # nothing they are not already shown, and without it their press
+    # button lies.
+    check("and a guest's own snapshot carries it",
+          host.guest_snapshot(GUEST, "marta.ruiz").get("demo"), "")
+
+    sent.clear()
+    await host.demo_closed({"id": "20261020_120000_000001", "frames": 3,
+                            "audio": None})
+    check("nobody is recording once it closes", host._demo_by, None)
+    ended = [d.get("demo") for kind, d in sent if kind == "room"]
+    check("and that reaches the room before the commission would",
+          ended[-1] if ended else "?", None)
+
+    # A GUEST'S DEMONSTRATION IS NAMED, not merged into the host's: both
+    # pages compare the marker against their own identity to decide
+    # whether the press that is greyed out is theirs.
+    host.demo_opened("20261020_120500_000002", by="marta.ruiz")
+    check("a guest's recording carries the guest", host._demo_by, "marta.ruiz")
+    await host.demo_closed({"id": "20261020_120500_000002", "frames": 1,
+                            "audio": None})
+    check("and clears the same way", host._demo_by, None)
 
     # ------------------------------- the acknowledgement a guest hears
     # THE ESCRIBA ACKNOWLEDGES A GUEST'S OWN SENTENCE, and the guest was

@@ -46,7 +46,7 @@ import workspace as _workspace                                     # noqa: E402
 
 from . import driver as _driver                                    # noqa: E402
 from .driver import FloorTaken, NothingHeard, NotReady, Person     # noqa: E402
-from .guests import ROOM, Invitation, label, token  # noqa: E402
+from .guests import DEMOS, ROOM, Invitation, label, token  # noqa: E402
 from .hub import frame                                             # noqa: E402
 from . import realm as _realm                                       # noqa: E402
 
@@ -517,11 +517,18 @@ async def demo_close(request: Request, ident: str,
     return manifest
 
 
-# NO GUEST ROUTE, deliberately. A demonstration is the host's own
-# screen, captured on the host's own machine; nothing in the feature
-# needs a second browser, and `escriba_web/CLAUDE.md`'s rule is that a
-# guest receives what is BUILT for them rather than what is left
-# unguarded.
+# THE GUEST'S FOUR MIRROR ROUTES ARE IN THE GUESTS SECTION BELOW, beside
+# every other `/invitado/*` handler, because they need `_invited` and
+# because that is where this boundary is read. This comment used to say
+# there were none -- "a demonstration is the host's own screen" -- and
+# the feature was asked for the other way round: a colleague called in to
+# settle a question often has to SHOW it, and showing is what this
+# records.
+#
+# What has not changed is the rule it cited: a guest receives what is
+# BUILT for them. These routes add no read of anything; they let somebody
+# write their own screen into the host's workspace, named, counted and
+# recorded.
 
 
 def _recording(person: Person, att_id: str) -> FileResponse:
@@ -1129,6 +1136,153 @@ async def guest_stage(request: Request, document: UploadFile) -> dict:
         return row
     except _staging.TooLarge as exc:
         raise HTTPException(413, f"{exc}") from exc
+
+
+def _their_demo(inv: Invitation, ident: str) -> None:
+    """Refuse an id that is not the demonstration this guest opened.
+
+    THE ID ARRIVES FROM THE WIRE, and the host's own is a microsecond
+    timestamp -- unguessable in practice, which is exactly the kind of
+    guard this project declines to rest on. The invitation holds the one
+    id this guest opened, so the question is decided by what was written
+    down rather than by how hard a value is to find: a guest can add
+    frames to, narrate and close THEIR recording and no other, and the
+    host's demonstration is unreachable from here by construction.
+
+    404 AND NOT 403: this says nothing about whether a demonstration
+    with that id exists, which is the same answer `_demo.NoSuchDemo`
+    produces for the host.
+    """
+    if not ident or inv.demo != ident:
+        raise HTTPException(404, "no hay ninguna demostración abierta con ese id")
+
+
+@app.post("/invitado/demo/abrir")
+async def guest_demo_open(request: Request) -> dict:
+    """A demonstration the GUEST records, in the host's workspace.
+
+    WHICH IS WHY THEY WERE INVITED, in the same way `/invitado/stage`
+    is: the detail the host is missing is often a file, and just as
+    often something that can only be shown. `demo.open_demo` and
+    `demo.frame` are called unchanged, so the rule that the SERVER names
+    every file and jaato's own image bounds both cover the second
+    browser for free -- the way staging's filename guard already does.
+
+    ONE AT A TIME, FOR THE WHOLE WORKSPACE. `open_demo` refuses a second
+    recording with `AlreadyOpen`, whose own docstring calls it the same
+    shape as `FloorTaken`, so a guest and a host cannot both record and
+    nothing new had to be built to stop them.
+
+    COUNTED AGAINST THE VISIT. `demo.MAX_BYTES` bounds one recording;
+    nothing bounded a colleague opening them one after another, and the
+    disk is the host's.
+    """
+    if CLOSING.is_set():
+        raise HTTPException(503, "el escriba se está reiniciando; "
+                                 "inténtalo de nuevo en un momento")
+    host, inv, name = _invited(request)
+    if inv.demos >= DEMOS:
+        # 429 AND NOT 403: nothing about the invitation is wrong, and the
+        # host can see the count. A guest told "forbidden" would go
+        # looking for permission they already have.
+        raise HTTPException(429, f"ya has grabado {DEMOS} demostraciones "
+                                 f"en esta visita")
+    try:
+        ident = _demo.open_demo(host.ws)
+    except _demo.AlreadyOpen as exc:
+        raise HTTPException(409, f"{exc}") from exc
+    # SPENT ON OPEN, so an abandoned recording still costs its slot: the
+    # directory it left behind is what the next `open_demo` refuses.
+    inv.demos += 1
+    inv.demo = ident
+    host.demo_opened(ident, by=name)
+    # THE PROVENANCE OF HUNDREDS OF FILES IN SOMEBODY ELSE'S WORKSPACE,
+    # for `guest-staged`'s reason and more so: a document has a name a
+    # person recognises, and a demonstration is a directory of numbered
+    # screens that nothing else would attribute.
+    host.archive.turn(stage="guest-demo", guest=name, demo=ident,
+                      source="invitation")
+    return {"id": ident}
+
+
+@app.post("/invitado/demo/{ident}/fotograma")
+async def guest_demo_frame(request: Request, ident: str, frame: UploadFile,
+                           at_ms: int = Form(0)) -> dict:
+    """One frame of the guest's demonstration.
+
+    `_demo.frame` UNCHANGED: no filename is read, the frame is numbered
+    by the server, and a frame the `decide` tool would refuse is refused
+    at the door by jaato's own `decision_images` rather than by a copy
+    of its limits. All of that was already true for one browser.
+    """
+    host, inv, _name = _invited(request)
+    _their_demo(inv, ident)
+    try:
+        return _demo.frame(host.ws, ident, await frame.read(), at_ms)
+    except _demo.NotAFrame as exc:
+        raise HTTPException(422, f"{exc}") from exc
+    except _demo.TooLarge as exc:
+        raise HTTPException(413, f"{exc}") from exc
+    except _demo.NoSuchDemo as exc:
+        raise HTTPException(404, "no hay ninguna demostración abierta con ese id") from exc
+
+
+@app.post("/invitado/demo/{ident}/voz")
+async def guest_demo_voice(request: Request, ident: str) -> Response:
+    """The guest narrating their own demonstration, live.
+
+    ITS OWN ROUTE AND NOT `/invitado/voz`, for the reason the host's
+    `/demo/{id}/voz` is not `/voz`: that one fans the samples out to
+    everybody in the room, and a demonstration's narration is a question
+    for this boundary rather than a side effect of the escriba
+    listening. Here it reaches `Person.demo_voice`, which feeds the
+    host's follower -- so the escriba acknowledges the guest's own
+    narration, and the guest hears it.
+    """
+    host, inv, _name = _invited(request)
+    _their_demo(inv, ident)
+    pcm, rate, channels = await _pcm(request)
+    if pcm:
+        try:
+            host.demo_voice(ident, pcm, rate, channels)
+        except _demo.NoSuchDemo as exc:
+            raise HTTPException(
+                404, "no hay ninguna demostración abierta con ese id") from exc
+        except _live.ShapeChanged as exc:
+            raise HTTPException(400, f"{exc}") from exc
+    return Response(status_code=204)
+
+
+@app.post("/invitado/demo/{ident}/cerrar")
+async def guest_demo_close(request: Request, ident: str,
+                           audio: UploadFile | None = None,
+                           suffix: str = Form("webm")) -> dict:
+    """Stop the guest's recording: store it, and commission NOTHING.
+
+    `demo_closed_by_guest` AND NOT `demo_closed`, which is the one real
+    decision in this group and is argued where it is made. In short: the
+    host's press is the host asking for a document, a guest's press is
+    not, and a commission is a paid turn against the host's budget.
+
+    NOT FIRED AND FORGOTTEN, unlike the host's: there is no turn to wait
+    for, so the work is done before the answer goes back.
+    """
+    host, inv, name = _invited(request)
+    _their_demo(inv, ident)
+    try:
+        manifest = _demo.close_demo(host.ws, ident,
+                                    await audio.read() if audio else b"", suffix)
+    except _demo.TooLarge as exc:
+        raise HTTPException(413, f"{exc}") from exc
+    except _demo.NoSuchDemo as exc:
+        raise HTTPException(404, "no hay ninguna demostración abierta con ese id") from exc
+    # RELEASED EITHER WAY IT ENDS: the count is what bounds the visit,
+    # and this field only says which id their routes may touch.
+    inv.demo = None
+    host.demo_closed_by_guest(manifest, by=name)
+    host.archive.turn(stage="guest-demo-saved", guest=name, demo=ident,
+                      frames=manifest["frames"], source="invitation")
+    return manifest
 
 
 @app.get("/invitado/audio/{att_id}")

@@ -831,6 +831,22 @@ class Person:
         #: own button rather than letting a press do nothing. `None` is
         #: nobody, `""` is the owner, a name is that guest.
         self._floor: Optional[str] = None
+        #: WHO IS RECORDING A DEMONSTRATION, on the same marker scheme as
+        #: `_floor`: `None` is nobody, `""` is the owner, a name is that
+        #: guest. A SIBLING AND NOT THE SAME FIELD -- the floor is held
+        #: for the length of one turn and its refusal is coupled to
+        #: `_turn_lock` (see `talk`), while a demonstration runs for
+        #: minutes and holds no lock, so overloading it would make
+        #: `FloorTaken`'s "your own second press still queues" mean two
+        #: things.
+        #:
+        #: IT EXISTED NOWHERE BEFORE, and `voice` says what that cost:
+        #: "a guest's page cannot see the host's demonstration at all".
+        #: Both pages need it for the same reason the floor is published
+        #: -- a button that does nothing is the worst thing a page can
+        #: offer -- and a guest who can record needs it the other way
+        #: round too.
+        self._demo_by: Optional[str] = None
         #: `{"url": ..., "dir": Path}` when the operator wired a kbwiki,
         #: `None` when they did not.  ABSENT IS OFF, with nothing
         #: defaulted: a URL this project invented would point the
@@ -1679,6 +1695,14 @@ class Person:
         """
         self.hub.publish("room", {"present": list(self._guests),
                                   "floor": self._floor,
+                                  # IN THE ROOM FRAME AND NOT ONE OF ITS
+                                  # OWN: who is recording is the same
+                                  # kind of fact as who is talking, and
+                                  # this frame's handler already redraws
+                                  # the band and the press button. A new
+                                  # event kind would need a listener
+                                  # registered beside it for nothing.
+                                  "demo": self._demo_by,
                                   "guests": self.invitations()})
 
     def invitations(self) -> List[dict]:
@@ -2331,8 +2355,13 @@ class Person:
             return b""
         return self._following.ring.wav(seconds)
 
-    def demo_opened(self, ident: str) -> None:
+    def demo_opened(self, ident: str, by: str = "") -> None:
         """Tell the escriba a demonstration has started recording.
+
+        `by` IS THE SAME MARKER THE FLOOR USES: `""` for the owner, a
+        name for a guest the host invited in. It is published so that
+        every page in the room can say who is recording and grey out its
+        own press, which is what the floor already does for a turn.
 
         A NOTICE AND NOT A TURN, which is `stage`'s rule rather than
         `ask_why`'s, and for a reason particular to this: the person has
@@ -2347,14 +2376,81 @@ class Person:
         recording is running would answer that as if nothing were
         happening.
         """
-        self._notices.append(self.say("agent.demo_started"))
-        self.board.note(self.say("note.demo_started"))
+        # PUBLISHED FIRST, because the rest of this is the escriba being
+        # told and the page being written to -- and the one thing that
+        # must not lag is the other browser's press button.
+        self._demo_by = by
+        self._told_who()
+        if by:
+            # NAMED, for `agent.guest_joined`'s reason: this is somebody
+            # else's screen, the escriba is not talking to the person it
+            # knows, and whatever comes of it has to be attributable.
+            # The host is in the room throughout, so the transcript says
+            # whose recording it is too.
+            self._notices.append(self.say("agent.demo_guest_started", who=by))
+            self.board.note(self.say("note.demo_guest_started", who=by))
+        else:
+            self._notices.append(self.say("agent.demo_started"))
+            self.board.note(self.say("note.demo_started"))
         # THE ORIGIN THE PAGE'S OWN SERIES IS JOINED TO.  `frames.jsonl`
         # times every capture from the moment the demo opened, on the
         # page's clock; this row is that moment on the journal's, which
         # is what lets a renderer put both on one axis without either
         # file pretending to the other's clock.
-        self.journal.note("demo.open", ident=ident)
+        #
+        # `guest=` AND NOT THE NAME. The journal is the timing record and
+        # reduces what it holds to shapes (`journal._shape`); the
+        # manifest is the audit record and already carries `guest:
+        # "<name>"` on the `guest-demo` row. One fact, one file -- and
+        # the sequence panel only ever needs to know WHICH kind of
+        # demonstration this was.
+        self.journal.note("demo.open", ident=ident, guest=bool(by))
+
+    def demo_closed_by_guest(self, manifest: Dict[str, Any], by: str) -> None:
+        """A guest's demonstration is finished: stored, and NOT written up.
+
+        A NOTICE AND NOT A TURN, which is `stage`'s ending rather than
+        `demo_closed`'s -- and the whole of this method is that one
+        difference, so it is worth saying why three times over.
+
+        THE INFERENCE `demo_closed` RESTS ON DOES NOT HOLD HERE. It
+        commissions because stopping a recording IS the question:
+        "nobody records their screen for minutes in order to leave it on
+        disk". True of the person whose second brain this is; not true
+        of a colleague called in for ten minutes, who is showing the
+        host something and is not the one who decides what this
+        workspace documents.
+
+        `escriba.md` SAYS "SOLO CUANDO LO PIDE", and the person it means
+        is the host. `demo_closed` keeps that rule by relaying the
+        host's own press; relaying a GUEST's press as if it were the
+        host asking would be the drift the rule exists to prevent.
+
+        AND A COMMISSION IS A PAID TURN AGAINST THE HOST'S BUDGET. The
+        documenter's own `budget_control` allows `usd: 0.60` per
+        document, taken from the ceiling the host's session is finalised
+        against. A guest must not be able to spend it: inviting somebody
+        in for a detail is not handing them the chequebook.
+
+        So the demonstration is stored, both windows are told, and the
+        escriba is told on its next real turn -- the host asks for the
+        document if they want one, which is one sentence and theirs to
+        say.
+        """
+        self._unfollow(manifest["id"])
+        self._demo_by = None
+        self._told_who()
+        self.journal.note("demo.close", ident=manifest["id"],
+                          frames=manifest["frames"],
+                          narrated=bool(manifest["audio"]), guest=True)
+        self.board.note(self.say("note.demo_guest_saved", who=by,
+                                 frames=manifest["frames"]))
+        # QUEUED, NOT SPOKEN. `_notices` rides the next real turn,
+        # whichever side takes it, for the reason room events do: a turn
+        # spent announcing something answers a question nobody asked and
+        # puts the escriba between the host and their own next sentence.
+        self._notices.append(self.say("agent.demo_guest_saved", who=by,
+                                      frames=manifest["frames"]))
 
     async def demo_closed(self, manifest: Dict[str, Any]) -> None:
         """A demonstration is finished: commission the document, then say so.
@@ -2410,6 +2506,12 @@ class Person:
         # and complete, so keeping a lossy window of it in memory until
         # the next demonstration would be holding the worse copy.
         self._unfollow(manifest["id"])
+        # NOBODY IS RECORDING ANY MORE, and that has to reach the other
+        # browser before the commission turn does: a press button left
+        # grey for the length of a document being written is a room in
+        # which nobody can speak.
+        self._demo_by = None
+        self._told_who()
         self.journal.note("demo.close", ident=manifest["id"],
                           frames=manifest["frames"],
                           narrated=bool(manifest["audio"]))
@@ -2931,6 +3033,12 @@ class Person:
                                    # than an empty one.
                                    present=list(self._guests),
                                    floor=self._floor,
+                                   # AND HERE AS WELL AS IN THE FRAME,
+                                   # for the reason `guests` is: a
+                                   # reconnecting page must come back to
+                                   # the room it left rather than to one
+                                   # in which nobody is recording.
+                                   demo=self._demo_by,
                                    consumo=self.consumption())
 
     def guest_snapshot(self, principal: str, name: str) -> dict:
@@ -2974,6 +3082,12 @@ class Person:
                 # not been given the chance to decide what to say.
                 "present": list(self._guests),
                 "floor": self._floor,
+                # WHO IS RECORDING, which a guest could not see at all
+                # before -- `voice`'s docstring says so in as many words.
+                # It names nobody the guest cannot already see: the
+                # marker is `""` for the host, whose name the guest is
+                # shown anyway, or a guest's own display name.
+                "demo": self._demo_by,
                 # The host's language, not the guest's: the conversation
                 # is in it, the escriba speaks it, and the guest has no
                 # session here whose preference could be read.

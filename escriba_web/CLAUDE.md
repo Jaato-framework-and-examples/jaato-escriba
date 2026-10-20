@@ -37,6 +37,41 @@ of record:
 | An offer leaves by the path it arrived | the frame carries the WHOLE list rather than an event, so a withdrawal is the same frame with nothing in it. An offer still on screen after the host changed their mind is a button that 403s |
 | Inviting somebody is not a way to learn whether they are online | `_offer` returns nothing, and the route's answer is identical whether or not a `Person` matched. Asserted by comparing the two answers, not by reading the code |
 | A failed recording cannot lock the room | the floor is a context manager (`Person._holding`), not a pair of calls around the turn's `try` — `_to_mp3` and `archive.heard` both sit inside it and both can raise |
+| A guest can record a demonstration into the host's workspace, and the browser still names nothing | the four `/invitado/demo/*` routes call `_demo.*` **unchanged**, so the server numbers every frame and jaato's own `decision_images` refuses any the `decide` tool would — the guards that already covered one browser cover the second for free, as `staging`'s filename guard does for `/invitado/stage` |
+| A guest cannot touch a demonstration that is not theirs | `Invitation.demo` holds the one id their routes will act on (`_their_demo`). The host's id is a microsecond timestamp — unguessable in practice and therefore exactly the kind of guard this file does not rest on. Measured by deleting it: a guest then appends their screen to the host's recording and can seal it |
+| A guest's recording cannot commission a document | `demo_closed_by_guest` is a **notice, not a turn**. The host's press IS the host asking ("nobody records their screen for minutes in order to leave it on disk"); a guest's is not, `escriba.md` says "solo cuando lo pide", and a commission is a paid turn against the host's budget |
+| A guest cannot fill the host's disk with recordings | `Invitation.demos` against `guests.DEMOS`, counted on **open** so an abandoned recording still spends its slot. `demo.MAX_BYTES` already bounded one recording and nothing bounded a sequence of them. Re-inviting the same address builds a **new** invitation, so the count starts again — which is the host deciding, in the one place they can see what has happened |
+| Only one person records at a time | `demo.open_demo` refuses a second with `AlreadyOpen` → 409, which its own docstring calls the same shape as `FloorTaken`. Nothing new was built for this |
+| Every page in the room knows who is recording | `Person._demo_by` rides the `room` frame and both snapshots, on the floor's own marker scheme (`None` nobody, `""` the owner, a name that guest). It did not exist before: `Person.voice` records that "a guest's page cannot see the host's demonstration at all", so that page offered a press the server refuses and a recording `open_demo` refuses |
+| A guest hears the escriba acknowledge their own sentence | the server names the whole clip path and the page assigns it untouched. The page used to rebuild it with `api()`, which prefixes `/invitado` — measured against the router, a guest's request matched **no route at all**, and `play()`'s catch (written for a muted tab) made the 404 silent. The one person who never heard the acknowledgement was the one who had just spoken |
+
+## What a guest may WRITE, and what their writing may cause
+
+Everything above about withholding is about what a guest RECEIVES. A
+demonstration is the first thing that makes a guest a bulk **writer** of
+the host's workspace — hundreds of numbered screens and a narration —
+so the shape of that permission is worth stating on its own.
+
+**The capture is theirs; the commission is the host's.** Those are two
+decisions and they went opposite ways on purpose. Letting a guest record
+follows the precedent `/invitado/stage` already set: the detail the host
+is missing is often a file, just as often something that can only be
+shown, and an inbound contribution is recorded and attributed rather
+than gated. Letting a guest's press COMMISSION a document would follow no
+precedent at all — it would spend the host's budget on somebody else's
+initiative and put a document in their workspace that they never asked
+for. So `demo_closed_by_guest` tells the escriba and stops; the host asks
+for the document in one sentence, which is theirs to say.
+
+**Known, and not solved here:** a guest whose browser goes away
+mid-recording leaves the demonstration open, and `open_demo` then refuses
+the host's own next recording with a 409 until it is closed. This is
+exactly what `demo.py` already decided for a host in the same position —
+"a demo whose browser went away mid-recording stays open and readable
+rather than becoming a directory of PNGs with no times in it" — and the
+frames are worth more than the convenience. It is written down because
+the next reader will meet a 409 they did not expect, not because it is
+thought to be right.
 
 ## The address the host types, and the one the proxy asserts
 

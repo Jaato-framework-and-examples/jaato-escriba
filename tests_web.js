@@ -948,6 +948,57 @@ T.S.floor = "";           // the host has it
 T.pttFace();
 check("the host holding it does not lock the host out", pttEl().disabled, false);
 T.S.floor = null;
+
+// WHO IS RECORDING A DEMONSTRATION, which is the other hold and the
+// longer one. It did not exist on this page before: a guest could not
+// see the host's demonstration at all, so it offered a press that
+// `voice` refuses server-side while a demo holds the microphone -- and
+// `open_demo` refuses a second recording with 409. Both buttons grey.
+T.S.demoBy = "";                         // the host is recording
+T.pttFace(); T.demoFace();
+check("the host recording does not lock the host out", pttEl().disabled, false);
+const demoEl = () => byId.get("demo-btn");
+
+T.S.guest = true; T.S.who = "marta.ruiz"; T.S.host = "dani";
+T.pttFace(); T.demoFace();
+check("a guest cannot press while the host records", pttEl().disabled, true);
+check("and is told who is recording",
+      byId.get("ptt-title").textContent.includes("dani"), true);
+check("nor start a recording of their own", demoEl().disabled, true);
+check("with the reason on the button, before any screen picker",
+      byId.get("demo-note").textContent.includes("dani"), true);
+
+T.S.demoBy = "marta.ruiz";               // the guest is recording
+T.pttFace(); T.demoFace();
+check("their own recording does not lock them out", pttEl().disabled, false);
+
+T.S.guest = false; T.S.who = "dani";
+T.pttFace(); T.demoFace();
+check("and the host cannot press while the guest records",
+      pttEl().disabled, true);
+check("nor open a second demonstration", demoEl().disabled, true);
+
+T.S.demoBy = null;
+
+// AND A GUEST IS TOLD WHO ASKS FOR THE DOCUMENT. Their press records but
+// does not commission -- `demo_closed_by_guest` is a notice, not a turn
+// -- so handing them the host's hint would promise a document only the
+// host can ask for.
+// The sandbox is an insecure origin, so `demo.reason` is set and takes
+// the note for itself -- lifted here the way `micReason` is above,
+// because these two legs are about the hint and nothing else.
+const noShare = T.S.demo.reason;
+T.S.demo.reason = null;
+T.S.guest = true; T.S.who = "marta.ruiz";
+T.demoFace();
+const guestHint = byId.get("demo-note").textContent;
+T.S.guest = false; T.S.who = "dani";
+T.demoFace();
+check("a guest's hint is not the host's", guestHint !== byId.get("demo-note").textContent,
+      true);
+check("and it is the one that says who asks", guestHint, ES["demo.hint_guest"]);
+T.S.demo.reason = noShare;
+
 T.S.micReason = noMic;
 T.renderAll();
 

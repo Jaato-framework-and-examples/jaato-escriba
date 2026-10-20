@@ -83,6 +83,21 @@ NAME_CHARS = 60
 #: confirms it before anybody sees it -- see `Room.open_up`.
 REASON_CHARS = 240
 
+#: How many demonstrations one guest may record in one visit.
+#:
+#: A VISIT AND NOT A DAY, because that is the unit this whole module is
+#: sized for -- minutes, with the host present throughout -- and the
+#: count lives on the invitation, so it dies with the room and there is
+#: no clock for it to be wrong about.
+#:
+#: WHY A CEILING AT ALL.  `demo.MAX_BYTES` bounds ONE demonstration at
+#: 192 MB, which is the right unit for the person whose disk it is;
+#: repeated demonstrations are bounded by nothing, and `demo`'s own
+#: sizing note argues from a host with 2 GB free.  Three is what a
+#: colleague called in to show something needs -- the first one, and two
+#: more because the first take is often wrong.
+DEMOS = 3
+
 
 def label(name: str) -> str:
     """A speaker's name, safe to put in a prompt and short enough to read."""
@@ -145,6 +160,17 @@ class Invitation:
     #: one request that lasts the whole visit, so the only way to close it
     #: is from this side.
     queues: List[asyncio.Queue] = field(default_factory=list)
+    #: THE ONE DEMONSTRATION THIS GUEST HAS OPEN, and the only id their
+    #: routes will act on.  A demo id arrives from the wire, and the
+    #: host's own id is a microsecond timestamp -- unguessable in
+    #: practice and therefore exactly the kind of guard this project
+    #: refuses to rest on.  Holding it here makes the question
+    #: deterministic: a guest can append frames to, narrate and close
+    #: THEIR recording, and no other, because no other is written here.
+    demo: Optional[str] = None
+    #: How many they have opened this visit, against `DEMOS`.  Counted on
+    #: open rather than on close, so abandoning one still spends it.
+    demos: int = 0
 
     def json(self) -> dict:
         return {"email": self.email, "since": self.since.isoformat(timespec="seconds"),

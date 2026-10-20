@@ -693,6 +693,12 @@ const S = {
   //: guest. With three people the lock has to be VISIBLE: a press that
   //: silently does nothing is the worst affordance in the page.
   floor: null,
+  //: WHO IS RECORDING A DEMONSTRATION, on the same marker scheme as
+  //: `floor`: `null` is nobody, `""` is the host, a name is that guest.
+  //: Published rather than inferred, and it did not exist before -- a
+  //: guest's page could not see the host's demonstration at all, so it
+  //: offered a press that would have interrupted one.
+  demoBy: null,
   //: Everybody in the room, by name, as the server publishes it.
   present: [],
   //: The other voice, silenced. A host and a guest are often already on
@@ -1687,9 +1693,24 @@ function demoFace() {
   // the microphone: the reason is shown instead of being discovered by
   // pressing. The hint below it invites the person to record something,
   // and on a phone that invitation cannot be honoured at all.
-  b.disabled = S.demo.busy || !!S.demo.reason;
-  note.textContent = S.demo.reason || S.demo.msg
-    || tx(on ? "demo.stop" : "demo.hint");
+  //
+  // SOMEBODY ELSE HOLDS THE RECORDING. `open_demo` refuses a second one
+  // with 409 -- "one demo at a time", which its own docstring calls the
+  // same shape as `FloorTaken` -- so without this the button walks the
+  // person through the screen picker and fails afterwards: the intrusive
+  // step first and the refusal second, which is the worst order a press
+  // can fail in.
+  const theirs = S.demoBy != null && S.demoBy !== (S.guest ? S.who : "");
+  b.disabled = S.demo.busy || !!S.demo.reason || (theirs && !on);
+  note.textContent = (theirs && !on)
+    ? tx("demo.theirs", { who: S.demoBy || S.host || "" })
+    // A GUEST IS TOLD THE TRUTH ABOUT WHAT HAPPENS NEXT. `demo.hint`
+    // says the recording is for documenting afterwards, which is true
+    // for the host -- their press commissions the document. A guest's
+    // does not, deliberately (`demo_closed_by_guest`), so handing them
+    // the same line would promise a document only the host can ask for.
+    : (S.demo.reason || S.demo.msg
+       || tx(on ? "demo.stop" : (S.guest ? "demo.hint_guest" : "demo.hint")));
   note.className = (S.demo.reason || (S.demo.msg && S.demo.bad))
     ? "demo-note bad" : "demo-note";
 }
@@ -2898,6 +2919,19 @@ function pttFace() {
     time.textContent = "";
     return;
   }
+  // SOMEBODY ELSE IS RECORDING A DEMONSTRATION, which holds the
+  // microphone for MINUTES rather than for a turn -- `voice` refuses
+  // these samples server-side while a demo holds it ("A DEMONSTRATION
+  // KEEPS THE MICROPHONE"), so a press here would record into nothing.
+  // Checked before the floor because it is the longer and the more
+  // consequential of the two holds.
+  if (S.demoBy != null && S.demoBy !== (S.guest ? S.who : "") && !S.recording) {
+    ptt.disabled = true;
+    t.textContent = tx("demo.theirs", { who: S.demoBy || S.host || "" });
+    s.textContent = tx("ptt.sub");
+    time.textContent = "";
+    return;
+  }
   // SOMEBODY ELSE HAS THE FLOOR, so this button says so and does not
   // work. The lock has always existed server-side; what is new is that
   // three people can race for it, and a press that silently does
@@ -3279,6 +3313,10 @@ function onEvent(kind, data) {
     // snapshot like everything else the page redraws from.
     S.present = data.present || [];
     S.floor = data.floor !== undefined ? data.floor : null;
+    // `!== undefined`, NOT `||`: `""` is a real value here -- it means
+    // the host is the one recording -- and truthiness would read it as
+    // nobody.
+    S.demoBy = data.demo !== undefined ? data.demo : null;
     renderAll();
     if (seqBody) drawSequence(seqBody);
   } else if (kind === "entry") {
@@ -3324,12 +3362,15 @@ function onEvent(kind, data) {
   } else if (kind === "room") {
     S.present = data.present || [];
     S.floor = data.floor !== undefined ? data.floor : S.floor;
+    S.demoBy = data.demo !== undefined ? data.demo : S.demoBy;
     // THE INVITATIONS COME THIS WAY TOO. A field the escriba fills in
     // arrives seconds after the host's click and on nobody's request,
     // so there is no reply for it to ride; and this is what makes a
     // second tab, and the first one after a reconnect, agree.
     if (!S.guest && data.guests) S.guests = data.guests;
-    renderGuest(); renderScratch(); pttFace();
+    // `demoFace` TOO: the frame now carries who is recording, and the
+    // demo button is the other one that has to go grey for it.
+    renderGuest(); renderScratch(); pttFace(); demoFace();
   } else if (kind === "invitacion") {
     // AN INVITATION THAT ARRIVED WHILE THIS PAGE WAS ALREADY OPEN.
     // `/invitacion` is asked once, at boot, so somebody already sitting
