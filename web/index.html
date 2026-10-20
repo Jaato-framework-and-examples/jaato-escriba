@@ -3509,8 +3509,23 @@ function sayBack(data) {
   if (!BACK.el) {
     BACK.el = new Audio();
     BACK.el.preload = "auto";
+    // A CLIP THAT WILL NOT LOAD IS NOT A REFUSED AUTOPLAY. The two were
+    // indistinguishable, and that is why the guest bug below went
+    // unseen for as long as it did: `play()`'s rejection is caught and
+    // dropped a few lines down because a muted tab is genuinely nothing
+    // to report, and the same silence swallowed a 404 in every guest's
+    // browser. This is the one of the two that means something is wrong.
+    BACK.el.onerror = () => {
+      console.error("backchannel: the clip did not load", BACK.el.src);
+    };
   }
-  BACK.el.src = api("/" + data.clip);
+  // NOT THROUGH `api()`, which exists for the per-session routes that
+  // have an `/invitado` mirror. These twelve files have none -- they are
+  // the application's own assets, the same for everybody -- so the
+  // server names the finished path (`driver._acknowledge`) and this
+  // assigns it untouched. Building a URL here is what put `/invitado` in
+  // front of an asset and left the guest hearing nothing.
+  BACK.el.src = data.clip;
   // AUTOPLAY IS ALLOWED HERE because a demonstration cannot start
   // without the person having clicked to record, which is the gesture
   // the browser wants.  It can still refuse -- a muted tab, a policy --

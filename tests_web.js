@@ -1285,18 +1285,35 @@ check("and an answer that never came says that instead",
   };
   // ONE ELEMENT, REUSED.  A demonstration is minutes long with a
   // boundary every twenty seconds.
-  T.sayBack({ clip: "voz/es/back.ack1.ogg" });
+  T.sayBack({ clip: "/voz/es/back.ack1.ogg" });
   T.BACK.last = 0;                       // a boundary later, not a replay
-  T.sayBack({ clip: "voz/es/back.ack3.ogg" });
+  T.sayBack({ clip: "/voz/es/back.ack3.ogg" });
   check("one audio element serves every acknowledgement", made, 1);
   check("and each clip is played by name", plays,
         ["/voz/es/back.ack1.ogg", "/voz/es/back.ack3.ogg"]);
+
+  // A GUEST HEARS THE SAME CLIP FROM THE SAME PATH, and this is the leg
+  // that would have caught the bug. The page used to build the URL with
+  // `api()`, which prefixes `/invitado` and appends the room to every
+  // path it is handed; the twelve clips have no guest mirror, so a
+  // guest's browser asked for `/invitado/voz/es/back.ack3.ogg` and got a
+  // 404 that `play()`'s catch dropped in silence. MEASURED against the
+  // real router on 2026-10-20: the host's path matched, the guest's
+  // matched nothing. The server names the finished path now, so the two
+  // browsers ask for one thing.
+  const wasRoom = T.S.room;
+  T.S.room = "a1b2c3d4";
+  T.BACK.last = 0;
+  T.sayBack({ clip: "/voz/es/back.ack1.ogg" });
+  check("a guest asks for the clip where the host does", plays[plays.length - 1],
+        "/voz/es/back.ack1.ogg");
+  T.S.room = wasRoom;
 
   // A SECOND FRAME IN THE SAME SECOND IS A RECONNECT, not the escriba
   // speaking twice: the server thins boundaries to one per fifteen
   // seconds, so anything closer came from the page's own stream.
   const before = plays.length;
-  T.sayBack({ clip: "voz/es/back.ack2.ogg" });
+  T.sayBack({ clip: "/voz/es/back.ack2.ogg" });
   check("a frame replayed within the second is ignored", plays.length, before);
 
   // A FRAME WITH NO CLIP DOES NOTHING, which is what an older server

@@ -44,6 +44,8 @@ import escriba_web.driver as _driver                     # noqa: E402
 from escriba_web.guests import ROOM, Room, label, reason, token   # noqa: E402
 from escriba_web.hub import Channel, Hub                  # noqa: E402
 from escriba_web import realm as _realm                   # noqa: E402
+from starlette.routing import Match                       # noqa: E402
+import backchannel as _backchannel                        # noqa: E402
 
 fail = 0
 
@@ -1266,6 +1268,49 @@ async def main() -> int:
           [g["email"] for g in held or []], ["marta@ejemplo.es"])
     check("with what the guest was told, so a second tab agrees",
           (held or [{}])[0].get("tema"), "el cierre contable")
+
+    # ------------------------------- the acknowledgement a guest hears
+    # THE ESCRIBA ACKNOWLEDGES A GUEST'S OWN SENTENCE, and the guest was
+    # the one person who never heard it. `/invitado/voz` resolves the
+    # HOST's person, so a guest's live frames feed the host's follower
+    # and the boundaries found in them are published to the host's hub --
+    # which the guest's `/invitado/events` is subscribed to. Both ends
+    # were built for that on purpose: `app.backchannel_clip` takes no
+    # principal and no invitation so that a demonstration does not sound
+    # different in the second browser.
+    #
+    # And then the page rebuilt the URL with `api()`, which prefixes
+    # `/invitado` and appends the room to every path handed to it. The
+    # twelve clips have no guest mirror, so the request went to a path
+    # that matches NO route, and `play()`'s catch -- written for a muted
+    # tab -- dropped the 404 without a word.
+    #
+    # MEASURED 2026-10-20 against the real router: the host's
+    # `/voz/es/back.ack3.ogg` matched FULL, the guest's
+    # `/invitado/voz/es/back.ack3.ogg` matched NONE. So this leg asks the
+    # router, rather than asserting the string the driver happens to
+    # build: what matters is that the path REACHES something.
+    sent.clear()
+    host._acknowledge("turn", "abcd",
+                      _backchannel.Boundary(at=1.5, kind="cue", room=0.6))
+    clips = [d.get("clip") for kind, d in sent if kind == "backchannel"]
+    check("an acknowledgement names a clip", len(clips), 1)
+    said = clips[-1] if clips else ""
+    # ABSOLUTE, because that is what leaves the page nothing to rewrite.
+    check("and names the whole path, not a fragment",
+          said.startswith("/voz/"), True)
+
+    def reaches(path: str) -> bool:
+        """Does this path match any route the application serves?"""
+        scope = {"type": "http", "path": path, "method": "GET",
+                 "headers": [], "root_path": ""}
+        return any(r.matches(scope)[0] is Match.FULL for r in _app.app.routes)
+
+    check("the clip the escriba names is served", reaches(said), True)
+    # THE REGRESSION ITSELF: if anything ever puts the guest prefix back
+    # in front of an asset, this is the leg that says so.
+    check("and asking for it under the guest prefix reaches nothing",
+          reaches("/invitado" + said), False)
 
     print("guests OK" if not fail else f"{fail} failure(s)")
     return 1 if fail else 0

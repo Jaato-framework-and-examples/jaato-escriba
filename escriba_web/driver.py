@@ -2293,8 +2293,25 @@ class Person:
         self.journal.note("backchannel.said", source=source, ident=ident,
                           key=key, at=boundary.at, edge=boundary.kind,
                           room=boundary.room)
+        # THE WHOLE PATH, AND THE LEADING SLASH IS THE WHOLE FIX.  This
+        # published a FRAGMENT that the page turned into a URL, and the
+        # page's `api()` prefixes `/invitado` and appends the room to
+        # everything handed to it -- right for a per-session route, wrong
+        # for these twelve files, which are the application's own assets
+        # and have no guest mirror (`app.backchannel_clip` takes no
+        # principal and no invitation, deliberately, so that a
+        # demonstration does not sound different in the second browser).
+        #
+        # MEASURED 2026-10-20, against the real router: a host asked for
+        # `/voz/es/back.ack3.ogg` and matched; a guest's browser asked
+        # for `/invitado/voz/es/back.ack3.ogg` and matched NOTHING.  So
+        # the one person who never heard the escriba acknowledge them was
+        # the one who had just spoken -- and `play()`'s catch-and-drop,
+        # written for a muted tab, made a 404 look exactly like a browser
+        # policy.  Naming the finished path here leaves nothing for
+        # `api()` to be applied to.
         self.hub.publish("backchannel", {
-            "clip": f"voz/{self.locale}/{key}.ogg", "kind": boundary.kind,
+            "clip": f"/voz/{self.locale}/{key}.ogg", "kind": boundary.kind,
             "at": boundary.at, "said": self.say(key)})
 
     def demo_heard(self, seconds: float) -> bytes:
