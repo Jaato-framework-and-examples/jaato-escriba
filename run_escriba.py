@@ -310,16 +310,28 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> dict:
     finally:
         unsubscribe()
     words = spoken()
-    spoke_rec = mouth.recordings[-1] if getattr(mouth, "recordings", None) else None
-    (tui or _LINES).spoke(words, (payload or {}).get("anotado", ""),
-                          audio=(spoke_rec or {}).get("sha"),
-                          seconds=(spoke_rec or {}).get("seconds"),
-                          # Where it said this came from.  Checked by the
-                          # `fuentes_reales` processor against the turn's
-                          # own ledger before it ever gets here, so a row
-                          # the page renders as a link is one the escriba
-                          # really opened.
-                          links=(payload or {}).get("fuentes") or [])
+    recordings = list(getattr(mouth, "recordings", None) or [])
+    # ONE ROW PER UTTERANCE, counted by the one function a reopened day
+    # counts with too -- a turn can speak more than once, and until
+    # 2026-10-21 this took the last recording and dropped the rest.
+    rows = _board.utterances(recordings, words)
+    for n, row in enumerate(rows):
+        # THE NOTE AND ITS SOURCES BELONG TO THE TURN, so they go on the
+        # LAST utterance.  `spoke` adds the `anotado` row immediately
+        # after the row it is given with, and on any earlier utterance
+        # that would sandwich what the escriba wrote down between two
+        # things it said.
+        last = n == len(rows) - 1
+        (tui or _LINES).spoke(row["text"],
+                              (payload or {}).get("anotado", "") if last else "",
+                              audio=row["audio"], seconds=row["seconds"],
+                              # Where it said this came from.  Checked by the
+                              # `fuentes_reales` processor against the turn's
+                              # own ledger before it ever gets here, so a row
+                              # the page renders as a link is one the escriba
+                              # really opened.
+                              links=((payload or {}).get("fuentes") or [])
+                              if last else [])
     # One row per turn, written AFTER the turn closed so it records what
     # happened rather than what was attempted.  `said` carries the id we
     # minted for the utterance; `mouth.recordings` carries what we kept of
@@ -328,7 +340,11 @@ async def _turn(scribe, prompt: str, said, mouth, log=None, tui=None) -> dict:
     if log is not None:
         log(heard=(said or {}).get(ATTACHMENT_ID_KEY),
             heard_seconds=(said or {}).get("seconds"),
-            spoke=mouth.recordings[-1] if getattr(mouth, "recordings", None) else None,
+            # EVERY utterance, in order.  A list since 2026-10-21: this
+            # wrote only the last, so the rest were files on disk that no
+            # row named -- unreplayable by the person who heard them, and
+            # still counted against their `audio_mb`.
+            spoke=recordings or None,
             transcript=words or None,
             anotado=(payload or {}).get("anotado"))
         if getattr(mouth, "recordings", None):

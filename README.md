@@ -664,7 +664,23 @@ thing for the same reason.
 `.jaato/` entirely. An audit archive a `--forget` could reach would not be
 an audit archive. Asserted by a test, not left to intention.
 
-**Whether it was HEARD is recorded too, now.** Each `spoke` row carries a
+**A TURN CAN SPEAK MORE THAN ONCE, and `spoke` is a list.** The provider
+restarts its sequence per utterance and the session turns that into a new
+stream, so `Archive.spoke` has always written one file per utterance —
+but the row took `recordings[-1]`, so every utterance but the last was a
+file on disk that no row named: unreplayable by the person who had just
+heard it, undeletable with the conversation it belonged to, and still
+counted against their `audio_mb`. Measured on the VPS on 2026-10-20,
+where a turn answered twice: one row, two files, and
+`out_att_865af710d2edba5.wav` orphaned. Since 2026-10-21 the row carries
+every utterance in order, each with its own transcript, and
+`board.utterances` turns them into conversation rows — the one function
+a live turn and a reopened day both count with, so the two views cannot
+disagree about how many times the escriba spoke. Rows written before that
+date hold a single dict and are still read as one utterance, because they
+are on people's disks and `manifest.jsonl` is append-only.
+
+**Whether it was HEARD is recorded too, now.** Each utterance carries a
 `playback` block — how long `paplay` was waited on against how long the
 audio runs, and its exit code. Audio that "finished" in a fraction of its
 own duration was not played, and that case used to be indistinguishable
@@ -677,7 +693,10 @@ under `--tui` a silent failure looked exactly like working audio.
 SAID: on a turn where the model both writes and speaks, `spoken_words`
 returns `""` under the #869 rule, so the provider's transcript of its own
 audio never arrives and `Tongue.spoken` gets nothing. Our turns are that
-kind.
+kind. So an utterance's `text` is empty whenever the model wrote as well
+as spoke, and the turn's own words are then spent on the last utterance
+and nowhere else — a turn fact, because the text they come from is
+`AGENT_OUTPUT`, which names no stream.
 
 ## Starting over
 
@@ -798,7 +817,7 @@ in every person's directory.
 | `i18n.py`, `i18n/*.json` | Every user-facing string, one file per language, at key parity (`tests_i18n.py` is what enforces it). The page is handed the whole catalogue with each snapshot, so the strings and the data they label can never be a version apart. |
 | `web/index.html` | The web front end: one static page, no build step. Plain DOM like the peer's, with React loaded for one job — markdown a subagent wrote, rendered without raw HTML. `?mock=1` renders the design's fixtures and talks to no backend. |
 | `template/` | What a new workspace is made of. Copied, never shared: the workspace is the isolation boundary. |
-| `tests_web_hub.py` | The fan-out, the board-to-event mapping and the two path guards — the half of the backend whose failures are silent. No server, no daemon, no session. |
+| `tests_web_hub.py` | The fan-out, the board-to-event mapping and the two path guards — the half of the backend whose failures are silent. No server, no daemon, no session. Since 2026-10-21 it also drives a whole turn that spoke TWICE, over the one `_turn` both drivers share: that each utterance becomes its own row naming its own recording, that neither is handed the other's words, that the note and its sources land once and at the end, and that the manifest row holds both files — the case that had no leg anywhere while a 544 KB recording the person had heard was going unnamed. |
 | `escriba_web/realm.py` | Does an address belong to anybody? Asked of the Keycloak realm, from `/invitar`, before an invitation is made of it — a host who types an address no account has is refused while they are still looking at it, instead of waiting on an invitation nobody can claim. One address, one yes or no, with a service account granted `view-users` and nothing else. Off unless `--keycloak-url`, `--keycloak-realm` and `--keycloak-client-file` are all given; absent, the address is taken as typed. |
 | `escriba_web/guests.py`, `escriba_web/CLAUDE.md` | Letting a colleague into your session for a few minutes. The module holds the invitations; **the CLAUDE.md beside it is the need-to-know contract** — what is enforced by code, what is traced because it cannot be enforced, and what is only said in prose. Read that file before changing any of the three. |
 | `tests_guests.py` | The guest boundary, leg by leg: that an uninvited caller gets nothing and learns nothing from the refusal, that a guest's first frame carries no transcript and none of the host's panels, that no guest route reaches `person_of` (which would overwrite the host's wiki token with the guest's), that withdrawing an invitation ends what the guest has open, that every room event reaches both the manifest and the escriba, that an address the host has typed lets nobody in until the escriba has said why that person is needed and the host has read it and sent it, and — since a guest can now record a demonstration too — that their recording lands in the host's workspace named and counted, that they cannot touch the host's own recording, and that closing it commissions nothing. The `person_of` list is derived from the router rather than written out, because the written one covered five routes and there are nine. |
@@ -810,7 +829,7 @@ in every person's directory.
 | `tests_sequence.py` | The waterfall, over a journal shaped like a real demonstration — the cases a greeting session cannot reach: a subagent that outlives the turn that spawned it (which a containment-based nesting put a later turn *inside*), a subagent that reports no turn of its own, and the derived span for time spent in the tier a turn opened in. |
 | `tests_web.js` | The web page's render paths, headless: it runs the page's own script against a DOM stub. `node tests_web.js`. It cannot say whether the page LOOKS right — that needs `?mock=1` and eyes. |
 | `tests_browser.py` | Where a CLICK goes, in a real browser: the real page served against a stub that records what arrives. `python tests_browser.py`, with `ESCRIBA_BROWSER=…` naming a browser if playwright's own chromium is not installed; the legs are SAID to be unrun rather than passing quietly. It exists because every other suite covered the upload path while the feature was dead — see below. |
-| `tests_render.py`, `tests_terminal.py`, `tests_workspace.py`, `tests_housekeeping.py`, `tests_board.py` | Every render path at four sizes; the terminal handover on a pty; provisioning and what must never leak between people; the two retention clocks and what the ceiling may never delete. All headless. |
+| `tests_render.py`, `tests_terminal.py`, `tests_workspace.py`, `tests_housekeeping.py`, `tests_board.py` | Every render path at four sizes; the terminal handover on a pty; provisioning and what must never leak between people; the two retention clocks and what the ceiling may never delete. All headless. `tests_board.py` also owns `board.utterances`, which decides how a turn's utterances become rows: that a silent turn still gets one, that a turn that spoke twice gets two and neither takes the other's audio, that the turn's own words are spent once, and that two wordless replies do not fold into one `×2` row — while one speaker's consecutive presses still do, which is deliberate and guarded here. |
 
 **A completion nudge is not a neutral reminder.** The escriba never
 calls `signal_completion` unprompted — it finishes speaking and

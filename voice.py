@@ -245,8 +245,9 @@ class Tongue:
         if self._archive is not None:
             self._archive.speaking(ev.stream_id, ev.mime_type, payload)
         if ev.final:
-            if getattr(ev, "chunk", ""):
-                self.spoken.append(ev.chunk)
+            text = getattr(ev, "chunk", "") or ""
+            if text:
+                self.spoken.append(text)
             # PLAYBACK FIRST, always.  Writing the archive is bookkeeping —
             # half a megabyte joined and pushed to disk — and it used to sit
             # between the last audio chunk and the wait for that audio to
@@ -258,7 +259,15 @@ class Tongue:
             if self._archive is not None:
                 kept = self._archive.spoke(ev.stream_id)
                 if kept is not None:
-                    self.recordings.append(kept)
+                    # THE TRANSCRIPT TRAVELS WITH THE RECORDING IT IS OF.
+                    # `spoken` and `recordings` are appended under
+                    # different conditions -- the text only when the
+                    # final chunk carried one -- so a turn that spoke
+                    # twice left two lists of different lengths and no
+                    # reader could say which text went with which file.
+                    # One list can be read; two could only be guessed at,
+                    # and `board.utterances` records what the guess cost.
+                    self.recordings.append(dict(kept, text=text))
             # What the player actually DID, folded into the record so the
             # manifest can answer "was this heard" and not only "was this
             # sent".  `finish` has returned, so the outcome is final.

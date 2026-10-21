@@ -606,6 +606,50 @@ async def main():
          "anotado": "Se ha generado un diagrama."}, ws)
     check("a turn comes back as its reply and its note",
           [e["kind"] for e in rebuilt], ["spoke", "anotado"])
+    # THE ROW ABOVE IS THE SHAPE WRITTEN BEFORE 2026-10-21 -- `spoke` a
+    # single dict -- and it is kept as a leg rather than updated: those
+    # rows are on the person's disk, `manifest.jsonl` is append-only, and
+    # a reader that saw only the new shape would answer "the escriba said
+    # nothing" for every conversation they have already had.
+    check("and the recording it names reaches the row",
+          rebuilt[0]["audio"], "att_1111111111111111")
+
+    # ---- the same turn, having spoken twice
+    #
+    # MEASURED ON THE VPS, 2026-10-20: two audios sounded, one manifest
+    # row, and `out_att_865af710d2edba5.wav` named by nothing.  The row
+    # now carries every utterance, so the day comes back with as many
+    # replies as the person heard -- counted by `board.utterances`, the
+    # same function the live turn counts with, which is what keeps the
+    # two views from disagreeing about it.
+    twice = Person._turn_entries(
+        {"at": "2026-10-20T19:02:00", "transcript": "la primera",
+         "spoke": [{"sha": "att_first", "seconds": 4.0, "text": "la primera"},
+                   {"sha": "att_second", "seconds": 7.0}],
+         "anotado": "Lo he anotado."}, ws)
+    check("a turn that spoke twice comes back twice",
+          [e["kind"] for e in twice], ["spoke", "spoke", "anotado"])
+    check("each reply naming its own recording",
+          [e["audio"] for e in twice if e["kind"] == "spoke"],
+          ["att_first", "att_second"])
+    check("and its own length",
+          [e["seconds"] for e in twice if e["kind"] == "spoke"], [4.0, 7.0])
+    check("neither handed the other's words",
+          [e["text"] for e in twice if e["kind"] == "spoke"],
+          ["la primera", ""])
+
+    # ---- a turn from the silent tier
+    #
+    # `escribano` annotates and commissions; it sounds nothing, ever.  So
+    # a row with no recording is an ordinary outcome and comes back as
+    # one reply marked silent, not as a reply still waiting for audio.
+    quiet = Person._turn_entries(
+        {"at": "2026-10-20T19:05:00", "transcript": "lo he anotado",
+         "anotado": "Lo he anotado."}, ws)
+    check("a silent turn comes back as one reply",
+          [e["kind"] for e in quiet], ["spoke", "anotado"])
+    check("with no recording to replay", quiet[0]["audio"], None)
+    check("and said to be silent rather than pending", quiet[0]["silent"], True)
 
     drew = Person._turn_entries(
         {"at": "2026-10-19T15:17:00",
@@ -713,12 +757,13 @@ async def main():
             sent.append((kind, data))
 
     class _Chunk:
-        def __init__(self, data: bytes, final=False, mime=PCM):
+        def __init__(self, data: bytes, final=False, mime=PCM, chunk="",
+                     stream="st-1"):
             self.data_b64 = _b64.b64encode(data).decode()
             self.mime_type = mime
-            self.stream_id = "st-1"
+            self.stream_id = stream
             self.final = final
-            self.chunk = ""
+            self.chunk = chunk
 
     # 24000 samples a second, two bytes each: half a second is 24000 bytes.
     piece = int(24000 * SPEECH_SECONDS) * 2
@@ -765,6 +810,36 @@ async def main():
     check("the end names the file the voice was",
           [d.get("audio") for k, d in sent if d.get("final")],
           ["att_deadbeefdeadbeef"])
+
+    # THE TRANSCRIPT TRAVELS WITH THE RECORDING IT IS OF.  `spoken` and
+    # `recordings` were two lists appended under different conditions --
+    # the text only when the final chunk carried one -- so a turn that
+    # spoke twice left two lists of different lengths and nothing could
+    # say which text went with which file.  One list can be read.
+    class _Two:
+        def __init__(self):
+            self.n = 0
+
+        def speaking(self, *a):
+            pass
+
+        def spoke(self, stream_id):
+            self.n += 1
+            return {"sha": f"att_{self.n}", "file": f"out_{self.n}.wav"}
+
+    relay = Relay(archive=_Two())
+    relay.speak(_Chunk(b"\x00" * 8, final=True, chunk="la primera",
+                       stream="st-1"))
+    relay.speak(_Chunk(b"\x00" * 8, final=True, stream="st-2"))
+    # `get`, so a recording with no `text` at all is REPORTED as the
+    # defect it is rather than raising and taking the suite with it.
+    check("each recording carries its own words",
+          [(r["sha"], r.get("text")) for r in relay.recordings],
+          [("att_1", "la primera"), ("att_2", "")])
+    # AND THE JOINED TEXT IS STILL THERE for the callers that want one
+    # string -- the log line, and a turn that failed to close.
+    check("while the turn's text is still the turn's", relay.last(),
+          "la primera")
 
     # NO HUB, NO FRAMES.  The terminal driver builds its own relay.
     relay = Relay()
@@ -894,6 +969,87 @@ async def main():
     check("while a turn that merely failed to close is survivable",
           await ending(Scribe(raises=AgentError("NudgeExhausted", "no close"))),
           None)
+
+    # --------------------------------- a turn that said two separate things
+    #
+    # END TO END, over the one path both drivers share.  On the VPS on
+    # 2026-10-20 a turn sounded twice, the chat showed one reply, and the
+    # first recording -- 544 KB the person had just heard -- was named by
+    # no manifest row and so could never be replayed or deleted with the
+    # conversation it belonged to.  `_turn` took `recordings[-1]` twice.
+
+    class _Twice:
+        """A mouth that has already kept two utterances of one turn."""
+
+        def __init__(self):
+            self.recordings = [
+                {"sha": "att_first", "seconds": 4.0, "text": "la primera",
+                 "file": "out_att_first.wav"},
+                {"sha": "att_second", "seconds": 7.0, "text": "",
+                 "file": "out_att_second.wav"}]
+
+        def last(self):
+            return "la primera"
+
+        def speak(self, ev):
+            pass
+
+    class _Rows:
+        def __init__(self):
+            self.rows = []
+
+        def thinking(self, on):
+            pass
+
+        def spoke(self, *a, **k):
+            self.rows.append((a, k))
+
+        def note(self, text):
+            pass
+
+    class _Said:
+        async def complete(self, prompt, attachments=None, on_media=None):
+            return {"anotado": "Lo he anotado.",
+                    "fuentes": [{"nombre": "la página", "url": "https://x/y"}]}
+
+        terminus = None
+        client = type("C", (), {"subscribe": lambda *a, **k: (lambda: None)})()
+
+    mouth, rows, wrote = _Twice(), _Rows(), []
+    await _run._turn(_Said(), "hola", None, mouth,
+                     log=lambda **f: wrote.append(f), tui=rows)
+
+    check("two utterances make two rows", len(rows.rows), 2)
+    check("each naming the recording it was",
+          [k["audio"] for a, k in rows.rows], ["att_first", "att_second"])
+    check("and its own length", [k["seconds"] for a, k in rows.rows], [4.0, 7.0])
+    check("neither handed the other's words",
+          [a[0] for a, k in rows.rows], ["la primera", ""])
+    # THE NOTE AND ITS SOURCES BELONG TO THE TURN, so they land once, on
+    # the last utterance -- on any earlier one the page would sandwich
+    # what the escriba wrote down between two things it said.
+    check("the note is written once, at the end",
+          [a[1] for a, k in rows.rows], ["", "Lo he anotado."])
+    check("and so are the sources it rests on",
+          [len(k["links"]) for a, k in rows.rows], [0, 1])
+
+    # ASKED OF THE SHAPE FIRST, so the single dict this used to write is
+    # REPORTED and not raised on: a leg that dies on the defect it is
+    # for takes every leg after it down with the suite.
+    kept = wrote[0]["spoke"]
+    check("the manifest row holds a list of utterances",
+          isinstance(kept, list), True)
+    kept = kept if isinstance(kept, list) else [kept]
+    check("the manifest row holds every utterance",
+          [u["sha"] for u in kept], ["att_first", "att_second"])
+    check("so neither recording is left unnamed",
+          [u["file"] for u in kept],
+          ["out_att_first.wav", "out_att_second.wav"])
+    check("and the turn's own transcript is still the turn's",
+          wrote[0]["transcript"], "la primera")
+    # CLEARED, as it always was: the next turn's row must not inherit
+    # this one's audio.
+    check("and the mouth is emptied for the next turn", mouth.recordings, [])
 
     # ------------------------------------- and what the driver does with it
     ended_root = Path(tempfile.mkdtemp(prefix="escriba-ending-"))

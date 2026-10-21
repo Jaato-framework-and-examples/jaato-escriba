@@ -581,12 +581,16 @@ class Relay:
         # that has already gone out in full.
         self._stream(ev, payload)
         if ev.final:
-            if getattr(ev, "chunk", ""):
-                self.spoken.append(ev.chunk)
+            text = getattr(ev, "chunk", "") or ""
+            if text:
+                self.spoken.append(text)
             if self._archive is not None:
                 kept = self._archive.spoke(ev.stream_id)
                 if kept is not None:
-                    self.recordings.append(kept)
+                    # Same bargain as `voice.Tongue.speak`, and for the
+                    # same reason: the transcript of an utterance belongs
+                    # to that utterance, not to the turn's list of them.
+                    self.recordings.append(dict(kept, text=text))
                     if self._hub is not None:
                         # NAMES THE RECORDING THE LIVE VOICE WAS.  The
                         # page suppresses the autoplay of a file it has
@@ -637,6 +641,27 @@ class Relay:
         text = " ".join(t.strip() for t in self.spoken if t.strip())
         self.spoken.clear()
         return text
+
+
+def _kept(row: dict) -> List[dict]:
+    """A manifest row's utterances, in either shape the file holds.
+
+    A LIST SINCE 2026-10-21 AND ONE DICT BEFORE IT.  This is not a
+    guess about which it might be: the rows written before that commit
+    are on the person's disk, `manifest.jsonl` is append-only and
+    governed by `retention_days`, and reopening a day from last week
+    reads them.  Narrowing to the new shape alone would answer "the
+    escriba said nothing" for every conversation they have already had.
+
+    The old shape held the turn's LAST utterance only, so a day read
+    back through here is as complete as the row allows and no more --
+    what was never written cannot be recovered, and `audio/` still
+    holds the files that say so.
+    """
+    spoke = row.get("spoke")
+    if isinstance(spoke, dict):
+        return [spoke]
+    return list(spoke or [])
 
 
 def who(record: Dict[str, Any], principal: str) -> str:
@@ -3193,11 +3218,17 @@ class Person:
                             archive_dir / f"in_{row['heard']}.mp3") or "",
                         "seconds": row.get("heard_seconds"),
                         "audio": row["heard"], "repeats": 1, "silent": False})
-        spoke = row.get("spoke") or {}
+        spoke = _kept(row)
         if row.get("transcript") or spoke:
-            out.append({"at": at, "kind": "spoke", "text": row.get("transcript") or "",
-                        "seconds": spoke.get("seconds"), "audio": spoke.get("sha"),
-                        "repeats": 1, "silent": not spoke})
+            # COUNTED BY `board.utterances`, the same function the live
+            # turn counts with, so a reopened day shows the escriba
+            # speaking as many times as the person heard it speak.  The
+            # two used to decide separately and a turn that spoke twice
+            # came back as one row either way.
+            for utt in _board.utterances(spoke, row.get("transcript") or ""):
+                out.append({"at": at, "kind": "spoke", "text": utt["text"],
+                            "seconds": utt["seconds"], "audio": utt["audio"],
+                            "repeats": 1, "silent": not spoke})
         if row.get("anotado"):
             out.append({"at": at, "kind": "anotado", "text": row["anotado"],
                         "seconds": None, "audio": None, "repeats": 1, "silent": False})

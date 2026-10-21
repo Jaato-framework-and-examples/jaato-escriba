@@ -32,7 +32,7 @@ import contextlib
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Deque, Dict, List, Optional
+from typing import Deque, Dict, List, Optional, Sequence
 
 import console
 
@@ -172,13 +172,71 @@ class Conversation:
         # produce two rows that are identical at the moment they are
         # added, and folding them would show one utterance where there
         # were two and hand the second one's words to the first.
+        #
+        # AND FOR A REPLY, SO IS THE RECORDING.  A turn that speaks twice
+        # adds two `spoke` rows, and whichever of them carried no
+        # transcript of its own carries no text -- so two wordless
+        # utterances are identical here, and the fold keeps the first row
+        # and DROPS the second one's kwargs, which is the only name the
+        # person has for the second thing they heard.  That is the defect
+        # of 2026-10-20 arriving by the row model's door: `utterances`
+        # fixes the count and this is what keeps it.
+        #
+        # `said` IS DELIBERATELY NOT IN THIS.  One speaker's consecutive
+        # presses fold and should: each press is already its own manifest
+        # row with its own `heard`, so nothing is unnameable, and the
+        # guest suite asserts the fold on purpose -- what the speaker
+        # adds to the key is telling two people apart, not unfolding one
+        # person's repeats.
         if (prev is not None and prev.kind == kind and prev.text == text
-                and prev.by == kw.get("by", "")):
+                and prev.by == kw.get("by", "")
+                and (kind != "spoke" or prev.audio == kw.get("audio"))):
             prev.repeats += 1
             return
         self.last_id += 1
         self.entries.append(Entry(datetime.now(), kind, text,
                                   id=self.last_id, **kw))
+
+
+def utterances(recordings: Sequence[dict], words: str) -> List[dict]:
+    """What the escriba said this turn, as one row per utterance.
+
+    THE ONE PLACE THAT DECIDES WHICH ROW CARRIES WHICH WORDS, read by a
+    live turn and by a reopened day both.  Until 2026-10-21 each decided
+    for itself and both decided the same wrong thing: the turn's row took
+    the LAST recording and the JOINED text.  So a turn that spoke twice
+    -- which the provider does whenever it is re-prompted mid-turn, and
+    which `archive.Archive.spoke` has always kept as two files, one per
+    stream -- showed one utterance's words beside the other's audio, and
+    left the first recording named by no row at all.  Measured on the
+    VPS on 2026-10-20: one manifest row, two files,
+    `out_att_865af710d2edba5.wav` orphaned, which is 544 KB the person
+    heard, cannot replay, and is still charged for under `audio_mb`.
+
+    `words` IS THE TURN'S TEXT AND NOT AN UTTERANCE'S, which is why it
+    is passed in rather than taken from the recordings: the fallback
+    behind an utterance's own transcript is `AGENT_OUTPUT`, and that
+    names no stream.  So it is spent only when NO utterance carried a
+    transcript of its own, and then on the last row, where the turn
+    ends and its note follows.
+
+    A TURN THAT SOUNDED NOTHING STILL GETS A ROW, carrying `audio: None`
+    to say so.  `escribano` is a silent tier by design -- it annotates
+    and commissions documents -- so a reply with no recording is an
+    ordinary outcome, and the row is what `Person._settle` later marks
+    as settled rather than still arriving.
+    """
+    if not recordings:
+        return [{"text": words, "audio": None, "seconds": None}]
+    told = any(r.get("text") for r in recordings)
+    rows = []
+    for n, rec in enumerate(recordings):
+        last = n == len(recordings) - 1
+        rows.append({"text": rec.get("text")
+                             or ("" if told or not last else words),
+                     "audio": rec.get("sha"),
+                     "seconds": rec.get("seconds")})
+    return rows
 
 
 class NullBoard:
