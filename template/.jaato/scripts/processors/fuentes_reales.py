@@ -81,7 +81,19 @@ OPENS = ("mcp__kbwiki__kb_get_node", "mcp__kbwiki__kb_get_node_content")
 #: How the librarian names a page it read: `[ref:<id>]`.
 REF = re.compile(r"\[ref:([^\]\s]+)\]")
 
+#: The call this gate is validating, counted to find the retry.
+SIGNAL = "signal_completion"
 
+
+def _pending(call: dict) -> bool:
+    """True for a call the ledger has no answer for YET.
+
+    `build_ledger` writes `{"error": "no_response"}` itself for a call
+    with no matching response, which is what the `signal_completion`
+    being validated right now looks like.
+    """
+    result = call.get("result")
+    return isinstance(result, dict) and result.get("error") == "no_response"
 
 
 def _this_turn(context: Any) -> List[dict]:
@@ -118,6 +130,18 @@ def _this_turn(context: Any) -> List[dict]:
             start = index
     return [call for call in calls if call.get("turn_index", -1) > start]
 
+
+def _attempt(calls: List[dict]) -> int:
+    """Which try at `signal_completion` this is, inside this turn.
+
+    Read from the ledger rather than kept as state of our own: a
+    refused completion is itself a call with a result, and the one
+    being validated now is the pending one.  The framework's refusal
+    budget is PER SESSION, so without this a single stubborn turn
+    spends the whole conversation's ration.
+    """
+    return 1 + sum(1 for call in calls
+                   if call.get("name") == SIGNAL and not _pending(call))
 
 
 def _text(value: Any) -> str:
@@ -306,7 +330,10 @@ def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
     # leave every later turn in a two-hour conversation ungated.  What
     # stands after the first refusal is a turn whose `fuentes` may hold
     # one bad link; what the alternative loses is the gate itself.
+    attempt = _attempt(calls)
     _told(context, "refused" if errors else "accepted", codes,
           fuentes=len(fuentes), seen=len(seen), have=len(have),
-          tried=len(tried), calls=len(calls))
+          tried=len(tried), attempt=attempt, calls=len(calls))
+    if errors and attempt > 1:
+        return {"errors": [], "warnings": errors}
     return {"errors": errors}

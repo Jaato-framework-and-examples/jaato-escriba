@@ -49,10 +49,20 @@ completion_processors:
     name: wrote_something
     on_error: fail_completion
     max_refusals: 2
-    # `allow`: after two refusals the turn stands.  The alternative is
-    # blocking a spoken conversation on a memory, and a person waiting in
-    # silence for a second brain to satisfy its own bookkeeping is worse
-    # than a memory lost.
+    # TWO REFUSALS PER SESSION, NOT PER TURN.  The counter lives on the
+    # framework's per-session `LoadedProcessor`
+    # (`shared/lifecycle_tools.py:334-347`), so these two are the whole
+    # conversation's ration -- and an escriba session lasts as long as
+    # the conversation, which is hours.  This comment said "the turn"
+    # until 2026-10-21, when a session spent both by 14:32:53 and the
+    # refusal at 14:42:58 was accepted anyway; the payload it refused
+    # is the note the person read.  The processor now spends one per
+    # turn (`_attempt`), so two means two bad turns rather than two
+    # tries at one.
+    # `allow`: after them the turn stands.  The alternative is blocking
+    # a spoken conversation on a memory, and a person waiting in
+    # silence for a second brain to satisfy its own bookkeeping is
+    # worse than a memory lost.
     on_exhausted: allow
   # Refuses a source the turn did not actually read.  The person clicks
   # these, so a link that is almost right is worse than no link: it looks
@@ -64,9 +74,9 @@ completion_processors:
     name: fuentes_reales
     on_error: fail_completion
     max_refusals: 2
-    # Same bargain as above, and cheaper: what stands after two refusals
-    # is a turn whose `fuentes` may hold one bad link, not a conversation
-    # held up over a convenience.
+    # Same bargain as above and per SESSION in the same way, and
+    # cheaper: what stands afterwards is a turn whose `fuentes` may
+    # hold one bad link, not a conversation held up over a convenience.
     on_exhausted: allow
 
 # The decision model that looks at a demonstration's frames, bound by

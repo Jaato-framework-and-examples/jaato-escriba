@@ -848,5 +848,63 @@ check("while one opened in THIS turn still does",
                        )["errors"], [])
 
 
+# ------------------------------------------ one refusal per turn, not two
+# THE CEILING IS SPENT PER SESSION.  `_base_escriba.yaml` buys two
+# refusals and the counter lives on the framework's per-session
+# `LoadedProcessor` (`shared/lifecycle_tools.py:334-347`), so two tries
+# at one stubborn turn take the whole conversation's ration with them.
+# On 2026-10-21 that is exactly what happened: both spent by 14:32:53,
+# and the refusal at 14:42:58 was downgraded to a warning and the
+# payload accepted -- its `anotado` is the sentence the person read.
+#
+# So the processor spends one per turn: the first refusal blocks, and a
+# second try at the same turn carries the same words as `warnings[]`,
+# which the audit trail keeps and the framework never blocks on.
+_RETRY = call("signal_completion", {"anotado": "x"},
+              {"error": "validation_failed"})
+_PENDING = call("signal_completion", {"anotado": "x"},
+                {"error": "no_response"})
+
+_first = wrote.validate({"anotado": "hablamos del cierre"}, Ledger(_PENDING))
+check("the first try of a turn blocks", len(_first["errors"]), 1)
+check("and spends nothing on warnings", _first.get("warnings", []), [])
+
+_second = wrote.validate({"anotado": "hablamos del cierre"},
+                         Ledger(_RETRY, _PENDING))
+check("the second try of the same turn does not block",
+      _second["errors"], [])
+check("but says the same thing in the audit trail",
+      len(_second.get("warnings", [])), 1)
+
+# AND THE VERDICT IS STILL `refused` IN THE LOG.  What changed is what
+# the framework is asked to do about it, not what the gate decided --
+# an operator grepping for a refusal must still find this one.
+_, _retry_lines = _wrote({"anotado": "hablamos del cierre"},
+                         _RETRY, _PENDING)
+check("a downgraded refusal is still logged as refused",
+      _retry_lines[-1].startswith("escriba.gate wrote_something refused"),
+      True)
+check("and names which try it was",
+      "attempt=2" in _retry_lines[-1], True)
+
+# A RETRY IN AN EARLIER TURN IS NOT THIS TURN'S TRY.  The same cut as
+# everything above: otherwise one refused turn would disarm every turn
+# after it, which is the defect this fix exists to remove, re-entering
+# by its own back door.
+_fresh = wrote.validate({"anotado": "hablamos del cierre"},
+                        Ledger(_PENDING, before=[_RETRY]))
+check("an earlier turn's retry does not count against this one",
+      len(_fresh["errors"]), 1)
+
+# THE LINK GATE MAKES THE SAME BARGAIN.
+_fsecond = fuentes.validate(
+    {"fuentes": [{"nombre": "p", "url": "https://inventada.example/x"}]},
+    Ledger(_RETRY, _PENDING))
+check("the link gate also blocks only once per turn",
+      _fsecond["errors"], [])
+check("and keeps the complaint as a warning",
+      len(_fsecond.get("warnings", [])), 1)
+
+
 print("scripts OK" if not fail else f"{fail} failure(s)")
 sys.exit(1 if fail else 0)

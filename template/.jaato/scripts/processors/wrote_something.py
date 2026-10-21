@@ -41,7 +41,19 @@ from jaato_sdk.cascade_authoring import ProcessorResult
 
 TOOL = "store_memory"
 ORDER = "encargar_documento"
+SIGNAL = "signal_completion"
 
+
+def _pending(call: dict) -> bool:
+    """True for a call the ledger has no answer for YET.
+
+    `build_ledger` writes `{"error": "no_response"}` itself for a call
+    with no matching response, which is what the `signal_completion`
+    being validated right now looks like: its own function_call is
+    already in history and its result cannot be.
+    """
+    result = call.get("result")
+    return isinstance(result, dict) and result.get("error") == "no_response"
 
 
 def _this_turn(context: Any) -> List[dict]:
@@ -92,6 +104,24 @@ def _this_turn(context: Any) -> List[dict]:
             start = index
     return [call for call in calls if call.get("turn_index", -1) > start]
 
+
+def _attempt(calls: List[dict]) -> int:
+    """Which try at `signal_completion` this is, inside this turn.
+
+    Counted from the ledger and not from state of our own: a refused
+    completion is itself a call with a result, and the one being
+    validated right now is the pending one.  The framework's refusal
+    budget is PER SESSION (`shared/lifecycle_tools.py:334-347`: the
+    `LoadedProcessor` is "the framework's declared home for per-session
+    processor state -- the `max_refusals` counter lives there"), and
+    `_base_escriba.yaml` buys two.  Spending both inside one stubborn
+    turn leaves the rest of a two-hour conversation ungated, which is
+    what happened on 2026-10-21: the budget was spent by 14:32:53 and
+    the refusal at 14:42:58 was accepted anyway -- its `anotado` is the
+    note the person read.
+    """
+    return 1 + sum(1 for call in calls
+                   if call.get("name") == SIGNAL and not _pending(call))
 
 
 def _document_claim(payload: Dict[str, Any], calls: list) -> List[str]:
@@ -264,9 +294,22 @@ def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
         ]
 
     errors = doc + own
+    # ONE REFUSAL PER TURN, NOT ONE PER RETRY.  The ceiling the profile
+    # buys is spent per session, so a turn that answers the same way
+    # twice would take the whole conversation's budget with it and
+    # leave every later turn ungated.  After the first refusal of a
+    # turn the same words go out as `warnings[]`, which the framework
+    # keeps in the audit trail and never blocks on -- so the turn
+    # stands, the budget is not touched again, and the record still
+    # says the gate was unhappy.  `_told` logs the real verdict either
+    # way: `refused` is what this processor decided, and `attempt`
+    # says whether the framework was going to act on it.
+    attempt = _attempt(calls)
     _told(context, "refused" if errors else "accepted", codes,
           stored=len(stored), attempted=len(attempted), flag=flag,
-          doc_claim=bool(doc), calls=len(calls),
+          doc_claim=bool(doc), attempt=attempt, calls=len(calls),
           documento_encargado=bool(payload.get("documento_encargado")),
           anotado_chars=len(str(payload.get("anotado") or "")))
+    if errors and attempt > 1:
+        return {"errors": [], "warnings": errors}
     return {"errors": errors}

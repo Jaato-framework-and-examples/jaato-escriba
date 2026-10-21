@@ -867,9 +867,9 @@ working. That greeting line is also the `nada_que_anotar` workaround
 above being taken, measured rather than assumed: `flag=True` with
 `stored=0` on every greeting.
 
-**A GATE'S LEDGER IS THE WHOLE SESSION.** It surprised this repo on
-2026-10-21, a day after the lines above were added — which is what the
-lines were for.
+**A GATE'S LEDGER IS THE WHOLE SESSION, AND A GATE'S REFUSAL BUDGET IS
+TOO.** Both surprised this repo on 2026-10-21, a day after the lines
+above were added — which is what the lines were for.
 
 `context.tool_calls` is built from `JaatoSession.get_history()` with no
 slicing, so "did this TURN store a memory" was really "has this
@@ -882,12 +882,21 @@ and a turn is everything after the last `user` message
 (`shared/spawn_processors.tool_calls_this_turn`, which the framework
 computes for a spawn gate and leaves empty for a completion one).
 
+`max_refusals` is spent per SESSION, not per turn: the counter lives on
+the per-session `LoadedProcessor`, which the framework calls "the
+declared home for per-session processor state". Two refusals inside one
+stubborn turn therefore disarmed the gate for the rest of the
+conversation, silently — `on_exhausted: allow` downgrades later errors
+to warnings and accepts the payload. Measured: the budget was spent at
+14:32:53 and the refusal at 14:42:58 stood, its `anotado` reaching the
+person as the turn's note. Each gate now blocks once per turn and
+repeats itself as a `warning` thereafter, so two means two bad turns.
 
-It was not visible from inside the session: a refused call is recorded
-`{"status": "completed", "success": true}` like any other, and the gate
-line in the runner log saying `refused` is the only thing that disagrees
-with it. That pairing is what the lines were added to make possible, and
-it is how this was found.
+Neither was visible from inside the session: the refused calls are
+recorded `{"status": "completed", "success": true}` like any other, and
+the gate line in the runner log saying `refused` is the only thing that
+disagrees with them. That pairing is what the lines were added to make
+possible, and it is how both of these were found.
 
 **A reader that is less capable than the one downstream will throw away
 good references.** Moving the fetch into Python came with a claim that
