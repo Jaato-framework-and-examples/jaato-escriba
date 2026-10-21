@@ -82,6 +82,44 @@ OPENS = ("mcp__kbwiki__kb_get_node", "mcp__kbwiki__kb_get_node_content")
 REF = re.compile(r"\[ref:([^\]\s]+)\]")
 
 
+
+
+def _this_turn(context: Any) -> List[dict]:
+    """The calls made since the last thing the person said.
+
+    `context.tool_calls` IS THE WHOLE SESSION AND ALWAYS WAS -- built
+    from `JaatoSession.get_history()` with no slicing
+    (`shared/lifecycle_tools.py:949-951`).  This file's own promise is
+    "algo que ESTE turno ha visto de verdad", and the schema says the
+    same to the model (`SÓLO lo que has abierto en ESTE turno`); both
+    were describing a list nobody had cut to a turn.
+
+    SO THIS GATE WAS THE PERMISSIVE KIND OF WRONG, which is why it
+    caught nothing on 2026-10-21 while its sibling refused three times:
+    a URL read an hour ago still answered for a citation made now.  The
+    link would have worked -- the escriba did read that page once --
+    but "it is in the ledger somewhere" is not the question `fuentes`
+    asks, and a node opened at 12:54 vouching for a claim at 14:42 is
+    exactly the drift the whole file exists to refuse.
+
+    THE RULE IS THE FRAMEWORK'S: a ledger entry carries `turn_index`,
+    the index of the MESSAGE the call landed in, so a turn is cut by
+    position -- everything after the last `user` message.  That is
+    `shared/spawn_processors.tool_calls_this_turn`, which the framework
+    computes for a spawn gate and leaves `[]` for us.  Copied and not
+    imported, for the reason `_told` gives.
+    """
+    calls = list(getattr(context, "tool_calls", None) or [])
+    history = list(context.session.get_history() or [])
+    start = -1
+    for index, message in enumerate(history):
+        role = getattr(message, "role", None)
+        if getattr(role, "value", role) == "user":
+            start = index
+    return [call for call in calls if call.get("turn_index", -1) > start]
+
+
+
 def _text(value: Any) -> str:
     """One string for `value`, whichever carrier it arrived on."""
     if isinstance(value, str):
@@ -211,7 +249,8 @@ def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
         _told(context, "accepted", [], fuentes=0)
         return {"errors": []}
 
-    calls = list(getattr(context, "tool_calls", None) or [])
+    # THIS TURN'S CALLS, not the session's -- see `_this_turn`.
+    calls = _this_turn(context)
     seen = _seen(calls)
     have = _once(_opened(calls) + _cited(_said(calls)))
     tried = _refused(calls)
@@ -261,7 +300,13 @@ def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
                 "copiada entera y letra por letra: un identificador "
                 "parecido no es el mismo, y la persona lo descubre "
                 "pinchando.")
+    # ONE REFUSAL PER TURN, NOT ONE PER RETRY -- the same bargain
+    # `wrote_something` makes, and for the same measured reason: the
+    # ceiling is spent per session, so two tries at one turn would
+    # leave every later turn in a two-hour conversation ungated.  What
+    # stands after the first refusal is a turn whose `fuentes` may hold
+    # one bad link; what the alternative loses is the gate itself.
     _told(context, "refused" if errors else "accepted", codes,
           fuentes=len(fuentes), seen=len(seen), have=len(have),
-          tried=len(tried))
+          tried=len(tried), calls=len(calls))
     return {"errors": errors}

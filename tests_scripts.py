@@ -64,9 +64,69 @@ class Said:
     info = warning = _add
 
 
+class Role:
+    """A history message's role, as the framework carries it.
+
+    `spawn_processors.tool_calls_this_turn` reads `role.value` with the
+    bare role as its fallback, so the double carries the enum shape --
+    the one that would hide a processor reading `role` directly.
+    """
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
+class Message:
+    def __init__(self, role: str) -> None:
+        self.role = Role(role)
+
+
+class Session:
+    """The one thing a processor needs off `context.session`: history.
+
+    IT HAS TO BE HERE, and that is the whole lesson of 2026-10-21.  The
+    double used to carry `tool_calls` alone, which modelled the gate's
+    ASSUMPTION -- that the ledger it is handed is this turn's.  The
+    framework hands it the whole session (`lifecycle_tools.py:949-951`),
+    and no leg could tell, because nothing in the double had a second
+    turn in it.
+    """
+
+    def __init__(self, roles) -> None:
+        self._history = [Message(r) for r in roles]
+
+    def get_history(self):
+        return self._history
+
+
 class Ledger:
-    def __init__(self, *calls):
-        self.tool_calls = list(calls)
+    """A context whose ledger spans TWO turns, like a real one.
+
+    `before` is what the session did in an earlier turn; the positional
+    calls are this turn's.  The history is laid out so the indices say
+    so: a `user` message opens each turn, and each call sits at its own
+    index after the one that opened its turn.  A gate that reads the
+    whole ledger therefore sees `before` and a gate that cuts by the
+    last `user` message does not -- which is the difference this double
+    exists to be able to show.
+    """
+
+    def __init__(self, *calls, before=()):
+        before = list(before)
+        calls = list(calls)
+        roles = (["user"] + ["tool"] * len(before)
+                 + ["user"] + ["tool"] * len(calls))
+        self.session = Session(roles)
+        # COPIED, NEVER STAMPED IN PLACE.  The call dicts are module
+        # constants shared by every leg, so writing `turn_index` into
+        # one would carry the first layout that used it into all the
+        # rest -- which is how this double first reported a stored
+        # memory as a silent turn.
+        start = len(before) + 1
+        self.tool_calls = (
+            [dict(entry, turn_index=1 + n) for n, entry in enumerate(before)]
+            + [dict(entry, turn_index=start + 1 + n)
+               for n, entry in enumerate(calls)])
         self.logger = Said()
 
 
@@ -619,14 +679,14 @@ _MEM_BAD = call("store_memory", {"content": "algo"}, {"error": "nope"},
 _ORDER = call("encargar_documento", {"tema": "x"}, {"ok": True})
 
 
-def _wrote(payload, *calls):
-    ledger = Ledger(*calls)
+def _wrote(payload, *calls, before=()):
+    ledger = Ledger(*calls, before=before)
     out = wrote.validate(payload, ledger)["errors"]
     return out, ledger.logger.lines
 
 
-def _wcodes(payload, *calls):
-    _, lines = _wrote(payload, *calls)
+def _wcodes(payload, *calls, before=()):
+    _, lines = _wrote(payload, *calls, before=before)
     part = [x for x in (lines[-1] if lines else "").split()
             if x.startswith("codes=")]
     return (part[0][len("codes="):] if part else "").split(",")
@@ -727,6 +787,66 @@ check("and one the wiki said does not exist",
 # on by default.  A line nobody's configuration prints is not evidence.
 errors({"fuentes": [{"nombre": "x"}]})
 check("a refusal is reported, not just returned", len(said), 1)
+
+# ================================================ the turn, not the session
+# WHAT THESE WOULD HAVE CAUGHT, AND DID NOT EXIST TO.  Every leg above
+# hands the gate one turn's calls, which is what the gate assumed it
+# gets.  The framework hands it `JaatoSession.get_history()` whole
+# (`shared/lifecycle_tools.py:949-951`), so "en este turno" was a claim
+# about the entire conversation -- hours of it, in a session that opens
+# when the person does and closes when they leave.
+#
+# MEASURED, session 20261021_125148: one memory stored in two hours, and
+# from it onwards every honest "nothing to keep" was refused
+# `flag_contradicts_memory` -- three times, at 14:32:26, 14:32:53 and
+# 14:42:58.  `before=` is the part of the double that can say so: a
+# memory stored in an EARLIER turn.
+_OLD_MEM = call("store_memory", {"content": "de antes"}, {"id": "mem_0"})
+
+_stale, _ = _wrote({"anotado": "sólo me ha dado las gracias",
+                    "nada_que_anotar": True}, before=[_OLD_MEM])
+check("a memory from an earlier turn does not contradict this one",
+      _stale, [])
+check("and the gate says it saw none", 
+      _wcodes({"anotado": "x", "nada_que_anotar": True},
+              before=[_OLD_MEM]), ["-"])
+
+# THE INVERSE IS THE WORSE HALF and had no leg at all.  `nothing_stored`
+# is the branch this file was built for -- five turns, 5.6 minutes,
+# nothing written down.  Read session-wide it can never fire again after
+# the session's first memory, so the gate would have gone quiet on its
+# own reason for existing.
+_silent, _ = _wrote({"anotado": "hablamos del cierre"}, before=[_OLD_MEM])
+check("a silent turn is still refused after an earlier memory",
+      len(_silent), 1)
+check("and it is the branch this gate exists for",
+      _wcodes({"anotado": "x"}, before=[_OLD_MEM]), ["nothing_stored"])
+
+# A COMMISSION IN AN EARLIER TURN IS NOT THIS TURN'S.  Same cause, and
+# it fails open the same way: once `encargar_documento` has succeeded
+# anywhere in the session, a later false claim passes.
+_OLD_ORDER = call("encargar_documento", {"tema": "de antes"}, {"ok": True})
+check("an old commission does not vouch for a new claim",
+      sorted(_wcodes({"anotado": "te he preparado un documento",
+                      "documento_encargado": True}, _MEM,
+                     before=[_OLD_ORDER])),
+      ["doc_claim"])
+
+# THE SAME CUT ON THE LINK GATE, where it was the permissive kind of
+# wrong: a page opened an hour ago vouching for a citation made now.
+_OLD_NODE = call("mcp__kbwiki__kb_get_node", {"id": "pool-de-antes"},
+                 {"content": "x"})
+_old_src = fuentes.validate(
+    {"fuentes": [{"nombre": "p", "nodo": "pool-de-antes"}]},
+    Ledger(_MEM, before=[_OLD_NODE]))["errors"]
+check("a node opened in an earlier turn no longer vouches for a source",
+      len(_old_src), 1)
+check("while one opened in THIS turn still does",
+      fuentes.validate({"fuentes": [{"nombre": "p", "nodo": "ahora"}]},
+                       Ledger(call("mcp__kbwiki__kb_get_node",
+                                   {"id": "ahora"}, {"content": "x"})),
+                       )["errors"], [])
+
 
 print("scripts OK" if not fail else f"{fail} failure(s)")
 sys.exit(1 if fail else 0)

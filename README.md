@@ -867,6 +867,28 @@ working. That greeting line is also the `nada_que_anotar` workaround
 above being taken, measured rather than assumed: `flag=True` with
 `stored=0` on every greeting.
 
+**A GATE'S LEDGER IS THE WHOLE SESSION.** It surprised this repo on
+2026-10-21, a day after the lines above were added — which is what the
+lines were for.
+
+`context.tool_calls` is built from `JaatoSession.get_history()` with no
+slicing, so "did this TURN store a memory" was really "has this
+CONVERSATION ever stored one". An escriba session lasts as long as the
+person stays, so from the first memory onwards every honest "nothing to
+keep" was refused, and — the worse half — `nothing_stored`, the branch
+the gate exists for, could never fire again. Both gates now cut the
+ledger by the framework's own rule: a ledger entry carries `turn_index`,
+and a turn is everything after the last `user` message
+(`shared/spawn_processors.tool_calls_this_turn`, which the framework
+computes for a spawn gate and leaves empty for a completion one).
+
+
+It was not visible from inside the session: a refused call is recorded
+`{"status": "completed", "success": true}` like any other, and the gate
+line in the runner log saying `refused` is the only thing that disagrees
+with it. That pairing is what the lines were added to make possible, and
+it is how this was found.
+
 **A reader that is less capable than the one downstream will throw away
 good references.** Moving the fetch into Python came with a claim that
 was mine and wrong: that a page this cannot read is a page the escriba

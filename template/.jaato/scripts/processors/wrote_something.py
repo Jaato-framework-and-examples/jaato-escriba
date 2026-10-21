@@ -43,6 +43,57 @@ TOOL = "store_memory"
 ORDER = "encargar_documento"
 
 
+
+def _this_turn(context: Any) -> List[dict]:
+    """The calls made since the last thing the person said.
+
+    `context.tool_calls` IS THE WHOLE SESSION AND ALWAYS WAS.  The
+    framework builds it from `JaatoSession.get_history()` with no
+    slicing (`shared/lifecycle_tools.py:949-951`), and `build_ledger`
+    walks all of it.  Every "en este turno" in this file was a claim
+    about a list that had never been cut to a turn.
+
+    MEASURED, 2026-10-21, session 20261021_125148.  The escriba stored
+    ONE memory in a two-hour conversation (the page's own counter:
+    `memoria sin curar 1 +1, 0 al empezar`).  From that memory onwards
+    every turn that honestly had nothing to keep was refused
+    `flag_contradicts_memory` -- 14:32:26, 14:32:53 and 14:42:58 --
+    because `stored` counted that one memory again on each of them.
+    The model was right each time and the gate was wrong each time.
+
+    AND THE INVERSE IS THE WORSE HALF.  `nothing_stored` is why this
+    file exists: five turns, 5.6 minutes, nothing written down.  Once
+    the session has one successful `store_memory` anywhere behind it,
+    `stored` is never empty again, so that branch can never fire after
+    the first memory.  The gate stopped doing its job at the first
+    thing it ever caught.
+
+    THE RULE IS THE FRAMEWORK'S, not one invented here.  A ledger entry
+    carries `turn_index`, the index of the MESSAGE the call landed in,
+    so a turn is cut by position: everything after the last `user`
+    message.  That is `shared/spawn_processors.tool_calls_this_turn`,
+    which the framework already computes for a spawn gate and leaves
+    empty for us (`RenderContext.tool_calls_this_turn`, "[] everywhere
+    else").  Copied and not imported, for `_told`'s reason: a processor
+    is imported into the runner's own interpreter and `jaato_server`
+    internals are not its to reach into.
+
+    AN INJECTED PROMPT IS A USER MESSAGE, so `Person._tell` -- the
+    driver's "the document is written" turn -- starts a turn here too.
+    That is the behaviour this wants: what it says about that document
+    is its own turn's business.
+    """
+    calls = list(getattr(context, "tool_calls", None) or [])
+    history = list(context.session.get_history() or [])
+    start = -1
+    for index, message in enumerate(history):
+        role = getattr(message, "role", None)
+        if getattr(role, "value", role) == "user":
+            start = index
+    return [call for call in calls if call.get("turn_index", -1) > start]
+
+
+
 def _document_claim(payload: Dict[str, Any], calls: list) -> List[str]:
     """A commissioned document has to have been commissioned.
 
@@ -155,7 +206,9 @@ def _told(context: Any, verdict: str, codes: List[str], **facts: Any) -> None:
 
 
 def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
-    calls = list(getattr(context, "tool_calls", None) or [])
+    # THIS TURN'S CALLS, not the session's.  See `_this_turn`: every
+    # "en este turno" below was false until 2026-10-21.
+    calls = _this_turn(context)
     # `success` is the framework's canonical indicator, computed as
     # `"error" not in result` (shared/completion_processors.py:148).  NOT
     # `result["status"]`, which is plugin-side and varies through provider
@@ -213,7 +266,7 @@ def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
     errors = doc + own
     _told(context, "refused" if errors else "accepted", codes,
           stored=len(stored), attempted=len(attempted), flag=flag,
-          doc_claim=bool(doc),
+          doc_claim=bool(doc), calls=len(calls),
           documento_encargado=bool(payload.get("documento_encargado")),
           anotado_chars=len(str(payload.get("anotado") or "")))
     return {"errors": errors}
