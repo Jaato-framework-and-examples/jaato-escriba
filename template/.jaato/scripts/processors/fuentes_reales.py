@@ -175,6 +175,12 @@ def _once(ids: List[str]) -> List[str]:
 def _told(context: Any, verdict: str, codes: List[str], **facts: Any) -> None:
     """One greppable line per call, in SHAPES and never in words.
 
+    IN THE RUNNER'S LOG, not the session's: a processor is
+    imported into the runner's own interpreter, so this carries
+    `jaato_server.shared.dynamic_instructions` and lands in
+    `<workspace>/.jaato/logs/runner-<stamp>.log`.  Verified live on
+    2026-10-21.
+
     The sibling of `wrote_something._told`, and its docstring carries the
     measurement that put both here: on 2026-10-20 two processors refused
     a completion twice between them, the person heard the escriba answer

@@ -108,6 +108,12 @@ def _document_claim(payload: Dict[str, Any], calls: list) -> List[str]:
 def _told(context: Any, verdict: str, codes: List[str], **facts: Any) -> None:
     """One greppable line per call, in SHAPES and never in words.
 
+    IN THE RUNNER'S LOG, not the session's: a processor is
+    imported into the runner's own interpreter, so this carries
+    `jaato_server.shared.dynamic_instructions` and lands in
+    `<workspace>/.jaato/logs/runner-<stamp>.log`.  Verified live on
+    2026-10-21.
+
     WHY THIS EXISTS, MEASURED.  2026-10-20, session 20261020_204128: the
     escriba answered with TWO spoken replies, because this gate refused
     `signal_completion` twice and the model answered each self-correction

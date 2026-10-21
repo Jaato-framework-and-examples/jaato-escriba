@@ -848,6 +848,25 @@ first pass is never nudged and so is never enriched. That is a
 workaround at the prompt layer; the nudge carrying enrichment is
 upstream behaviour and is filed as such.
 
+**AND WHEN A GATE REFUSES, LOOK IN THE RUNNER LOG.** Each gate writes one
+line per `validate` call naming the branch it took and the counts that
+decided it — refusals at `warning`, acceptances at `info`. A processor
+runs inside the runner's own interpreter, so the line carries the
+runner's logger and lands in `<workspace>/.jaato/logs/runner-<stamp>.log`
+and **not** in `session_<id>_client_<n>.log`:
+
+    grep escriba.gate <workspace>/.jaato/logs/runner-*.log
+    … INFO jaato_server.shared.dynamic_instructions: escriba.gate
+      wrote_something accepted codes=- anotado_chars=100 attempted=0
+      doc_claim=False documento_encargado=False flag=True stored=0
+
+Verified on a live greeting against the daemon of 2026-10-21. Worth
+stating because the first probe written for it read `session_*.log`,
+found nothing, and reported the instrumentation dead while it was
+working. That greeting line is also the `nada_que_anotar` workaround
+above being taken, measured rather than assumed: `flag=True` with
+`stored=0` on every greeting.
+
 **A reader that is less capable than the one downstream will throw away
 good references.** Moving the fetch into Python came with a claim that
 was mine and wrong: that a page this cannot read is a page the escriba
