@@ -1,9 +1,31 @@
-"""A capture the document describes has to be one this turn actually saw.
+"""A capture the document describes has to be one this session really saw.
 
 Gates the documenter's `signal_completion` when the commission was a
 demonstration: every frame linked from the written documents must be one
-the turn either sent to `decide` in an `images` array or opened with
+this session either sent to `decide` in an `images` array or opened with
 `readFile`.
+
+THE SESSION, AND DELIBERATELY NOT THE TURN -- read this before
+"correcting" it.  `context.tool_calls` is built from the whole of
+`JaatoSession.get_history()` (`shared/lifecycle_tools.py:949-951`), so
+every processor is handed the session and not the turn.  For the
+ESCRIBA's gates that was a defect, fixed on 2026-10-21: its session is
+the person's whole conversation, hours of it, so a memory stored once
+answered for every later turn and `nothing_stored` could never fire
+again.
+
+Here the same reading is RIGHT, because the session is a different
+thing.  A documenter is opened by `Person._writer` for one commission
+and ended by `complete()` -- `IPCClient.session` per document -- so its
+whole session IS the one piece of work this gate is asking about, and
+it spends many turns inside it: reading `frames.jsonl`, calling
+`decide` in batches, writing the files.  Cutting this to the last
+`user` message would refuse a document for captures the documenter
+looked at honestly, three turns before it wrote about them.
+
+So the scope is correct and the word was wrong: this file said "this
+turn" three times while meaning the commission.  The two gates differ
+because their sessions differ, not because one of them is careless.
 
 WHY A GATE AND NOT THE PERSONA.  This is `fuentes_reales`' argument,
 with the failure mode one step worse.  The persona can say "open the
@@ -50,7 +72,7 @@ FRAME = re.compile(r"^\d{4}\.(?:png|jpe?g)$", re.IGNORECASE)
 #: Markdown's two ways of pointing at a file, images and plain links.
 LINK = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 
-#: The tools that can put a capture in front of somebody this turn.
+#: The tools that can put a capture in front of somebody.
 SAW = ("readFile", "decide")
 
 
@@ -92,7 +114,7 @@ def _is_frame(path: str) -> bool:
 
 
 def _looked_at(calls: List[dict], ws: Path) -> Set[Path]:
-    """Every frame this turn put in front of a model, resolved.
+    """Every frame this session put in front of a model, resolved.
 
     A `readFile` IS a look: the frame comes back as multimodal content.
     A `decide` is a look only for the frames in its `images` array --
