@@ -105,6 +105,48 @@ def _document_claim(payload: Dict[str, Any], calls: list) -> List[str]:
         "`encargar_documento` SOLO si ella lo pidió de verdad."
     ]
 
+def _told(context: Any, verdict: str, codes: List[str], **facts: Any) -> None:
+    """One greppable line per call, in SHAPES and never in words.
+
+    WHY THIS EXISTS, MEASURED.  2026-10-20, session 20261020_204128: the
+    escriba answered with TWO spoken replies, because this gate refused
+    `signal_completion` twice and the model answered each self-correction
+    out loud in `voz` -- the one tier the person hears.  The record could
+    say THAT it refused and with what payload (the journal keeps
+    `signal_completion`'s args and `result_status`) and NOTHING anywhere
+    could say which processor refused or why: the framework publishes no
+    event for a refusal, and none of its 172 typed events mentions one.
+    So "why did the gate fire" was unanswerable after the fact, which is
+    what turned a one-line diagnosis into an afternoon.
+
+    A CODE PER BRANCH, NOT THE ERROR TEXT.  The strings are long Spanish
+    instructions written for a model about to retry; logging them whole
+    makes the log unreadable and duplicates what is already in this
+    file.  The code names the branch, the facts say why it was taken.
+
+    SHAPES AND NOT WORDS, which is `journal.py`'s rule and the right one
+    here too: `anotado` is the model's account of what the person said.
+    Counts, flags and lengths answer everything this has to answer, and
+    none of them is anybody's conversation.
+
+    REFUSALS AT WARNING, ACCEPTANCES AT INFO.  A refusal costs the
+    person an audible reply, so it has to be visible whatever the level
+    is set to; how often the gate passed is useful and not urgent.
+
+    AND THIS IS WHAT MAKES EXHAUSTION VISIBLE.  The framework downgrades
+    errors to warnings once `max_refusals` is spent (`on_exhausted:
+    allow`) and reports nothing about having done so.  A line here
+    saying this processor produced errors, beside a journal row saying
+    the completion was `completed`, is the only way to tell a turn that
+    SATISFIED the gate from one that merely outlasted it.
+    """
+    shape = " ".join(f"{k}={v}" for k, v in sorted(facts.items()))
+    line = "escriba.gate wrote_something %s codes=%s %s"
+    if verdict == "refused":
+        context.logger.warning(line, verdict, ",".join(codes), shape)
+    else:
+        context.logger.info(line, verdict, ",".join(codes) or "-", shape)
+
 
 def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
     calls = list(getattr(context, "tool_calls", None) or [])
@@ -117,38 +159,55 @@ def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
 
     doc = _document_claim(payload, calls)
 
-    if stored:
-        if payload.get("nada_que_anotar"):
-            return {"errors": doc + [
-                "Dices `nada_que_anotar: true` pero SÍ has guardado "
-                f"{len(stored)} memoria(s) en este turno. Una de las dos cosas "
-                "no es cierta: quita la bandera, o no guardes."
-            ]}
-        return {"errors": doc}
-
-    if payload.get("nada_que_anotar"):
-        return {"errors": doc}      # dicho y justificado: se acepta
-
     attempted = [tc for tc in calls if tc.get("name") == TOOL]
-    if attempted:
-        return {"errors": doc + [
+    flag = bool(payload.get("nada_que_anotar"))
+
+    # ONE EXIT, so every refusal is logged by construction rather than
+    # by each branch remembering to.  The branches are the ones that
+    # were already here; what is new is that each one names itself.
+    own: List[str] = []
+    codes: List[str] = ["doc_claim"] if doc else []
+
+    if stored and flag:
+        codes.append("flag_contradicts_memory")
+        own = [
+            "Dices `nada_que_anotar: true` pero SÍ has guardado "
+            f"{len(stored)} memoria(s) en este turno. Una de las dos cosas "
+            "no es cierta: quita la bandera, o no guardes."
+        ]
+    elif stored or flag:
+        # Satisfied: a memory was written, or there was nothing worth
+        # keeping and the payload says so and justifies it.
+        pass
+    elif attempted:
+        codes.append("store_failed")
+        own = [
             f"Intentaste guardar {len(attempted)} vez/veces y ninguna salió "
             "bien. Míra el error que te devolvió `store_memory`, corrige la "
             "llamada y vuelve a intentarlo antes de completar."
-        ]}
+        ]
+    else:
+        codes.append("nothing_stored")
+        own = [
+            "No has anotado nada en este turno. Si la persona te ha contado algo "
+            "que le serviría a una sesión futura que lo ha olvidado todo, entra "
+            "en `escribano` y guárdalo con `store_memory` antes de completar.\n\n"
+            "Y si lo que ha pasado es que ha CAMBIADO DE TEMA, eso es justo lo "
+            "que hay que guardar: en qué quiere trabajar ahora. No rellenes este "
+            "turno con lo que estabais hablando antes — aquello ya está anotado, "
+            "repetirlo lo cuenta dos veces, y deja sin guardar lo único nuevo que "
+            "has oído. Tampoco se lo cuentes otra vez en voz alta: acaba de "
+            "decirte que quiere dejarlo.\n\n"
+            "Y si de verdad no había nada —un saludo, un «sí», un «sigue»— dilo "
+            "con `nada_que_anotar: true` y explica en `anotado` por qué. Lo que "
+            "no vale es completar en silencio: eso no se distingue de haberlo "
+            "olvidado, y es lo que hace que mañana no recuerdes esta conversación."
+        ]
 
-    return {"errors": doc + [
-        "No has anotado nada en este turno. Si la persona te ha contado algo "
-        "que le serviría a una sesión futura que lo ha olvidado todo, entra "
-        "en `escribano` y guárdalo con `store_memory` antes de completar.\n\n"
-        "Y si lo que ha pasado es que ha CAMBIADO DE TEMA, eso es justo lo "
-        "que hay que guardar: en qué quiere trabajar ahora. No rellenes este "
-        "turno con lo que estabais hablando antes — aquello ya está anotado, "
-        "repetirlo lo cuenta dos veces, y deja sin guardar lo único nuevo que "
-        "has oído. Tampoco se lo cuentes otra vez en voz alta: acaba de "
-        "decirte que quiere dejarlo.\n\n"
-        "Y si de verdad no había nada —un saludo, un «sí», un «sigue»— dilo "
-        "con `nada_que_anotar: true` y explica en `anotado` por qué. Lo que "
-        "no vale es completar en silencio: eso no se distingue de haberlo "
-        "olvidado, y es lo que hace que mañana no recuerdes esta conversación."
-    ]}
+    errors = doc + own
+    _told(context, "refused" if errors else "accepted", codes,
+          stored=len(stored), attempted=len(attempted), flag=flag,
+          doc_claim=bool(doc),
+          documento_encargado=bool(payload.get("documento_encargado")),
+          anotado_chars=len(str(payload.get("anotado") or "")))
+    return {"errors": errors}

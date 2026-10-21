@@ -172,9 +172,37 @@ def _once(ids: List[str]) -> List[str]:
     return out
 
 
+def _told(context: Any, verdict: str, codes: List[str], **facts: Any) -> None:
+    """One greppable line per call, in SHAPES and never in words.
+
+    The sibling of `wrote_something._told`, and its docstring carries the
+    measurement that put both here: on 2026-10-20 two processors refused
+    a completion twice between them, the person heard the escriba answer
+    the self-correction out loud, and NOTHING in the record could say
+    which of the two had refused or why.  The framework publishes no
+    event for a processor refusal.
+
+    DELIBERATELY A COPY AND NOT AN IMPORT.  `explain completion` is
+    explicit that a processor is imported into the runner's own
+    interpreter and must not `sys.path.insert` — the slot serves several
+    sessions in turn, so a shared helper module reachable only that way
+    would change the next session's imports too.  Eight lines twice is
+    the cheaper of the two mistakes.
+    """
+    shape = " ".join(f"{k}={v}" for k, v in sorted(facts.items()))
+    line = "escriba.gate fuentes_reales %s codes=%s %s"
+    if verdict == "refused":
+        context.logger.warning(line, verdict, ",".join(codes), shape)
+    else:
+        context.logger.info(line, verdict, ",".join(codes) or "-", shape)
+
+
 def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
     fuentes = payload.get("fuentes") or []
     if not fuentes:
+        # SAID, not silent. "No sources to check" and "this gate never
+        # ran" are different facts, and only one of them is fine.
+        _told(context, "accepted", [], fuentes=0)
         return {"errors": []}
 
     calls = list(getattr(context, "tool_calls", None) or [])
@@ -182,17 +210,20 @@ def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
     have = _once(_opened(calls) + _cited(_said(calls)))
     tried = _refused(calls)
     errors: List[str] = []
+    codes: List[str] = []
 
     for source in fuentes:
         name = str(source.get("nombre") or "?")
         url, node = source.get("url"), source.get("nodo")
         if url and node:
+            codes.append("url_and_node")
             errors.append(
                 f"«{name}» lleva `url` y `nodo` a la vez. Una fuente es una "
                 "cosa o la otra: si es una página del wiki va su id en "
                 "`nodo` y nada más; si es de fuera, su dirección en `url`.")
             continue
         if not url and not node:
+            codes.append("neither")
             errors.append(
                 f"«{name}» no lleva ni `url` ni `nodo`, así que no lleva a "
                 "ninguna parte. Pon la dirección si la leíste, el id de la "
@@ -200,6 +231,7 @@ def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
                 "quita la fuente: un nombre suelto no le sirve a nadie.")
             continue
         if url and url not in seen:
+            codes.append("url_unseen")
             errors.append(
                 f"«{name}»: la dirección `{url}` no aparece en nada de lo "
                 "que han devuelto tus herramientas en este turno. QUÍTALA. "
@@ -215,6 +247,7 @@ def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
                    if node in tried else
                    f"`{node}` no es ninguna de las páginas que has abierto "
                    "ni de las que te han citado en este turno")
+            codes.append("node_refused" if node in tried else "node_unseen")
             tienes = (f" Las que sí tienes: {', '.join(have)}."
                       if have else " En este turno no tienes ninguna.")
             errors.append(
@@ -222,4 +255,7 @@ def validate(payload: Dict[str, Any], context: Any) -> ProcessorResult:
                 "copiada entera y letra por letra: un identificador "
                 "parecido no es el mismo, y la persona lo descubre "
                 "pinchando.")
+    _told(context, "refused" if errors else "accepted", codes,
+          fuentes=len(fuentes), seen=len(seen), have=len(have),
+          tried=len(tried))
     return {"errors": errors}

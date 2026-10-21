@@ -43,9 +43,31 @@ def check(label: str, got, want) -> None:
         fail += 1
 
 
+class Said:
+    """The per-script logger the framework always hands a processor.
+
+    `explain completion` lists `logger` on the RenderContext and the
+    SDK's own docstring says it "defaults to a shared one if the caller
+    doesn't pass a script-specific logger" -- so a processor may use it
+    without asking whether it is there, and the double has to carry one.
+    This one KEEPS the lines, which turns the gate's own account of
+    itself into something the suite can assert instead of something only
+    a person reading a log can see.
+    """
+
+    def __init__(self) -> None:
+        self.lines: list = []
+
+    def _add(self, line, *args):
+        self.lines.append(line % args if args else line)
+
+    info = warning = _add
+
+
 class Ledger:
     def __init__(self, *calls):
         self.tool_calls = list(calls)
+        self.logger = Said()
 
 
 def call(name, args=None, result=None, success=True):
@@ -53,8 +75,28 @@ def call(name, args=None, result=None, success=True):
             "success": success}
 
 
+#: What the gate said about itself on the last `errors()` call. Read by
+#: the legs at the bottom: an error string tells the MODEL what to fix,
+#: and the code tells an operator which branch fired -- on 2026-10-20
+#: nothing recorded the second, and "which processor refused, and why"
+#: was unanswerable after a person had already heard the consequence.
+said: list = []
+
+
 def errors(payload, *calls):
-    return fuentes.validate(payload, Ledger(*calls))["errors"]
+    global said
+    ledger = Ledger(*calls)
+    out = fuentes.validate(payload, ledger)["errors"]
+    said = ledger.logger.lines
+    return out
+
+
+def codes(payload, *calls):
+    """The branch codes the gate reported, in order."""
+    errors(payload, *calls)
+    line = said[-1] if said else ""
+    part = [p for p in line.split() if p.startswith("codes=")]
+    return (part[0][len("codes="):] if part else "").split(",")
 
 
 GITLAB = ("https://gitlab.averroes.lda/lda/arquitecturabackend/"
@@ -558,6 +600,133 @@ try:
 finally:
     shutil.rmtree(_pre_ws)
 
+
+# ============================================================ wrote_something
+# THE OTHER GATE ON THE SAME PAYLOAD, and until now it had no suite --
+# `README.md` said so. It got one because it was RESTRUCTURED on
+# 2026-10-20 to report which branch it took, and a gate refactored
+# without coverage is a gate whose verdicts can change by accident. The
+# equivalence was proved against the previous version over 270 input
+# combinations at the time; these legs are what keep it true afterwards.
+WROTE = HERE / "template/.jaato/scripts/processors/wrote_something.py"
+_wspec = importlib.util.spec_from_file_location("wrote_something", WROTE)
+wrote = importlib.util.module_from_spec(_wspec)
+_wspec.loader.exec_module(wrote)
+
+_MEM = call("store_memory", {"content": "algo"}, {"id": "mem_1"})
+_MEM_BAD = call("store_memory", {"content": "algo"}, {"error": "nope"},
+                success=False)
+_ORDER = call("encargar_documento", {"tema": "x"}, {"ok": True})
+
+
+def _wrote(payload, *calls):
+    ledger = Ledger(*calls)
+    out = wrote.validate(payload, ledger)["errors"]
+    return out, ledger.logger.lines
+
+
+def _wcodes(payload, *calls):
+    _, lines = _wrote(payload, *calls)
+    part = [x for x in (lines[-1] if lines else "").split()
+            if x.startswith("codes=")]
+    return (part[0][len("codes="):] if part else "").split(",")
+
+
+# A MEMORY WAS WRITTEN: nothing to say.
+check("a stored memory satisfies the gate",
+      _wrote({"anotado": "hablamos del cierre"}, _MEM)[0], [])
+check("and it says so", _wcodes({"anotado": "x"}, _MEM), ["-"])
+
+# NOTHING WAS WRITTEN AND NOTHING SAYS WHY. This is the branch that
+# fired on 2026-10-20 and cost the person a second spoken reply.
+_errs, _lines = _wrote({"anotado": "hablamos del cierre"})
+check("an unexplained silent turn is refused", len(_errs), 1)
+check("naming the branch", _wcodes({"anotado": "x"}), ["nothing_stored"])
+check("at a level that is printed by default",
+      _lines[-1].startswith("escriba.gate wrote_something refused"), True)
+
+# THE ESCAPE HATCH, which exists so that "hello" and "yes" and "go on"
+# do not force an invented memory -- the worst failure a second brain
+# has. Said and justified, it is accepted.
+check("an explicit nothing-to-note is accepted",
+      _wrote({"anotado": "sólo me ha saludado", "nada_que_anotar": True})[0], [])
+
+# AND IT CANNOT BE BOTH. Measured in the same session: the model stored a
+# memory AND set the flag, and this is the refusal that produced the
+# second audible reply.
+_both, _ = _wrote({"anotado": "x", "nada_que_anotar": True}, _MEM)
+check("storing a memory and declaring none is refused", len(_both), 1)
+check("and that branch is named too",
+      _wcodes({"anotado": "x", "nada_que_anotar": True}, _MEM),
+      ["flag_contradicts_memory"])
+
+# A FAILED WRITE IS NOT A SILENT TURN, and must not be answered with the
+# same instruction: the fix is to read the error, not to go and store.
+check("a store that failed is its own branch",
+      _wcodes({"anotado": "x"}, _MEM_BAD), ["store_failed"])
+
+# THE DOCUMENT CLAIM is a separate error on the same payload, which is
+# how one call produces TWO -- exactly the "2 completion-processor
+# error(s)" the runner logged twice on 2026-10-20.
+_claim = {"anotado": "te he preparado un documento con todo esto"}
+_two, _ = _wrote(_claim)
+check("a false document claim is a second error on the same call",
+      len(_two), 2)
+check("and both branches are named",
+      sorted(_wcodes(_claim)), ["doc_claim", "nothing_stored"])
+check("a claim that was really commissioned is not refused for it",
+      _wcodes({"anotado": "te he preparado un documento",
+               "documento_encargado": True}, _MEM, _ORDER), ["-"])
+
+
+# ------------------------------------------- the gate's account of itself
+# WHY THESE LEGS EXIST.  2026-10-20, session 20261020_204128: the escriba
+# answered with two spoken replies because a completion gate refused
+# twice and the model answered each self-correction out loud.  The
+# journal held `signal_completion`'s args and its `result_status`, so the
+# record could say THAT it refused -- and nothing anywhere could say
+# WHICH processor refused or why.  The framework publishes no event for a
+# processor refusal: none of its 172 typed events mentions one.  So the
+# gates now say it themselves, and these legs are what keep them saying
+# it.
+#
+# AN ERROR STRING AND A CODE ARE FOR DIFFERENT READERS.  The string is an
+# instruction to a model about to retry; the code is for whoever is
+# asking, afterwards, why a person heard two replies.  Asserting the
+# strings (as every leg above does) does not assert the second.
+# `-` AND NOT EMPTY: `codes=-` reads as "none" in a log where `codes=`
+# reads as a field somebody forgot to fill in.
+check("a payload with no sources still reports that it ran",
+      codes({}), ["-"])
+check("and says it had nothing to check",
+      "fuentes=0" in (said[-1] if said else ""), True)
+
+check("a source carrying both url and nodo names its branch",
+      codes({"fuentes": [{"nombre": "x", "url": "https://a/b",
+                          "nodo": "n"}]}), ["url_and_node"])
+check("one carrying neither names its own",
+      codes({"fuentes": [{"nombre": "x"}]}), ["neither"])
+check("an address nothing returned names its own",
+      codes({"fuentes": [{"nombre": "x", "url": "https://nope/"}]}),
+      ["url_unseen"])
+
+# THE TWO NODE CASES ARE DISTINGUISHED, because they end the retry loop
+# differently: the wiki saying a page does not exist is final, and "you
+# have not cited it" is not.  The error strings already say so; the codes
+# have to as well, or the log flattens the distinction the strings make.
+check("a page never opened and never cited",
+      codes({"fuentes": [{"nombre": "x", "nodo": "ausente"}]}),
+      ["node_unseen"])
+_refusal = call("mcp__kbwiki__kb_get_node", {"id": "ausente"},
+                {"error": "no such node"}, success=False)
+check("and one the wiki said does not exist",
+      codes({"fuentes": [{"nombre": "x", "nodo": "ausente"}]}, _refusal),
+      ["node_refused"])
+
+# EVERY REFUSAL IS AUDIBLE, so every refusal is logged at a level that is
+# on by default.  A line nobody's configuration prints is not evidence.
+errors({"fuentes": [{"nombre": "x"}]})
+check("a refusal is reported, not just returned", len(said), 1)
 
 print("scripts OK" if not fail else f"{fail} failure(s)")
 sys.exit(1 if fail else 0)
