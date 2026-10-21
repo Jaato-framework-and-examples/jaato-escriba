@@ -174,6 +174,7 @@ finally:
 # scribe wrote to `.jaato/memories`, the curator read
 # `.jaato/memory/escriba`, and a person's whole conversation was
 # consolidated into nothing.
+import ast as _ast
 import yaml as _yaml
 stores = {}
 for prof in sorted((w.TEMPLATE / ".jaato" / "profiles").glob("*.yaml")):
@@ -183,6 +184,41 @@ for prof in sorted((w.TEMPLATE / ".jaato" / "profiles").glob("*.yaml")):
         stores[prof.stem] = (mem["storage_path"], mem.get("global_storage_path"))
 check("more than one agent uses the store", len(stores) > 1, True)
 check(f"they all name the same one {stores}", len(set(stores.values())), 1)
+
+# AND THE SCRIPTS ARE PART OF THAT CONTRACT TOO.  The guard above
+# compares profiles to each other, which is where the 2026-10-09 break
+# was.  The 2026-10-21 one was in a SCRIPT: `docs_are_real` carried
+# `.jaato/memory/escriba` as a constant while every profile said
+# `.jaato/memories`, so it read an empty directory, called every real
+# memory invented, and sent the documenter into 71 retrievals and a
+# spent budget.  It sat wrong for twelve days because the guard that
+# existed for exactly this could not see it.
+#
+# A store path belongs to the profiles.  A script that needs one reads
+# it; a script that spells one has reintroduced the duplicate.
+declared = {path for path, _ in stores.values()}
+spelled = {}
+for script in sorted((w.TEMPLATE / ".jaato" / "scripts").rglob("*.py")):
+    tree = _ast.parse(script.read_text(encoding="utf-8"))
+    # Docstrings are PROSE and are excluded on purpose: this very fix is
+    # documented by naming the wrong path in one, and a guard that read
+    # its own incident report would fire on it forever.  What is checked
+    # is code -- a literal a line of Python could pass to `Path`.
+    prose = {id(node.value)
+             for node in _ast.walk(tree)
+             if isinstance(node, (_ast.Module, _ast.ClassDef,
+                                  _ast.FunctionDef, _ast.AsyncFunctionDef))
+             and node.body and isinstance(node.body[0], _ast.Expr)
+             and isinstance(node.body[0].value, _ast.Constant)
+             and isinstance(node.body[0].value.value, str)
+             for node in [node.body[0]]}
+    for node in _ast.walk(tree):
+        if (isinstance(node, _ast.Constant) and isinstance(node.value, str)
+                and id(node) not in prose
+                and ".jaato/" in node.value and "memor" in node.value):
+            spelled.setdefault(node.value, []).append(script.name)
+check(f"no script spells a memory store of its own {spelled}",
+      set(spelled) - declared, set())
 
 # AUTHORED ASSETS FOLLOW THE TEMPLATE; THE PERSON'S DATA NEVER DOES.
 #

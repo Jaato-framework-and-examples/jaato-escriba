@@ -28,27 +28,84 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
+import yaml
+
 from jaato_sdk.cascade_authoring import ProcessorResult
 
 #: `[texto](destino)` — sólo enlaces relativos; http(s), mailto y anclas no
 #: se comprueban aquí (los externos los verifica el juez al catalogarlos).
 LINK = re.compile(r"\[[^\]]*\]\(([^)#][^)]*)\)")
 
-MEMORY_STORE = Path(".jaato/memory/escriba")
+#: Where the store path COMES FROM, rather than what it is.  This file
+#: used to carry `.jaato/memory/escriba` as a constant while every
+#: profile said `.jaato/memories`, so `_known_ids` read an empty
+#: directory and every memory citation was reported invented.
+#:
+#: MEASURED, 2026-10-21, documentalista session 20261021_160428.  The
+#: documenter cited `mem_20261020_204340_4691`, which `retrieve_memories`
+#: had returned to it in that same session and which is on disk in
+#: `curated.jsonl`.  This gate refused it three times; the refusal says
+#: "cita solo memorias que hayas recuperado de verdad", so the model went
+#: and recuperated it again -- 71 calls of `retrieve_memories` -- until
+#: the 100-tool-call ceiling ended the session `budget_exhausted` with
+#: the document written and never signed off.  The person was told the
+#: document had not been completed, and nothing could say why.
+#:
+#: The id set was not EMPTY, which is what made it look reasonable: the
+#: catalogue path was right, so references validated and only memories
+#: failed.  The refusal named one bad id beside several good ones.
+#:
+#: THIS IS THE SECOND TIME THE SAME CONTRACT BROKE IN HALF.  On
+#: 2026-10-09 the escriba moved to `.jaato/memories` and the curator
+#: stayed behind; `_base_documentalista.yaml` carries that account and
+#: `tests_workspace.py` grew a guard for it.  The guard compares
+#: PROFILES to each other and this file is a script, so it was out of
+#: scope and sat wrong for twelve days.  Both halves are fixed now: the
+#: path is read rather than repeated, and the guard covers scripts.
+PROFILE = Path(".jaato/profiles/_base_documentalista.yaml")
+
 CATALOGUE = Path(".jaato/references")
+
+
+def _store_root(ws: Path) -> Path:
+    """El directorio del almacén, resuelto como lo resuelve el framework.
+
+    The documenter's OWN profile, because this gates the documenter and
+    that is the store its `memory` plugin was configured with.  Every
+    profile that names a store names the same one -- `tests_workspace.py`
+    refuses a template where they disagree -- so reading one is reading
+    the contract.
+
+    `MemoryStorage` accepts a `.jsonl` path for backwards compatibility
+    but treats it as a ROOT: `x.jsonl` becomes the directory `x/` holding
+    `raw/` and `curated.jsonl` (storage.py:250-270, jaato#912).  Mirrored
+    here, as `memory._store_root` mirrors it, so this does not depend on
+    how the path happens to be spelled.
+
+    NOTHING IS GUESSED IF THE PROFILE CANNOT BE READ.  This raises, and
+    a processor that raises is a FAULT rather than a refusal: the
+    framework blocks it once, exempt from the refusal budget, and is
+    advisory afterwards.  A gate that fell back to a path of its own is
+    how the twelve days above happened.
+    """
+    profile = yaml.safe_load((ws / PROFILE).read_text())
+    declared = profile["plugin_configs"]["memory"]["storage_path"]
+    root = ws / declared
+    return root.parent / root.stem if root.suffix == ".jsonl" else root
 
 
 def _known_ids(ws: Path) -> set:
     """Ids que existen de verdad: memorias (crudas y curadas) y referencias."""
     ids = set()
-    raw = ws / MEMORY_STORE / "raw"
+    store = _store_root(ws)
+    raw = store / "raw"
     if raw.is_dir():
         for f in raw.glob("*.json"):
             try:
                 ids.add(json.loads(f.read_text())["id"])
             except (json.JSONDecodeError, KeyError, OSError):
                 continue
-    curated = ws / MEMORY_STORE / "curated.jsonl"
+    curated = store / "curated.jsonl"
     if curated.is_file():
         for line in curated.read_text().splitlines():
             if line.strip():

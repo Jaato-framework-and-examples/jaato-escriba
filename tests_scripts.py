@@ -906,5 +906,85 @@ check("and keeps the complaint as a warning",
       len(_fsecond.get("warnings", [])), 1)
 
 
+# ======================================== docs_are_real: where memories are
+# THE GATE THAT COULD NOT SEE A MEMORY.  `docs_are_real` carried
+# `.jaato/memory/escriba` as a constant while every profile declared
+# `.jaato/memories`, so `_known_ids` read a directory that does not
+# exist and reported every real citation invented.
+#
+# MEASURED, documentalista session 20261021_160428.  It cited
+# `mem_20261020_204340_4691` -- returned to it by `retrieve_memories` in
+# that same session, and on disk in `curated.jsonl`.  Refused three
+# times.  The refusal says "cita solo memorias que hayas recuperado de
+# verdad", so the model recuperated it again, 71 times, until the
+# 100-tool-call ceiling ended the session.  The person was told the
+# document had not been completed and nothing could say why.
+#
+# THE LEG RUNS THE GATE AGAINST A REAL TREE rather than reading the
+# constant, because reading the constant is what agreed with itself for
+# twelve days.  The store is laid out where the TEMPLATE'S OWN PROFILE
+# says, so if that profile moves, this follows it and a stale gate fails.
+DOCS = HERE / "template/.jaato/scripts/processors/docs_are_real.py"
+_dspec = importlib.util.spec_from_file_location("docs_are_real", DOCS)
+docs = importlib.util.module_from_spec(_dspec)
+_dspec.loader.exec_module(docs)
+
+MEM_ID = "mem_20261020_204340_4691"
+
+
+def _brain(where: str) -> Path:
+    """A workspace whose profile is the template's and whose store is at
+    `where` -- the declared place, or the one the gate used to assume."""
+    ws = Path(tempfile.mkdtemp(prefix="escriba-brain-"))
+    profile = ws / docs.PROFILE
+    profile.parent.mkdir(parents=True)
+    profile.write_text((HERE / "template/.jaato/profiles"
+                        / docs.PROFILE.name).read_text(encoding="utf-8"),
+                       encoding="utf-8")
+    store = ws / where
+    (store / "raw").mkdir(parents=True)
+    (store / "curated.jsonl").write_text(
+        json.dumps({"id": MEM_ID, "description": "algo real"}) + "\n",
+        encoding="utf-8")
+    cat = ws / docs.CATALOGUE
+    cat.mkdir(parents=True)
+    (cat / "auto-5b81521e2f.json").write_text("{}", encoding="utf-8")
+    return ws
+
+
+def _cited(ws: Path, *ids):
+    return docs.validate({"ficheros": [], "fuentes": list(ids)},
+                         Space(ws))["errors"]
+
+
+_declared = _yaml_for_store = None
+import yaml as _y                                          # noqa: E402
+_declared = (_y.safe_load(
+    (HERE / "template/.jaato/profiles" / docs.PROFILE.name).read_text()
+)["plugin_configs"]["memory"]["storage_path"])
+
+_real = _brain(_declared)
+check("a memory in the declared store is found", _cited(_real, MEM_ID), [])
+check("and so is a reference beside it",
+      _cited(_real, MEM_ID, "auto-5b81521e2f"), [])
+
+# THE SHAPE THAT MADE IT LOOK REASONABLE: the catalogue path was right,
+# so references passed and only the memory failed.  A refusal naming one
+# bad id beside good ones reads like a model mistake, not a wrong path.
+_stale = _brain(".jaato/memory/escriba")
+_bad = _cited(_stale, MEM_ID, "auto-5b81521e2f")
+check("a store in the OLD place is not found", len(_bad), 1)
+# READ WITHOUT INDEXING, so a gate that stops refusing is REPORTED by
+# the leg above rather than raising here and taking the suite with it.
+_said = _bad[0] if _bad else ""
+check("and only the memory is blamed, never the reference",
+      MEM_ID in _said and "auto-5b81521e2f" not in _said, True)
+
+# AN INVENTED ID IS STILL REFUSED -- the gate's own job, which a fix
+# that simply widened the id set would have quietly removed.
+check("an id that exists nowhere is still refused",
+      len(_cited(_real, "mem_20260910_0012")), 1)
+
+
 print("scripts OK" if not fail else f"{fail} failure(s)")
 sys.exit(1 if fail else 0)
